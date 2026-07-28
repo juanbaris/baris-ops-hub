@@ -17,6 +17,7 @@ import { Route as AuthenticatedSalesRouteImport } from './routes/_authenticated/
 import { Route as AuthenticatedOperationsRouteImport } from './routes/_authenticated/operations'
 import { Route as AuthenticatedHomeRouteImport } from './routes/_authenticated/home'
 import { Route as AuthenticatedFulfillmentRouteImport } from './routes/_authenticated/fulfillment'
+import { Route as AuthenticatedFpStockRouteImport } from './routes/_authenticated/fp-stock'
 import { Route as AuthenticatedFinanceRouteImport } from './routes/_authenticated/finance'
 import { Route as ApiPublicSeedUsersRouteImport } from './routes/api/public/seed-users'
 
@@ -60,6 +61,11 @@ const AuthenticatedFulfillmentRoute =
     path: '/fulfillment',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedFpStockRoute = AuthenticatedFpStockRouteImport.update({
+  id: '/fp-stock',
+  path: '/fp-stock',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const AuthenticatedFinanceRoute = AuthenticatedFinanceRouteImport.update({
   id: '/finance',
   path: '/finance',
@@ -75,6 +81,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/finance': typeof AuthenticatedFinanceRoute
+  '/fp-stock': typeof AuthenticatedFpStockRoute
   '/fulfillment': typeof AuthenticatedFulfillmentRoute
   '/home': typeof AuthenticatedHomeRoute
   '/operations': typeof AuthenticatedOperationsRoute
@@ -86,6 +93,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/finance': typeof AuthenticatedFinanceRoute
+  '/fp-stock': typeof AuthenticatedFpStockRoute
   '/fulfillment': typeof AuthenticatedFulfillmentRoute
   '/home': typeof AuthenticatedHomeRoute
   '/operations': typeof AuthenticatedOperationsRoute
@@ -99,6 +107,7 @@ export interface FileRoutesById {
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
   '/_authenticated/finance': typeof AuthenticatedFinanceRoute
+  '/_authenticated/fp-stock': typeof AuthenticatedFpStockRoute
   '/_authenticated/fulfillment': typeof AuthenticatedFulfillmentRoute
   '/_authenticated/home': typeof AuthenticatedHomeRoute
   '/_authenticated/operations': typeof AuthenticatedOperationsRoute
@@ -112,6 +121,7 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/finance'
+    | '/fp-stock'
     | '/fulfillment'
     | '/home'
     | '/operations'
@@ -123,6 +133,7 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/finance'
+    | '/fp-stock'
     | '/fulfillment'
     | '/home'
     | '/operations'
@@ -135,6 +146,7 @@ export interface FileRouteTypes {
     | '/_authenticated'
     | '/auth'
     | '/_authenticated/finance'
+    | '/_authenticated/fp-stock'
     | '/_authenticated/fulfillment'
     | '/_authenticated/home'
     | '/_authenticated/operations'
@@ -208,6 +220,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedFulfillmentRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/fp-stock': {
+      id: '/_authenticated/fp-stock'
+      path: '/fp-stock'
+      fullPath: '/fp-stock'
+      preLoaderRoute: typeof AuthenticatedFpStockRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/finance': {
       id: '/_authenticated/finance'
       path: '/finance'
@@ -227,6 +246,7 @@ declare module '@tanstack/react-router' {
 
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedFinanceRoute: typeof AuthenticatedFinanceRoute
+  AuthenticatedFpStockRoute: typeof AuthenticatedFpStockRoute
   AuthenticatedFulfillmentRoute: typeof AuthenticatedFulfillmentRoute
   AuthenticatedHomeRoute: typeof AuthenticatedHomeRoute
   AuthenticatedOperationsRoute: typeof AuthenticatedOperationsRoute
@@ -236,6 +256,7 @@ interface AuthenticatedRouteRouteChildren {
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedFinanceRoute: AuthenticatedFinanceRoute,
+  AuthenticatedFpStockRoute: AuthenticatedFpStockRoute,
   AuthenticatedFulfillmentRoute: AuthenticatedFulfillmentRoute,
   AuthenticatedHomeRoute: AuthenticatedHomeRoute,
   AuthenticatedOperationsRoute: AuthenticatedOperationsRoute,
@@ -255,13 +276,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}
