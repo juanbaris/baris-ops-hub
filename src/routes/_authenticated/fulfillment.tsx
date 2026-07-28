@@ -421,21 +421,12 @@ function NewOrderModal({ onClose, onCreated }: { onClose: () => void; onCreated:
       });
       const mediaType = file.type || "application/pdf";
 
-      // Call Edge Function — handles Claude Vision + Packing Slip generation
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData.session?.access_token ?? "";
-
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/process-po`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}`,
-          },
-          body: JSON.stringify({ fileBase64: base64, mediaType }),
-        }
-      );
+      // Call server route — handles Claude Vision + Packing Slip generation
+      const response = await fetch("/api/process-po", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileBase64: base64, mediaType }),
+      });
 
       if (!response.ok) throw new Error(`Edge function error: ${response.status}`);
       const ex = await response.json();
