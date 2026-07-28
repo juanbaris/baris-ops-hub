@@ -305,16 +305,16 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
       .map(sk => ({
         movement_date: patch.invoice_date,
         type: "Out" as const,
-        sku: sk.label.replace("&", "").replace(" ", "") as Database["public"]["Enums"]["sku_type"],
+        sku: sk.label.replace("&", "").replace(" ", "") as Database["public"]["Enums"]["sku"],
         cases: Number(patch[sk.key]),
-        warehouse: "Lineage Newark" as Database["public"]["Enums"]["warehouse_type"],
+        warehouse: "Lineage Newark" as Database["public"]["Enums"]["warehouse"],
         lot_number: `BOL-${order.po_number}-${patch.invoice_date}`,
         concept: "Sale" as Database["public"]["Enums"]["fp_concept"],
         po_number_ref: order.po_number,
         notes: `Auto from BOL · PO ${order.po_number}`,
       }));
     if (movements.length > 0) {
-      await supabase.from("fp_movements").insert(movements as Parameters<typeof supabase.from<"fp_movements">>[0] extends never ? never : never);
+      await supabase.from("fp_movements").insert(movements);
     }
 
     const { data: userData } = await supabase.auth.getUser();
@@ -477,7 +477,7 @@ function NewOrderModal({ onClose, onCreated }: { onClose: () => void; onCreated:
   async function save() {
     if (!form.po_number) { toast.error("PO number required"); return; }
     const { data, error } = await supabase.from("customer_orders").insert({
-      po_number: form.po_number, po_date: form.po_date || null, ship_est_date: form.ship_est_date || null,
+      po_number: form.po_number, po_date: form.po_date || new Date().toISOString().slice(0, 10), ship_est_date: form.ship_est_date || null,
       distributor: form.distributor, customer: form.customer, status: form.status,
       wd_cases: parseInt(form.wd_cases) || null, pw_cases: parseInt(form.pw_cases) || null,
       hm_cases: parseInt(form.hm_cases) || null, matcha_cases: parseInt(form.matcha_cases) || null,
