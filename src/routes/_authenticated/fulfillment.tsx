@@ -119,7 +119,7 @@ function StatusCell({
         type="button"
         disabled={!next || saving}
         onClick={() => setOpen((o) => !o)}
-        className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ${STATUS_STYLES[order.status]} ${next && !saving ? "cursor-pointer transition hover:brightness-95" : "cursor-default opacity-80"}`}
+        className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${STATUS_STYLES[order.status]} ${next && !saving ? "cursor-pointer transition hover:brightness-95" : "cursor-default opacity-80"}`}
       >
         {order.status}
         {next ? <span aria-hidden>▾</span> : null}
@@ -142,7 +142,8 @@ function StatusCell({
   );
 }
 
-const COLUMNS: { key: keyof Order; label: string; numeric?: boolean }[] = [
+type ColumnKey = keyof Order | "total_cases";
+const COLUMNS: { key: ColumnKey; label: string; numeric?: boolean; sku?: boolean; money?: boolean }[] = [
   { key: "po_number", label: "PO #" },
   { key: "po_date", label: "PO Date" },
   { key: "ship_est_date", label: "Ship Est." },
@@ -150,17 +151,20 @@ const COLUMNS: { key: keyof Order; label: string; numeric?: boolean }[] = [
   { key: "distributor", label: "Distributor" },
   { key: "customer", label: "Customer" },
   { key: "status", label: "Status" },
-  { key: "wd_cases", label: "WD", numeric: true },
-  { key: "pw_cases", label: "PW", numeric: true },
-  { key: "hm_cases", label: "HM", numeric: true },
-  { key: "matcha_cases", label: "MA", numeric: true },
-  { key: "xd_cases", label: "XD", numeric: true },
-  { key: "wm_cases", label: "WM", numeric: true },
-  { key: "gross_sales", label: "Gross", numeric: true },
-  { key: "promo_discount", label: "Promo", numeric: true },
-  { key: "net_sales", label: "Net", numeric: true },
+  { key: "wd_cases", label: "WD", numeric: true, sku: true },
+  { key: "pw_cases", label: "PW", numeric: true, sku: true },
+  { key: "hm_cases", label: "HM", numeric: true, sku: true },
+  { key: "matcha_cases", label: "MA", numeric: true, sku: true },
+  { key: "xd_cases", label: "XD", numeric: true, sku: true },
+  { key: "wm_cases", label: "WM", numeric: true, sku: true },
+  { key: "total_cases", label: "Total", numeric: true },
+  { key: "gross_sales", label: "Gross", numeric: true, money: true },
+  { key: "promo_discount", label: "Promo", numeric: true, money: true },
+  { key: "net_sales", label: "Net", numeric: true, money: true },
   { key: "fill_rate", label: "Fill %", numeric: true },
 ];
+
+const SKU_KEYS = new Set<ColumnKey>(["wd_cases", "pw_cases", "hm_cases", "matcha_cases", "xd_cases", "wm_cases"]);
 
 const CASE_KEYS: (keyof Order)[] = [
   "wd_cases",
@@ -184,11 +188,7 @@ function rowTotalCases(r: Order): number {
 }
 
 function fmtMoney(n: number) {
-  return n.toLocaleString(undefined, {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  });
+  return `$${Math.round(n).toLocaleString()}`;
 }
 
 function PipelinePO() {
@@ -201,7 +201,7 @@ function PipelinePO() {
   const [quarter, setQuarter] = useState<Quarter>("Q1");
   const [customFrom, setCustomFrom] = useState<string>("");
   const [customTo, setCustomTo] = useState<string>("");
-  const [sortKey, setSortKey] = useState<keyof Order>("po_date");
+  const [sortKey, setSortKey] = useState<ColumnKey>("po_date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
   useEffect(() => {
@@ -232,8 +232,8 @@ function PipelinePO() {
         (!range.to || r.po_date <= range.to),
     );
     const sorted = [...f].sort((a, b) => {
-      const av = a[sortKey];
-      const bv = b[sortKey];
+      const av = sortKey === "total_cases" ? rowTotalCases(a) : a[sortKey as keyof Order];
+      const bv = sortKey === "total_cases" ? rowTotalCases(b) : b[sortKey as keyof Order];
       if (av == null && bv == null) return 0;
       if (av == null) return 1;
       if (bv == null) return -1;
@@ -244,7 +244,7 @@ function PipelinePO() {
     return sorted;
   }, [rows, dist, status, dateFilter, quarter, customFrom, customTo, sortKey, sortDir]);
 
-  function toggleSort(k: keyof Order) {
+  function toggleSort(k: ColumnKey) {
     if (sortKey === k) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     else {
       setSortKey(k);
@@ -252,15 +252,44 @@ function PipelinePO() {
     }
   }
 
-  const fmtNum = (v: unknown) =>
-    v == null || v === "" ? "—" : typeof v === "number" ? v.toLocaleString() : String(v);
+function fmtCell(k: ColumnKey, v: unknown) {
+  if (v == null || v === "") return "—";
+  if (k === "total_cases" && typeof v === "number") return Math.round(v).toLocaleString();
+  if (MONEY_KEYS.has(k as keyof Order) && typeof v === "number") return fmtMoney(v);
+  if (typeof v === "number") return v.toLocaleString();
+  return String(v);
+}
 
-  const fmtCell = (k: keyof Order, v: unknown) => {
-    if (v == null || v === "") return "—";
-    if (MONEY_KEYS.has(k) && typeof v === "number") return fmtMoney(v);
-    if (typeof v === "number") return v.toLocaleString();
-    return String(v);
-  };
+function getCellValue(r: Order, k: ColumnKey): unknown {
+  if (k === "total_cases") return rowTotalCases(r);
+  return r[k as keyof Order];
+}
+
+function cellClass(c: (typeof COLUMNS)[number]) {
+  const base = c.numeric ? "text-right font-mono tabular-nums" : "text-left";
+  if (c.sku) return `${base} bg-sku-column`;
+  if (c.key === "total_cases") return `${base} bg-total-cases-column font-semibold`;
+  return base;
+}
+
+function renderBodyCell(r: Order, c: (typeof COLUMNS)[number], onChanged: (o: Order) => void) {
+  if (c.key === "status") return <StatusCell order={r} onChanged={onChanged} />;
+  const v = getCellValue(r, c.key);
+  if (c.sku) {
+    const n = Number(v) || 0;
+    if (n === 0) return <span className="block w-full text-center text-muted-foreground">—</span>;
+    return n.toLocaleString();
+  }
+  if (c.key === "total_cases") {
+    return <span className="font-semibold">{Math.round(Number(v) || 0).toLocaleString()}</span>;
+  }
+  if (c.money && typeof v === "number") {
+    const formatted = fmtMoney(v);
+    if (c.key === "net_sales") return <span className="text-success">{formatted}</span>;
+    return formatted;
+  }
+  return fmtCell(c.key, v);
+}
 
   const totals = useMemo(() => {
     const t: Record<string, number> = { total_cases: 0 };
@@ -369,7 +398,7 @@ function PipelinePO() {
               {COLUMNS.map((c) => (
                 <th
                   key={String(c.key)}
-                  className={`cursor-pointer select-none px-3 py-3 font-semibold ${c.numeric ? "text-right" : "text-left"}`}
+                  className={`cursor-pointer select-none px-3 py-2.5 font-semibold ${c.numeric ? "text-right" : "text-left"} ${c.sku ? "bg-sku-column" : ""} ${c.key === "total_cases" ? "bg-total-cases-column" : ""}`}
                   onClick={() => toggleSort(c.key)}
                 >
                   {c.label}
@@ -410,15 +439,9 @@ function PipelinePO() {
                   {COLUMNS.map((c) => (
                     <td
                       key={String(c.key)}
-                      className={`px-3 py-2.5 ${c.numeric ? "text-right font-mono tabular-nums" : ""}`}
+                      className={`px-3 py-1.5 ${cellClass(c)}`}
                     >
-                      {c.key === "status" ? (
-                        <StatusCell order={r} onChanged={applyUpdate} />
-                      ) : c.numeric ? (
-                        fmtCell(c.key, r[c.key])
-                      ) : (
-                        ((r[c.key] as string) ?? "—")
-                      )}
+                      {renderBodyCell(r, c, applyUpdate)}
                     </td>
                   ))}
                 </tr>
@@ -434,40 +457,33 @@ function PipelinePO() {
                 {COLUMNS.map((c, idx) => {
                   if (idx === 0) {
                     return (
-                      <td key={String(c.key)} className="px-3 py-3 font-semibold">
+                      <td key={String(c.key)} className="px-3 py-2 font-semibold">
                         Totals
                       </td>
                     );
                   }
-                  if (c.key === "wm_cases") {
-                    // WM total, then insert Total Cases in next column visually? Instead show WM here and total via fill_rate slot. Simpler: show all numeric totals inline.
-                  }
-                  if (c.numeric && TOTAL_KEYS.includes(c.key)) {
-                    const v = totals[c.key as string] ?? 0;
+                  if (c.key === "total_cases") {
                     return (
                       <td
                         key={String(c.key)}
-                        className="px-3 py-3 text-right font-mono tabular-nums font-semibold"
+                        className="px-3 py-2 text-right font-mono tabular-nums font-bold"
                       >
-                        {MONEY_KEYS.has(c.key) ? fmtMoney(v) : v.toLocaleString()}
-                      </td>
-                    );
-                  }
-                  if (c.key === "customer") {
-                    return (
-                      <td
-                        key={String(c.key)}
-                        className="px-3 py-3 text-right font-mono tabular-nums font-semibold"
-                        title="Total cases across all SKUs"
-                      >
-                        <span className="mr-2 text-[10px] font-medium uppercase tracking-wide opacity-70">
-                          Total Cases
-                        </span>
                         {totals.total_cases.toLocaleString()}
                       </td>
                     );
                   }
-                  return <td key={String(c.key)} className="px-3 py-3" />;
+                  if (c.numeric && TOTAL_KEYS.includes(c.key as keyof Order)) {
+                    const v = totals[c.key as string] ?? 0;
+                    return (
+                      <td
+                        key={String(c.key)}
+                        className={`px-3 py-2 text-right font-mono tabular-nums font-semibold ${c.key === "net_sales" ? "text-success" : ""}`}
+                      >
+                        {MONEY_KEYS.has(c.key as keyof Order) ? fmtMoney(v) : Math.round(v).toLocaleString()}
+                      </td>
+                    );
+                  }
+                  return <td key={String(c.key)} className="px-3 py-2" />;
                 })}
               </tr>
             </tfoot>
