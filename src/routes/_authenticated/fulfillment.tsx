@@ -227,6 +227,9 @@ function LineageModal({ order, onClose, onSent }: { order: Order; onClose: () =>
           <div className="text-foreground">{body}</div>
         </div>
         {isKehe && <div className="mb-3 rounded-lg bg-orange-50 border border-orange-200 px-3 py-2 text-xs text-orange-700 font-medium">KeHe → FOB pickup at Lineage</div>}
+        <div className="mb-3 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-700">
+          💡 Attach the <strong>BARIS_PS_{order.po_number}.html</strong> Packing Slip to the email before sending.
+        </div>
         <button onClick={openMail} className="w-full rounded-lg py-2 text-sm font-semibold text-white" style={{ backgroundColor: "#A3224A" }}>
           Open in Mail & Mark as Shipment
         </button>
@@ -386,6 +389,7 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
 function NewOrderModal({ onClose, onCreated }: { onClose: () => void; onCreated: (o: Order) => void }) {
   const [mode, setMode] = useState<"ai" | "manual">("manual");
   const [processing, setProcessing] = useState(false);
+  const [packingSlip, setPackingSlip] = useState<{ html: string; filename: string } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [form, setForm] = useState({
     po_number: "", po_date: ymd(new Date()), ship_est_date: "", distributor: "UNFI" as Distributor,
@@ -410,35 +414,63 @@ function NewOrderModal({ onClose, onCreated }: { onClose: () => void; onCreated:
     setProcessing(true);
     try {
       const base64 = await new Promise<string>((res, rej) => {
-        const r = new FileReader(); r.onload = () => res((r.result as string).split(",")[1]); r.onerror = rej; r.readAsDataURL(file);
+        const r = new FileReader();
+        r.onload = () => res((r.result as string).split(",")[1]);
+        r.onerror = rej;
+        r.readAsDataURL(file);
       });
-      const mediaType = file.type as "image/jpeg" | "image/png" | "application/pdf";
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-6", max_tokens: 1000,
-          messages: [{ role: "user", content: [
-            { type: mediaType === "application/pdf" ? "document" : "image", source: { type: "base64", media_type: mediaType, data: base64 } },
-            { type: "text", text: `Extract PO details. Item codes: 23141=WD, 77670=PW, 77671=HM, 77672=Matcha, 88021=XD, 93562=WM. Distributor values: UNFI, KeHe, Rainforest, RFD, Direct, Other. Return JSON only: {"po_number":"","po_date":"YYYY-MM-DD","distributor":"UNFI","customer":"","wd":0,"pw":0,"hm":0,"matcha":0,"xd":0,"wm":0,"gross":0}` }
-          ]}]
-        })
-      });
-      const data = await response.json();
-      const text = data.content?.[0]?.text ?? "{}";
-      const clean = text.replace(/```json|```/g, "").trim();
-      const ex = JSON.parse(clean);
+      const mediaType = file.type || "application/pdf";
+
+      // Call Edge Function — handles Claude Vision + Packing Slip generation
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token ?? "";
+
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/process-po`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`,
+          },
+          body: JSON.stringify({ fileBase64: base64, mediaType }),
+        }
+      );
+
+      if (!response.ok) throw new Error(`Edge function error: ${response.status}`);
+      const ex = await response.json();
+
+      // Fill form fields
       setForm(f => ({
         ...f,
-        po_number: ex.po_number || f.po_number, po_date: ex.po_date || f.po_date,
-        distributor: ex.distributor || f.distributor, customer: ex.customer || f.customer,
-        wd_cases: String(ex.wd || 0), pw_cases: String(ex.pw || 0), hm_cases: String(ex.hm || 0),
-        matcha_cases: String(ex.matcha || 0), xd_cases: String(ex.xd || 0), wm_cases: String(ex.wm || 0),
-        gross_sales: String(ex.gross || 0),
+        po_number: ex.po_number || f.po_number,
+        po_date: ex.po_date || f.po_date,
+        ship_est_date: ex.ship_est_date || f.ship_est_date,
+        distributor: ex.distributor || f.distributor,
+        customer: ex.customer || f.customer,
+        wd_cases: String(ex.wd_cases || 0),
+        pw_cases: String(ex.pw_cases || 0),
+        hm_cases: String(ex.hm_cases || 0),
+        matcha_cases: String(ex.matcha_cases || 0),
+        xd_cases: String(ex.xd_cases || 0),
+        wm_cases: String(ex.wm_cases || 0),
+        gross_sales: String(ex.gross_sales || 0),
+        promo_discount: String(ex.promo_discount || 0),
+        net_sales: String(ex.net_sales || 0),
       }));
+
+      // Store packing slip for download
+      if (ex.packing_slip_html) {
+        setPackingSlip({ html: ex.packing_slip_html, filename: ex.packing_slip_filename });
+      }
+
       setMode("manual");
-      toast.success("PO extracted — review and save");
-    } catch { toast.error("Could not extract — fill in manually"); setMode("manual"); }
+      toast.success("PO extracted — review fields and save");
+    } catch (e) {
+      console.error(e);
+      toast.error("Could not extract — fill in manually");
+      setMode("manual");
+    }
     setProcessing(false);
   }
 
@@ -535,6 +567,30 @@ function NewOrderModal({ onClose, onCreated }: { onClose: () => void; onCreated:
 
           <div className="mb-4"><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Notes</label>
             <textarea className={`${inp} mt-1 resize-none`} rows={2} value={form.notes} onChange={e => set("notes", e.target.value)} /></div>
+
+          {packingSlip && (
+            <div className="mb-3 flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5">
+              <span className="text-lg">📄</span>
+              <div className="flex-1">
+                <p className="text-xs font-semibold text-emerald-800">Packing Slip generated</p>
+                <p className="text-[11px] text-emerald-600">{packingSlip.filename}</p>
+              </div>
+              <button
+                onClick={() => {
+                  const html = decodeURIComponent(escape(atob(packingSlip.html)));
+                  const blob = new Blob([html], { type: "text/html" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url; a.download = packingSlip.filename; a.click();
+                  URL.revokeObjectURL(url);
+                }}
+                className="rounded-lg px-3 py-1 text-xs font-semibold text-white"
+                style={{ backgroundColor: "#1C2340" }}
+              >
+                Download
+              </button>
+            </div>
+          )}
 
           <button onClick={save} className="w-full rounded-lg py-2 text-sm font-semibold text-white" style={{ backgroundColor: "#A3224A" }}>
             Create Order as {form.status}
