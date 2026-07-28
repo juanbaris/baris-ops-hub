@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { PageHeader } from "@/components/app-shell";
 import { supabase } from "@/integrations/supabase/client";
@@ -91,6 +91,15 @@ function PipelinePO() {
   return (
     <>
       <PageHeader title="Pipeline PO" subtitle="Customer orders in the pipeline." />
+
+      <div className="mb-4">
+        <Link
+          to="/collections"
+          className="text-sm font-medium text-primary hover:underline"
+        >
+          View Collections →
+        </Link>
+      </div>
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <label className="flex items-center gap-2 text-sm">

@@ -15,9 +15,12 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedSystemRouteImport } from './routes/_authenticated/system'
 import { Route as AuthenticatedSalesRouteImport } from './routes/_authenticated/sales'
 import { Route as AuthenticatedOperationsRouteImport } from './routes/_authenticated/operations'
+import { Route as AuthenticatedIpMovementsRouteImport } from './routes/_authenticated/ip-movements'
 import { Route as AuthenticatedHomeRouteImport } from './routes/_authenticated/home'
 import { Route as AuthenticatedFulfillmentRouteImport } from './routes/_authenticated/fulfillment'
+import { Route as AuthenticatedFpStockRouteImport } from './routes/_authenticated/fp-stock'
 import { Route as AuthenticatedFinanceRouteImport } from './routes/_authenticated/finance'
+import { Route as AuthenticatedCollectionsRouteImport } from './routes/_authenticated/collections'
 import { Route as ApiPublicSeedUsersRouteImport } from './routes/api/public/seed-users'
 
 const AuthRoute = AuthRouteImport.update({
@@ -49,6 +52,12 @@ const AuthenticatedOperationsRoute = AuthenticatedOperationsRouteImport.update({
   path: '/operations',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedIpMovementsRoute =
+  AuthenticatedIpMovementsRouteImport.update({
+    id: '/ip-movements',
+    path: '/ip-movements',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedHomeRoute = AuthenticatedHomeRouteImport.update({
   id: '/home',
   path: '/home',
@@ -60,11 +69,22 @@ const AuthenticatedFulfillmentRoute =
     path: '/fulfillment',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedFpStockRoute = AuthenticatedFpStockRouteImport.update({
+  id: '/fp-stock',
+  path: '/fp-stock',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const AuthenticatedFinanceRoute = AuthenticatedFinanceRouteImport.update({
   id: '/finance',
   path: '/finance',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedCollectionsRoute =
+  AuthenticatedCollectionsRouteImport.update({
+    id: '/collections',
+    path: '/collections',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const ApiPublicSeedUsersRoute = ApiPublicSeedUsersRouteImport.update({
   id: '/api/public/seed-users',
   path: '/api/public/seed-users',
@@ -74,9 +94,12 @@ const ApiPublicSeedUsersRoute = ApiPublicSeedUsersRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
+  '/collections': typeof AuthenticatedCollectionsRoute
   '/finance': typeof AuthenticatedFinanceRoute
+  '/fp-stock': typeof AuthenticatedFpStockRoute
   '/fulfillment': typeof AuthenticatedFulfillmentRoute
   '/home': typeof AuthenticatedHomeRoute
+  '/ip-movements': typeof AuthenticatedIpMovementsRoute
   '/operations': typeof AuthenticatedOperationsRoute
   '/sales': typeof AuthenticatedSalesRoute
   '/system': typeof AuthenticatedSystemRoute
@@ -85,9 +108,12 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
+  '/collections': typeof AuthenticatedCollectionsRoute
   '/finance': typeof AuthenticatedFinanceRoute
+  '/fp-stock': typeof AuthenticatedFpStockRoute
   '/fulfillment': typeof AuthenticatedFulfillmentRoute
   '/home': typeof AuthenticatedHomeRoute
+  '/ip-movements': typeof AuthenticatedIpMovementsRoute
   '/operations': typeof AuthenticatedOperationsRoute
   '/sales': typeof AuthenticatedSalesRoute
   '/system': typeof AuthenticatedSystemRoute
@@ -98,9 +124,12 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
+  '/_authenticated/collections': typeof AuthenticatedCollectionsRoute
   '/_authenticated/finance': typeof AuthenticatedFinanceRoute
+  '/_authenticated/fp-stock': typeof AuthenticatedFpStockRoute
   '/_authenticated/fulfillment': typeof AuthenticatedFulfillmentRoute
   '/_authenticated/home': typeof AuthenticatedHomeRoute
+  '/_authenticated/ip-movements': typeof AuthenticatedIpMovementsRoute
   '/_authenticated/operations': typeof AuthenticatedOperationsRoute
   '/_authenticated/sales': typeof AuthenticatedSalesRoute
   '/_authenticated/system': typeof AuthenticatedSystemRoute
@@ -111,9 +140,12 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/auth'
+    | '/collections'
     | '/finance'
+    | '/fp-stock'
     | '/fulfillment'
     | '/home'
+    | '/ip-movements'
     | '/operations'
     | '/sales'
     | '/system'
@@ -122,9 +154,12 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/auth'
+    | '/collections'
     | '/finance'
+    | '/fp-stock'
     | '/fulfillment'
     | '/home'
+    | '/ip-movements'
     | '/operations'
     | '/sales'
     | '/system'
@@ -134,9 +169,12 @@ export interface FileRouteTypes {
     | '/'
     | '/_authenticated'
     | '/auth'
+    | '/_authenticated/collections'
     | '/_authenticated/finance'
+    | '/_authenticated/fp-stock'
     | '/_authenticated/fulfillment'
     | '/_authenticated/home'
+    | '/_authenticated/ip-movements'
     | '/_authenticated/operations'
     | '/_authenticated/sales'
     | '/_authenticated/system'
@@ -194,6 +232,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedOperationsRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/ip-movements': {
+      id: '/_authenticated/ip-movements'
+      path: '/ip-movements'
+      fullPath: '/ip-movements'
+      preLoaderRoute: typeof AuthenticatedIpMovementsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/home': {
       id: '/_authenticated/home'
       path: '/home'
@@ -208,11 +253,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedFulfillmentRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/fp-stock': {
+      id: '/_authenticated/fp-stock'
+      path: '/fp-stock'
+      fullPath: '/fp-stock'
+      preLoaderRoute: typeof AuthenticatedFpStockRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/finance': {
       id: '/_authenticated/finance'
       path: '/finance'
       fullPath: '/finance'
       preLoaderRoute: typeof AuthenticatedFinanceRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/collections': {
+      id: '/_authenticated/collections'
+      path: '/collections'
+      fullPath: '/collections'
+      preLoaderRoute: typeof AuthenticatedCollectionsRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/api/public/seed-users': {
@@ -226,18 +285,24 @@ declare module '@tanstack/react-router' {
 }
 
 interface AuthenticatedRouteRouteChildren {
+  AuthenticatedCollectionsRoute: typeof AuthenticatedCollectionsRoute
   AuthenticatedFinanceRoute: typeof AuthenticatedFinanceRoute
+  AuthenticatedFpStockRoute: typeof AuthenticatedFpStockRoute
   AuthenticatedFulfillmentRoute: typeof AuthenticatedFulfillmentRoute
   AuthenticatedHomeRoute: typeof AuthenticatedHomeRoute
+  AuthenticatedIpMovementsRoute: typeof AuthenticatedIpMovementsRoute
   AuthenticatedOperationsRoute: typeof AuthenticatedOperationsRoute
   AuthenticatedSalesRoute: typeof AuthenticatedSalesRoute
   AuthenticatedSystemRoute: typeof AuthenticatedSystemRoute
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
+  AuthenticatedCollectionsRoute: AuthenticatedCollectionsRoute,
   AuthenticatedFinanceRoute: AuthenticatedFinanceRoute,
+  AuthenticatedFpStockRoute: AuthenticatedFpStockRoute,
   AuthenticatedFulfillmentRoute: AuthenticatedFulfillmentRoute,
   AuthenticatedHomeRoute: AuthenticatedHomeRoute,
+  AuthenticatedIpMovementsRoute: AuthenticatedIpMovementsRoute,
   AuthenticatedOperationsRoute: AuthenticatedOperationsRoute,
   AuthenticatedSalesRoute: AuthenticatedSalesRoute,
   AuthenticatedSystemRoute: AuthenticatedSystemRoute,
