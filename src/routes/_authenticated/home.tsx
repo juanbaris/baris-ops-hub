@@ -129,11 +129,41 @@ function HomePage() {
   const [loading, setLoading] = useState(true);
   const [quoteIdx] = useState(() => Math.floor(Math.random() * QUOTES.length));
   const [revUnit, setRevUnit] = useState<"usd" | "cases">("usd");
+  const [period, setPeriod] = useState<"month" | "quarter" | "year" | "ytd">("month");
 
   const today = new Date();
-  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
-  const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().slice(0, 10);
-  const yearStart = `${today.getFullYear()}-01-01`;
+  const y = today.getFullYear();
+  const m = today.getMonth(); // 0-based
+  const q = Math.floor(m / 3); // 0-based quarter
+
+  // Period ranges
+  const periodRange = useMemo(() => {
+    switch (period) {
+      case "month": return {
+        start: new Date(y, m, 1).toISOString().slice(0, 10),
+        end: new Date(y, m + 1, 0).toISOString().slice(0, 10),
+        label: `${MONTHS[m]} ${y}`,
+      };
+      case "quarter": return {
+        start: new Date(y, q * 3, 1).toISOString().slice(0, 10),
+        end: new Date(y, q * 3 + 3, 0).toISOString().slice(0, 10),
+        label: `Q${q + 1} ${y}`,
+      };
+      case "year": return {
+        start: `${y}-01-01`,
+        end: `${y}-12-31`,
+        label: `Full year ${y}`,
+      };
+      case "ytd": return {
+        start: `${y}-01-01`,
+        end: today.toISOString().slice(0, 10),
+        label: `YTD ${y}`,
+      };
+    }
+  }, [period, y, m, q, today]);
+
+  const monthStart = new Date(y, m, 1).toISOString().slice(0, 10);
+  const monthEnd = new Date(y, m + 1, 0).toISOString().slice(0, 10);
 
   useEffect(() => {
     (async () => {
@@ -153,26 +183,34 @@ function HomePage() {
     })();
   }, []);
 
-  // ── KPIs ────────────────────────────────────────────────────────────────────
+  // ── KPIs — react to period ──────────────────────────────────────────────────
   const invoiced = useMemo(() => orders.filter(o => o.status === "Invoiced"), [orders]);
 
-  const revenueMTD = useMemo(() =>
-    invoiced.filter(o => o.invoice_date && o.invoice_date >= monthStart && o.invoice_date <= monthEnd)
-      .reduce((s, o) => s + (Number(o.net_sales) || 0), 0), [invoiced, monthStart, monthEnd]);
+  const revenueForPeriod = useMemo(() =>
+    invoiced.filter(o => o.invoice_date && o.invoice_date >= periodRange.start && o.invoice_date <= periodRange.end)
+      .reduce((s, o) => s + (Number(o.net_sales) || 0), 0),
+  [invoiced, periodRange]);
 
   const CASE_KEYS = ["wd_cases","pw_cases","hm_cases","matcha_cases","xd_cases","wm_cases"] as const;
-  const casesMTD = useMemo(() =>
-    invoiced.filter(o => o.invoice_date && o.invoice_date >= monthStart && o.invoice_date <= monthEnd)
+  const casesForPeriod = useMemo(() =>
+    invoiced.filter(o => o.invoice_date && o.invoice_date >= periodRange.start && o.invoice_date <= periodRange.end)
       .reduce((s, o) => s + CASE_KEYS.reduce((cs, k) => cs + (Number(o[k]) || 0), 0), 0),
-  [invoiced, monthStart, monthEnd]);
+  [invoiced, periodRange]);
+
+  // Keep MTD for backward compat
+  const revenueMTD = revenueForPeriod;
+  const casesMTD = casesForPeriod;
 
   const pendingToCollect = useMemo(() => {
-    // Per distributor terms: UNFI/KeHe/RFD = 30d, Rainforest = 60d
+    // Correct logic: invoiced POs where invoice_date >= (today - payment_terms)
+    // Meaning: not yet 30/60 days have passed since invoice
     const terms: Record<string, number> = { UNFI: 30, KeHe: 30, RFD: 30, Rainforest: 60, Direct: 30, Other: 30 };
     return invoiced.filter(o => {
       if (!o.invoice_date) return false;
       const t = terms[o.distributor] ?? 30;
-      const cutoff = new Date(today.getTime() - t * 86400000).toISOString().slice(0, 10);
+      // cutoff = today - t days. If invoice_date >= cutoff → not yet collected (within terms window)
+      const cutoffDate = new Date(today.getTime() - t * 86400000);
+      const cutoff = cutoffDate.toISOString().slice(0, 10);
       return o.invoice_date >= cutoff;
     }).reduce((s, o) => s + (Number(o.net_sales) || 0), 0);
   }, [invoiced, today]);
@@ -209,6 +247,26 @@ function HomePage() {
       label,
       actual: Math.round(byMonth[i + 1] ?? 0),
       budget: Math.round(budget[i + 1] ?? 0),
+    }));
+  }, [invoiced, budget]);
+
+  // ── Sales by Quarter ─────────────────────────────────────────────────────────
+  const quarterSales = useMemo(() => {
+    const byQ: Record<number, { actual: number; budget: number }> = { 1: { actual: 0, budget: 0 }, 2: { actual: 0, budget: 0 }, 3: { actual: 0, budget: 0 }, 4: { actual: 0, budget: 0 } };
+    for (const o of invoiced) {
+      if (!o.invoice_date || !o.invoice_date.startsWith("2026")) continue;
+      const mo = parseInt(o.invoice_date.slice(5, 7));
+      const qn = Math.ceil(mo / 3);
+      byQ[qn].actual += Number(o.net_sales) || 0;
+    }
+    for (let qn = 1; qn <= 4; qn++) {
+      const months = [qn * 3 - 2, qn * 3 - 1, qn * 3];
+      byQ[qn].budget = months.reduce((s, mn) => s + (budget[mn] ?? 0), 0);
+    }
+    return [1, 2, 3, 4].map(qn => ({
+      label: `Q${qn}`,
+      actual: Math.round(byQ[qn].actual),
+      budget: Math.round(byQ[qn].budget),
     }));
   }, [invoiced, budget]);
 
@@ -268,6 +326,17 @@ function HomePage() {
         </div>
       </div>
 
+      {/* Period filter */}
+      <div className="flex gap-1 rounded-xl bg-muted p-1 w-fit">
+        {([["month", "This month"], ["quarter", `Q${q + 1}`], ["year", "Full year"], ["ytd", "YTD"]] as const).map(([val, label]) => (
+          <button key={val} onClick={() => setPeriod(val)}
+            className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${period === val ? "text-white shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+            style={period === val ? { backgroundColor: "#1C2340" } : {}}>
+            {label}
+          </button>
+        ))}
+      </div>
+
       {/* KPI row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {/* Revenue with $ / Units toggle */}
@@ -275,7 +344,7 @@ function HomePage() {
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <span className="text-base">💰</span>
-              <span className="text-[10px] uppercase tracking-widest font-semibold text-muted-foreground">Revenue MTD</span>
+              <span className="text-[10px] uppercase tracking-widest font-semibold text-muted-foreground">Revenue · {periodRange.label}</span>
             </div>
             <div className="flex rounded-full border border-border overflow-hidden text-[10px] font-semibold">
               <button onClick={() => setRevUnit("usd")}
@@ -325,6 +394,15 @@ function HomePage() {
               <span className="text-xs text-muted-foreground">$ USD · net sales</span>
             </div>
             <DualBarChart data={monthlySales} height={140} />
+          </div>
+
+          {/* Sales by Quarter */}
+          <div className="rounded-xl border border-border p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold" style={{ color: "#1C2340" }}>Sales by Quarter · 2026</h3>
+              <span className="text-xs text-muted-foreground">Actual vs Budget</span>
+            </div>
+            <DualBarChart data={quarterSales} height={140} />
           </div>
 
           {/* YTD by distributor */}
