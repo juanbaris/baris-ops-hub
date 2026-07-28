@@ -61,10 +61,10 @@ const NEXT_STATUS: Record<Status, Status | null> = {
 };
 
 const STATUS_STYLES: Record<Status, string> = {
-  Open: "bg-muted text-foreground",
-  Acknowledged: "bg-blue-100 text-blue-900 dark:bg-blue-950 dark:text-blue-100",
-  Shipment: "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-100",
-  Invoiced: "bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-100",
+  Open: "bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200",
+  Acknowledged: "bg-orange-50 text-orange-700 ring-1 ring-inset ring-orange-200",
+  Shipment: "bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200",
+  Invoiced: "bg-purple-50 text-purple-700 ring-1 ring-inset ring-purple-200",
 };
 
 function StatusCell({
@@ -119,18 +119,18 @@ function StatusCell({
         type="button"
         disabled={!next || saving}
         onClick={() => setOpen((o) => !o)}
-        className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[order.status]} ${next && !saving ? "cursor-pointer hover:ring-2 hover:ring-ring/40" : "cursor-default opacity-80"}`}
+        className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ${STATUS_STYLES[order.status]} ${next && !saving ? "cursor-pointer transition hover:brightness-95" : "cursor-default opacity-80"}`}
       >
         {order.status}
-        {next ? " ▾" : ""}
+        {next ? <span aria-hidden>▾</span> : null}
       </button>
       {open && next && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 z-20 mt-1 min-w-[10rem] rounded-md border border-border bg-popover p-1 shadow-md">
+          <div className="absolute right-0 z-20 mt-1 min-w-[10rem] rounded-lg border border-border bg-popover p-1 shadow-lg">
             <button
               type="button"
-              className="block w-full rounded px-2 py-1 text-left text-xs hover:bg-muted"
+              className="block w-full rounded-md px-2 py-1.5 text-left text-xs font-medium hover:bg-muted"
               onClick={() => changeTo(next)}
             >
               Move to <span className="font-semibold">{next}</span>
@@ -161,6 +161,35 @@ const COLUMNS: { key: keyof Order; label: string; numeric?: boolean }[] = [
   { key: "net_sales", label: "Net", numeric: true },
   { key: "fill_rate", label: "Fill %", numeric: true },
 ];
+
+const CASE_KEYS: (keyof Order)[] = [
+  "wd_cases",
+  "pw_cases",
+  "hm_cases",
+  "matcha_cases",
+  "xd_cases",
+  "wm_cases",
+];
+const TOTAL_KEYS: (keyof Order)[] = [
+  ...CASE_KEYS,
+  "gross_sales",
+  "promo_discount",
+  "net_sales",
+];
+
+const MONEY_KEYS = new Set<keyof Order>(["gross_sales", "promo_discount", "net_sales"]);
+
+function rowTotalCases(r: Order): number {
+  return CASE_KEYS.reduce((s, k) => s + (Number(r[k]) || 0), 0);
+}
+
+function fmtMoney(n: number) {
+  return n.toLocaleString(undefined, {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  });
+}
 
 function PipelinePO() {
   const [rows, setRows] = useState<Order[]>([]);
@@ -226,6 +255,23 @@ function PipelinePO() {
   const fmtNum = (v: unknown) =>
     v == null || v === "" ? "—" : typeof v === "number" ? v.toLocaleString() : String(v);
 
+  const fmtCell = (k: keyof Order, v: unknown) => {
+    if (v == null || v === "") return "—";
+    if (MONEY_KEYS.has(k) && typeof v === "number") return fmtMoney(v);
+    if (typeof v === "number") return v.toLocaleString();
+    return String(v);
+  };
+
+  const totals = useMemo(() => {
+    const t: Record<string, number> = { total_cases: 0 };
+    for (const k of TOTAL_KEYS) t[k as string] = 0;
+    for (const r of filtered) {
+      for (const k of TOTAL_KEYS) t[k as string] += Number(r[k]) || 0;
+      t.total_cases += rowTotalCases(r);
+    }
+    return t;
+  }, [filtered]);
+
   function applyUpdate(updated: Order) {
     setRows((rs) => rs.map((r) => (r.id === updated.id ? updated : r)));
   }
@@ -234,7 +280,7 @@ function PipelinePO() {
     <>
       <PageHeader title="Pipeline PO" subtitle="Customer orders in the pipeline." />
 
-      <div className="mb-4">
+      <div className="mb-5">
         <Link
           to="/collections"
           className="text-sm font-medium text-primary hover:underline"
@@ -243,105 +289,94 @@ function PipelinePO() {
         </Link>
       </div>
 
-      <div className="mb-4 flex flex-wrap items-center gap-3">
-        <label className="flex items-center gap-2 text-sm">
-          <span className="text-muted-foreground">Date</span>
-          <select
-            className="rounded-md border border-border bg-background px-2 py-1 text-sm"
-            value={dateFilter}
-            onChange={(e) => setDateFilter(e.target.value as DateFilter)}
-          >
-            <option value="all">All</option>
-            <option value="this_month">This month</option>
-            <option value="last_month">Last month</option>
-            <option value="quarter">By Quarter</option>
-            <option value="this_year">This year</option>
-            <option value="last_year">Last year</option>
-            <option value="custom">Custom range</option>
-          </select>
-        </label>
+      <div className="mb-5 flex flex-wrap items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3 shadow-sm">
+        <FilterSelect
+          label="Date"
+          value={dateFilter}
+          onChange={(v) => setDateFilter(v as DateFilter)}
+          options={[
+            { value: "all", label: "All" },
+            { value: "this_month", label: "This month" },
+            { value: "last_month", label: "Last month" },
+            { value: "quarter", label: "By Quarter" },
+            { value: "this_year", label: "This year" },
+            { value: "last_year", label: "Last year" },
+            { value: "custom", label: "Custom range" },
+          ]}
+        />
         {dateFilter === "quarter" && (
-          <select
-            className="rounded-md border border-border bg-background px-2 py-1 text-sm"
+          <FilterSelect
+            label="Quarter"
             value={quarter}
-            onChange={(e) => setQuarter(e.target.value as Quarter)}
-          >
-            <option value="Q1">Q1</option>
-            <option value="Q2">Q2</option>
-            <option value="Q3">Q3</option>
-            <option value="Q4">Q4</option>
-          </select>
+            onChange={(v) => setQuarter(v as Quarter)}
+            options={[
+              { value: "Q1", label: "Q1" },
+              { value: "Q2", label: "Q2" },
+              { value: "Q3", label: "Q3" },
+              { value: "Q4", label: "Q4" },
+            ]}
+          />
         )}
         {dateFilter === "custom" && (
           <>
-            <label className="flex items-center gap-1 text-sm">
-              <span className="text-muted-foreground">From</span>
+            <label className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              From
               <input
                 type="date"
-                className="rounded-md border border-border bg-background px-2 py-1 text-sm"
+                className="rounded-lg border border-border bg-background px-3 py-1.5 text-sm font-normal normal-case tracking-normal text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                 value={customFrom}
                 onChange={(e) => setCustomFrom(e.target.value)}
               />
             </label>
-            <label className="flex items-center gap-1 text-sm">
-              <span className="text-muted-foreground">To</span>
+            <label className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              To
               <input
                 type="date"
-                className="rounded-md border border-border bg-background px-2 py-1 text-sm"
+                className="rounded-lg border border-border bg-background px-3 py-1.5 text-sm font-normal normal-case tracking-normal text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                 value={customTo}
                 onChange={(e) => setCustomTo(e.target.value)}
               />
             </label>
           </>
         )}
-        <label className="flex items-center gap-2 text-sm">
-          <span className="text-muted-foreground">Distributor</span>
-          <select
-            className="rounded-md border border-border bg-background px-2 py-1 text-sm"
-            value={dist}
-            onChange={(e) => setDist(e.target.value as Distributor | "all")}
-          >
-            <option value="all">All</option>
-            {DISTRIBUTORS.map((d) => (
-              <option key={d} value={d}>
-                {d}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex items-center gap-2 text-sm">
-          <span className="text-muted-foreground">Status</span>
-          <select
-            className="rounded-md border border-border bg-background px-2 py-1 text-sm"
-            value={status}
-            onChange={(e) => setStatus(e.target.value as Status | "all")}
-          >
-            <option value="all">All</option>
-            {STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-        </label>
-        <span className="ml-auto text-xs text-muted-foreground">
+        <FilterSelect
+          label="Distributor"
+          value={dist}
+          onChange={(v) => setDist(v as Distributor | "all")}
+          options={[
+            { value: "all", label: "All" },
+            ...DISTRIBUTORS.map((d) => ({ value: d, label: d })),
+          ]}
+        />
+        <FilterSelect
+          label="Status"
+          value={status}
+          onChange={(v) => setStatus(v as Status | "all")}
+          options={[
+            { value: "all", label: "All" },
+            ...STATUSES.map((s) => ({ value: s, label: s })),
+          ]}
+        />
+        <span className="ml-auto rounded-full bg-muted px-3 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           {filtered.length} {filtered.length === 1 ? "order" : "orders"}
         </span>
       </div>
 
-      <div className="overflow-x-auto rounded-2xl border border-border bg-card">
+      <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-md ring-1 ring-black/5">
         <table className="w-full min-w-max text-sm">
-          <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
-            <tr>
+          <thead>
+            <tr className="bg-muted/60 text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
               {COLUMNS.map((c) => (
                 <th
                   key={String(c.key)}
-                  className={`cursor-pointer select-none px-3 py-2 font-medium ${c.numeric ? "text-right" : "text-left"}`}
+                  className={`cursor-pointer select-none px-3 py-3 font-semibold ${c.numeric ? "text-right" : "text-left"}`}
                   onClick={() => toggleSort(c.key)}
                 >
                   {c.label}
                   {sortKey === c.key && (
-                    <span className="ml-1">{sortDir === "asc" ? "▲" : "▼"}</span>
+                    <span className="ml-1 text-primary">
+                      {sortDir === "asc" ? "▲" : "▼"}
+                    </span>
                   )}
                 </th>
               ))}
@@ -350,34 +385,37 @@ function PipelinePO() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={COLUMNS.length} className="p-6 text-center text-muted-foreground">
+                <td colSpan={COLUMNS.length} className="p-8 text-center text-muted-foreground">
                   Loading…
                 </td>
               </tr>
             ) : err ? (
               <tr>
-                <td colSpan={COLUMNS.length} className="p-6 text-center text-destructive">
+                <td colSpan={COLUMNS.length} className="p-8 text-center text-destructive">
                   {err}
                 </td>
               </tr>
             ) : filtered.length === 0 ? (
               <tr>
-                <td colSpan={COLUMNS.length} className="p-6 text-center text-muted-foreground">
+                <td colSpan={COLUMNS.length} className="p-8 text-center text-muted-foreground">
                   No orders match the current filters.
                 </td>
               </tr>
             ) : (
               filtered.map((r) => (
-                <tr key={r.id} className="border-t border-border hover:bg-muted/30">
+                <tr
+                  key={r.id}
+                  className="border-t border-border/70 transition-colors hover:bg-muted/40"
+                >
                   {COLUMNS.map((c) => (
                     <td
                       key={String(c.key)}
-                      className={`px-3 py-2 ${c.numeric ? "text-right font-mono" : ""}`}
+                      className={`px-3 py-2.5 ${c.numeric ? "text-right font-mono tabular-nums" : ""}`}
                     >
                       {c.key === "status" ? (
                         <StatusCell order={r} onChanged={applyUpdate} />
                       ) : c.numeric ? (
-                        fmtNum(r[c.key])
+                        fmtCell(c.key, r[c.key])
                       ) : (
                         ((r[c.key] as string) ?? "—")
                       )}
@@ -387,9 +425,85 @@ function PipelinePO() {
               ))
             )}
           </tbody>
+          {!loading && !err && filtered.length > 0 && (
+            <tfoot>
+              <tr
+                className="sticky bottom-0 text-xs uppercase tracking-wide"
+                style={{ backgroundColor: "#1C2340", color: "#ffffff" }}
+              >
+                {COLUMNS.map((c, idx) => {
+                  if (idx === 0) {
+                    return (
+                      <td key={String(c.key)} className="px-3 py-3 font-semibold">
+                        Totals
+                      </td>
+                    );
+                  }
+                  if (c.key === "wm_cases") {
+                    // WM total, then insert Total Cases in next column visually? Instead show WM here and total via fill_rate slot. Simpler: show all numeric totals inline.
+                  }
+                  if (c.numeric && TOTAL_KEYS.includes(c.key)) {
+                    const v = totals[c.key as string] ?? 0;
+                    return (
+                      <td
+                        key={String(c.key)}
+                        className="px-3 py-3 text-right font-mono tabular-nums font-semibold"
+                      >
+                        {MONEY_KEYS.has(c.key) ? fmtMoney(v) : v.toLocaleString()}
+                      </td>
+                    );
+                  }
+                  if (c.key === "customer") {
+                    return (
+                      <td
+                        key={String(c.key)}
+                        className="px-3 py-3 text-right font-mono tabular-nums font-semibold"
+                        title="Total cases across all SKUs"
+                      >
+                        <span className="mr-2 text-[10px] font-medium uppercase tracking-wide opacity-70">
+                          Total Cases
+                        </span>
+                        {totals.total_cases.toLocaleString()}
+                      </td>
+                    );
+                  }
+                  return <td key={String(c.key)} className="px-3 py-3" />;
+                })}
+              </tr>
+            </tfoot>
+          )}
         </table>
       </div>
     </>
+  );
+}
+
+function FilterSelect({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+}) {
+  return (
+    <label className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+      {label}
+      <select
+        className="rounded-lg border border-border bg-background px-3 py-1.5 text-sm font-normal normal-case tracking-normal text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
