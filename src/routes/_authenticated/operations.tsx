@@ -20,6 +20,15 @@ export const Route = createFileRoute("/_authenticated/operations")({
           </p>
         </Link>
         <Link
+          to="/fp-movements"
+          className="rounded-2xl border border-border bg-card p-5 hover:border-primary/50 hover:bg-muted/40"
+        >
+          <h3 className="text-base font-semibold">FP Movements</h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Finished product ledger.
+          </p>
+        </Link>
+        <Link
           to="/ip-movements"
           className="rounded-2xl border border-border bg-card p-5 hover:border-primary/50 hover:bg-muted/40"
         >
