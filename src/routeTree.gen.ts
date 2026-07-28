@@ -15,6 +15,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedSystemRouteImport } from './routes/_authenticated/system'
 import { Route as AuthenticatedSalesRouteImport } from './routes/_authenticated/sales'
 import { Route as AuthenticatedOperationsRouteImport } from './routes/_authenticated/operations'
+import { Route as AuthenticatedIpMovementsRouteImport } from './routes/_authenticated/ip-movements'
 import { Route as AuthenticatedHomeRouteImport } from './routes/_authenticated/home'
 import { Route as AuthenticatedFulfillmentRouteImport } from './routes/_authenticated/fulfillment'
 import { Route as AuthenticatedFpStockRouteImport } from './routes/_authenticated/fp-stock'
@@ -51,6 +52,12 @@ const AuthenticatedOperationsRoute = AuthenticatedOperationsRouteImport.update({
   path: '/operations',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedIpMovementsRoute =
+  AuthenticatedIpMovementsRouteImport.update({
+    id: '/ip-movements',
+    path: '/ip-movements',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedHomeRoute = AuthenticatedHomeRouteImport.update({
   id: '/home',
   path: '/home',
@@ -92,6 +99,7 @@ export interface FileRoutesByFullPath {
   '/fp-stock': typeof AuthenticatedFpStockRoute
   '/fulfillment': typeof AuthenticatedFulfillmentRoute
   '/home': typeof AuthenticatedHomeRoute
+  '/ip-movements': typeof AuthenticatedIpMovementsRoute
   '/operations': typeof AuthenticatedOperationsRoute
   '/sales': typeof AuthenticatedSalesRoute
   '/system': typeof AuthenticatedSystemRoute
@@ -105,6 +113,7 @@ export interface FileRoutesByTo {
   '/fp-stock': typeof AuthenticatedFpStockRoute
   '/fulfillment': typeof AuthenticatedFulfillmentRoute
   '/home': typeof AuthenticatedHomeRoute
+  '/ip-movements': typeof AuthenticatedIpMovementsRoute
   '/operations': typeof AuthenticatedOperationsRoute
   '/sales': typeof AuthenticatedSalesRoute
   '/system': typeof AuthenticatedSystemRoute
@@ -120,6 +129,7 @@ export interface FileRoutesById {
   '/_authenticated/fp-stock': typeof AuthenticatedFpStockRoute
   '/_authenticated/fulfillment': typeof AuthenticatedFulfillmentRoute
   '/_authenticated/home': typeof AuthenticatedHomeRoute
+  '/_authenticated/ip-movements': typeof AuthenticatedIpMovementsRoute
   '/_authenticated/operations': typeof AuthenticatedOperationsRoute
   '/_authenticated/sales': typeof AuthenticatedSalesRoute
   '/_authenticated/system': typeof AuthenticatedSystemRoute
@@ -135,6 +145,7 @@ export interface FileRouteTypes {
     | '/fp-stock'
     | '/fulfillment'
     | '/home'
+    | '/ip-movements'
     | '/operations'
     | '/sales'
     | '/system'
@@ -148,6 +159,7 @@ export interface FileRouteTypes {
     | '/fp-stock'
     | '/fulfillment'
     | '/home'
+    | '/ip-movements'
     | '/operations'
     | '/sales'
     | '/system'
@@ -162,6 +174,7 @@ export interface FileRouteTypes {
     | '/_authenticated/fp-stock'
     | '/_authenticated/fulfillment'
     | '/_authenticated/home'
+    | '/_authenticated/ip-movements'
     | '/_authenticated/operations'
     | '/_authenticated/sales'
     | '/_authenticated/system'
@@ -219,6 +232,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedOperationsRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/ip-movements': {
+      id: '/_authenticated/ip-movements'
+      path: '/ip-movements'
+      fullPath: '/ip-movements'
+      preLoaderRoute: typeof AuthenticatedIpMovementsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/home': {
       id: '/_authenticated/home'
       path: '/home'
@@ -270,6 +290,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedFpStockRoute: typeof AuthenticatedFpStockRoute
   AuthenticatedFulfillmentRoute: typeof AuthenticatedFulfillmentRoute
   AuthenticatedHomeRoute: typeof AuthenticatedHomeRoute
+  AuthenticatedIpMovementsRoute: typeof AuthenticatedIpMovementsRoute
   AuthenticatedOperationsRoute: typeof AuthenticatedOperationsRoute
   AuthenticatedSalesRoute: typeof AuthenticatedSalesRoute
   AuthenticatedSystemRoute: typeof AuthenticatedSystemRoute
@@ -281,6 +302,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedFpStockRoute: AuthenticatedFpStockRoute,
   AuthenticatedFulfillmentRoute: AuthenticatedFulfillmentRoute,
   AuthenticatedHomeRoute: AuthenticatedHomeRoute,
+  AuthenticatedIpMovementsRoute: AuthenticatedIpMovementsRoute,
   AuthenticatedOperationsRoute: AuthenticatedOperationsRoute,
   AuthenticatedSalesRoute: AuthenticatedSalesRoute,
   AuthenticatedSystemRoute: AuthenticatedSystemRoute,
