@@ -4,7 +4,10 @@ import { PageHeader } from "@/components/app-shell";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 
-type Row = Database["public"]["Tables"]["fp_movements"]["Row"];
+type Row = Pick<
+  Database["public"]["Tables"]["fp_movements"]["Row"],
+  "id" | "movement_date" | "type" | "sku" | "cases" | "warehouse" | "lot_number" | "concept" | "notes"
+>;
 
 function FPMovements() {
   const [rows, setRows] = useState<Row[]>([]);
