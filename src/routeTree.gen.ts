@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ApiProcessPoRouteImport } from './routes/api/process-po'
 import { Route as AuthenticatedSystemRouteImport } from './routes/_authenticated/system'
 import { Route as AuthenticatedSalesRouteImport } from './routes/_authenticated/sales'
 import { Route as AuthenticatedOperationsRouteImport } from './routes/_authenticated/operations'
@@ -36,6 +37,11 @@ const AuthenticatedRouteRoute = AuthenticatedRouteRouteImport.update({
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiProcessPoRoute = ApiProcessPoRouteImport.update({
+  id: '/api/process-po',
+  path: '/api/process-po',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthenticatedSystemRoute = AuthenticatedSystemRouteImport.update({
@@ -111,6 +117,7 @@ export interface FileRoutesByFullPath {
   '/operations': typeof AuthenticatedOperationsRoute
   '/sales': typeof AuthenticatedSalesRoute
   '/system': typeof AuthenticatedSystemRoute
+  '/api/process-po': typeof ApiProcessPoRoute
   '/api/public/seed-users': typeof ApiPublicSeedUsersRoute
 }
 export interface FileRoutesByTo {
@@ -126,6 +133,7 @@ export interface FileRoutesByTo {
   '/operations': typeof AuthenticatedOperationsRoute
   '/sales': typeof AuthenticatedSalesRoute
   '/system': typeof AuthenticatedSystemRoute
+  '/api/process-po': typeof ApiProcessPoRoute
   '/api/public/seed-users': typeof ApiPublicSeedUsersRoute
 }
 export interface FileRoutesById {
@@ -143,6 +151,7 @@ export interface FileRoutesById {
   '/_authenticated/operations': typeof AuthenticatedOperationsRoute
   '/_authenticated/sales': typeof AuthenticatedSalesRoute
   '/_authenticated/system': typeof AuthenticatedSystemRoute
+  '/api/process-po': typeof ApiProcessPoRoute
   '/api/public/seed-users': typeof ApiPublicSeedUsersRoute
 }
 export interface FileRouteTypes {
@@ -160,6 +169,7 @@ export interface FileRouteTypes {
     | '/operations'
     | '/sales'
     | '/system'
+    | '/api/process-po'
     | '/api/public/seed-users'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -175,6 +185,7 @@ export interface FileRouteTypes {
     | '/operations'
     | '/sales'
     | '/system'
+    | '/api/process-po'
     | '/api/public/seed-users'
   id:
     | '__root__'
@@ -191,6 +202,7 @@ export interface FileRouteTypes {
     | '/_authenticated/operations'
     | '/_authenticated/sales'
     | '/_authenticated/system'
+    | '/api/process-po'
     | '/api/public/seed-users'
   fileRoutesById: FileRoutesById
 }
@@ -198,6 +210,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
+  ApiProcessPoRoute: typeof ApiProcessPoRoute
   ApiPublicSeedUsersRoute: typeof ApiPublicSeedUsersRoute
 }
 
@@ -222,6 +235,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/process-po': {
+      id: '/api/process-po'
+      path: '/api/process-po'
+      fullPath: '/api/process-po'
+      preLoaderRoute: typeof ApiProcessPoRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authenticated/system': {
@@ -337,8 +357,19 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
+  ApiProcessPoRoute: ApiProcessPoRoute,
   ApiPublicSeedUsersRoute: ApiPublicSeedUsersRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}
