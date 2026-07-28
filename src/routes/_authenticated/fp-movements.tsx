@@ -19,7 +19,7 @@ function FPMovements() {
     (async () => {
       const { data, error } = await supabase
         .from("fp_movements")
-        .select("movement_date, type, sku, cases, warehouse, lot_number, concept, notes")
+        .select("id, movement_date, type, sku, cases, warehouse, lot_number, concept, notes")
         .order("movement_date", { ascending: false });
       if (cancel) return;
       if (error) setErr(error.message);
