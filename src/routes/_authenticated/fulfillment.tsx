@@ -66,6 +66,7 @@ function StatusCell({ order, onChanged }: { order: Order; onChanged: (o: Order) 
     }
     const { data, error } = await supabase.from("customer_orders").update(patch).eq("id", order.id).select().single();
     if (error || !data) { setSaving(false); toast.error(error?.message ?? "Failed"); return; }
+
     const { data: userData } = await supabase.auth.getUser();
     await supabase.from("audit_log").insert({
       table_name: "customer_orders", record_id: order.id, action: "status_change",
@@ -74,7 +75,7 @@ function StatusCell({ order, onChanged }: { order: Order; onChanged: (o: Order) 
       new_data: { field: "status", new_value: newStatus },
     });
     onChanged(data); setSaving(false);
-    toast.success(`Status → ${newStatus}`);
+    toast.success(`Status → ${newStatus}${newStatus === "Invoiced" ? " · invoice date set to today" : ""}`);
   }
 
   return (
@@ -806,7 +807,7 @@ function cellClass(c: (typeof COLUMNS)[number]) {
 
 function renderBodyCell(r: Order, c: (typeof COLUMNS)[number], onChanged: (o: Order) => void, onOpenDetail: (o: Order) => void) {
   if (c.key === "status") return <StatusCell order={r} onChanged={onChanged} />;
-  if (c.key === "ship_est_date") return <ShipDateCell date={r.ship_est_date} />;
+  if (c.key === "ship_est_date") return <ShipDateCell date={r.ship_est_date} status={r.status} />;
   if (c.key === "po_number") return (
     <button type="button" onClick={() => onOpenDetail(r)}
       className="font-mono text-xs font-semibold hover:underline" style={{ color: "#A3224A" }}>
@@ -1080,13 +1081,16 @@ function MultiSelect({ label, options, selected, onChange }: {
   );
 }
 
-// ─── Ship date cell — colored by urgency ─────────────────────────────────────
-function ShipDateCell({ date }: { date: string | null }) {
+// ─── Ship date cell — colored by urgency, only for non-Invoiced ──────────────
+function ShipDateCell({ date, status }: { date: string | null; status: Status }) {
   if (!date) return <span className="text-muted-foreground">—</span>;
+  // Don't flag ship date if already invoiced — it's done
+  if (status === "Invoiced") {
+    return <span className="font-mono text-xs text-muted-foreground">{date}</span>;
+  }
   const today = new Date(); today.setHours(0,0,0,0);
   const d = new Date(date); d.setHours(0,0,0,0);
   const diff = Math.floor((d.getTime() - today.getTime()) / 86400000);
-  // End of current week (Sunday)
   const dayOfWeek = today.getDay();
   const daysUntilSunday = 7 - dayOfWeek;
   const endOfWeek = new Date(today); endOfWeek.setDate(today.getDate() + daysUntilSunday);
@@ -1108,39 +1112,71 @@ function ShipDateCell({ date }: { date: string | null }) {
 function CollectionsTab({ orders }: { orders: Order[] }) {
   const today = new Date().toISOString().slice(0, 10);
   const TERMS: Record<string, number> = { UNFI: 30, KeHe: 30, RFD: 30, Rainforest: 60, Direct: 30, Other: 30 };
+  const [filterDist, setFilterDist] = useState<string>("all");
+  const [filterStatus, setFilterStatus] = useState<string>("all");
+  const [sortKey, setSortKey] = useState<string>("daysUntilDue");
+  const [sortDir, setSortDir] = useState<"asc"|"desc">("asc");
 
-  // Build collections rows — invoiced POs within payment window
   const rows = useMemo(() => {
     return orders
       .filter(o => o.status === "Invoiced" && o.invoice_date && !o.collected_at)
       .map(o => {
         const terms = TERMS[o.distributor] ?? 30;
-        const invDate = new Date(o.invoice_date!);
-        const dueDate = new Date(invDate.getTime() + terms * 86400000);
+        const dueDate = new Date(new Date(o.invoice_date!).getTime() + terms * 86400000);
         const dueDateStr = dueDate.toISOString().slice(0, 10);
         const daysUntilDue = Math.floor((dueDate.getTime() - new Date(today).getTime()) / 86400000);
         const cutoff = new Date(new Date(today).getTime() - terms * 86400000).toISOString().slice(0, 10);
-        // Only show if within payment window (invoice_date >= cutoff)
         if (o.invoice_date! < cutoff) return null;
-        return { order: o, terms, dueDate: dueDateStr, daysUntilDue };
+        const statusLabel = daysUntilDue < 0 ? "Overdue" : daysUntilDue <= 7 ? "Due soon" : "Upcoming";
+        return { order: o, terms, dueDate: dueDateStr, daysUntilDue, statusLabel };
       })
-      .filter(Boolean)
-      .sort((a, b) => a!.daysUntilDue - b!.daysUntilDue) as { order: Order; terms: number; dueDate: string; daysUntilDue: number }[];
+      .filter(Boolean) as { order: Order; terms: number; dueDate: string; daysUntilDue: number; statusLabel: string }[];
   }, [orders, today]);
 
-  const totalPending = rows.reduce((s, r) => s + (Number(r.order.net_sales) || 0), 0);
-  const dueThisWeek = rows.filter(r => r.daysUntilDue <= 7 && r.daysUntilDue >= 0).reduce((s, r) => s + (Number(r.order.net_sales) || 0), 0);
-  const overdue = rows.filter(r => r.daysUntilDue < 0).reduce((s, r) => s + (Number(r.order.net_sales) || 0), 0);
+  const filtered = useMemo(() => {
+    return rows
+      .filter(r =>
+        (filterDist === "all" || r.order.distributor === filterDist) &&
+        (filterStatus === "all" || r.statusLabel === filterStatus)
+      )
+      .sort((a, b) => {
+        let av: number | string = 0, bv: number | string = 0;
+        if (sortKey === "daysUntilDue") { av = a.daysUntilDue; bv = b.daysUntilDue; }
+        else if (sortKey === "net_sales") { av = Number(a.order.net_sales) || 0; bv = Number(b.order.net_sales) || 0; }
+        else if (sortKey === "distributor") { av = a.order.distributor; bv = b.order.distributor; }
+        else if (sortKey === "invoice_date") { av = a.order.invoice_date ?? ""; bv = b.order.invoice_date ?? ""; }
+        if (av < bv) return sortDir === "asc" ? -1 : 1;
+        if (av > bv) return sortDir === "asc" ? 1 : -1;
+        return 0;
+      });
+  }, [rows, filterDist, filterStatus, sortKey, sortDir]);
+
+  function toggleSort(key: string) {
+    if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");
+    else { setSortKey(key); setSortDir("asc"); }
+  }
+
+  const totalPending = filtered.reduce((s, r) => s + (Number(r.order.net_sales) || 0), 0);
+  const dueThisWeek = filtered.filter(r => r.daysUntilDue <= 7 && r.daysUntilDue >= 0).reduce((s, r) => s + (Number(r.order.net_sales) || 0), 0);
+  const overdue = filtered.filter(r => r.daysUntilDue < 0).reduce((s, r) => s + (Number(r.order.net_sales) || 0), 0);
 
   const [marking, setMarking] = useState<string | null>(null);
 
   async function markCollected(orderId: string) {
     setMarking(orderId);
-    await supabase.from("customer_orders").update({ collected_at: new Date().toISOString() }).eq("id", orderId);
-    toast.success("Marked as collected");
+    const { error } = await supabase.from("customer_orders").update({ collected_at: new Date().toISOString() }).eq("id", orderId);
+    if (error) { toast.error("Failed"); } else { toast.success("Marked as collected ✓"); }
     setMarking(null);
-    // Refresh via parent would be ideal — for now show toast
   }
+
+  const SortTh = ({ label, key }: { label: string; key: string }) => (
+    <th onClick={() => toggleSort(key)}
+      className="px-4 py-2.5 text-left cursor-pointer hover:text-foreground select-none">
+      {label}{sortKey === key ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
+    </th>
+  );
+
+  const distOptions = [...new Set(rows.map(r => r.order.distributor))].sort();
 
   return (
     <div className="space-y-5">
@@ -1149,27 +1185,43 @@ function CollectionsTab({ orders }: { orders: Order[] }) {
         <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
           <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2">Total Pending</p>
           <p className="text-2xl font-bold font-mono text-orange-500">${Math.round(totalPending).toLocaleString()}</p>
-          <p className="text-xs text-muted-foreground mt-1">{rows.length} invoices within terms</p>
+          <p className="text-xs text-muted-foreground mt-1">{filtered.length} invoices within terms</p>
         </div>
         <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
           <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2">Due This Week</p>
           <p className="text-2xl font-bold font-mono text-orange-600">${Math.round(dueThisWeek).toLocaleString()}</p>
-          <p className="text-xs text-muted-foreground mt-1">{rows.filter(r => r.daysUntilDue <= 7 && r.daysUntilDue >= 0).length} invoices</p>
+          <p className="text-xs text-muted-foreground mt-1">{filtered.filter(r => r.daysUntilDue <= 7 && r.daysUntilDue >= 0).length} invoices</p>
         </div>
         <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
           <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2">Overdue</p>
           <p className={`text-2xl font-bold font-mono ${overdue > 0 ? "text-red-600" : "text-emerald-600"}`}>${Math.round(overdue).toLocaleString()}</p>
-          <p className="text-xs text-muted-foreground mt-1">{rows.filter(r => r.daysUntilDue < 0).length} invoices past due</p>
+          <p className="text-xs text-muted-foreground mt-1">{filtered.filter(r => r.daysUntilDue < 0).length} invoices past due</p>
         </div>
       </div>
 
-      {/* Payment terms reminder */}
-      <div className="flex gap-2 flex-wrap">
-        {[["UNFI","30d"],["KeHe","30d"],["RFD","30d"],["Rainforest","60d ⚠️"]].map(([d,t]) => (
-          <span key={d} className={`rounded-full px-3 py-1 text-xs font-semibold ${d === "Rainforest" ? "bg-orange-100 text-orange-700 border border-orange-200" : "bg-muted text-muted-foreground"}`}>
-            {d}: {t}
-          </span>
-        ))}
+      {/* Payment terms + Filters */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex gap-2 flex-wrap">
+          {[["UNFI","30d"],["KeHe","30d"],["RFD","30d"],["Rainforest","60d ⚠️"]].map(([d,t]) => (
+            <span key={d} className={`rounded-full px-3 py-1 text-xs font-semibold ${d === "Rainforest" ? "bg-orange-100 text-orange-700 border border-orange-200" : "bg-muted text-muted-foreground"}`}>
+              {d}: {t}
+            </span>
+          ))}
+        </div>
+        <div className="ml-auto flex gap-2 flex-wrap">
+          <select value={filterDist} onChange={e => setFilterDist(e.target.value)}
+            className="rounded-lg border border-border bg-background px-3 py-1.5 text-sm focus:outline-none">
+            <option value="all">All distributors</option>
+            {distOptions.map(d => <option key={d} value={d}>{d}</option>)}
+          </select>
+          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
+            className="rounded-lg border border-border bg-background px-3 py-1.5 text-sm focus:outline-none">
+            <option value="all">All statuses</option>
+            <option value="Overdue">Overdue</option>
+            <option value="Due soon">Due soon (≤7d)</option>
+            <option value="Upcoming">Upcoming</option>
+          </select>
+        </div>
       </div>
 
       {/* Collections table */}
@@ -1177,27 +1229,28 @@ function CollectionsTab({ orders }: { orders: Order[] }) {
         <table className="w-full text-sm">
           <thead>
             <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/40 border-b border-border">
-              <th className="px-4 py-2.5 text-left">Distributor</th>
+              <SortTh label="Distributor" key="distributor" />
               <th className="px-4 py-2.5 text-left">PO #</th>
               <th className="px-4 py-2.5 text-left">Customer</th>
-              <th className="px-4 py-2.5 text-left">Invoice Date</th>
+              <SortTh label="Invoice Date" key="invoice_date" />
               <th className="px-4 py-2.5 text-center">Terms</th>
-              <th className="px-4 py-2.5 text-left">Due Date</th>
-              <th className="px-4 py-2.5 text-right">Amount</th>
+              <SortTh label="Due Date" key="daysUntilDue" />
+              <SortTh label="Amount" key="net_sales" />
               <th className="px-4 py-2.5 text-center">Status</th>
               <th className="px-4 py-2.5" />
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 ? (
-              <tr><td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">No pending collections — all invoices collected ✅</td></tr>
-            ) : rows.map(({ order: o, terms, dueDate, daysUntilDue }) => {
+            {filtered.length === 0 ? (
+              <tr><td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">No pending collections ✅</td></tr>
+            ) : filtered.map(({ order: o, terms, dueDate, daysUntilDue, statusLabel }) => {
               const isOverdue = daysUntilDue < 0;
-              const isDueSoon = daysUntilDue <= 7 && daysUntilDue >= 0;
+              const isDueSoon = daysUntilDue >= 0 && daysUntilDue <= 7;
+              const rowBg = isOverdue ? "bg-red-50/40" : isDueSoon ? "bg-orange-50/30" : "";
               return (
-                <tr key={o.id} className={`border-t border-border/60 hover:bg-muted/20 ${isOverdue ? "bg-red-50/30" : ""}`}>
-                  <td className="px-4 py-2 font-semibold" style={{ color: "#1C2340" }}>{o.distributor}</td>
-                  <td className="px-4 py-2 font-mono text-xs text-[#A3224A] font-semibold">{o.po_number}</td>
+                <tr key={o.id} className={`border-t border-border/60 hover:bg-muted/20 ${rowBg}`}>
+                  <td className="px-4 py-2 font-semibold" style={{color:"#1C2340"}}>{o.distributor}</td>
+                  <td className="px-4 py-2 font-mono text-xs font-semibold" style={{color:"#A3224A"}}>{o.po_number}</td>
                   <td className="px-4 py-2 text-muted-foreground text-xs">{o.customer}</td>
                   <td className="px-4 py-2 font-mono text-xs">{o.invoice_date}</td>
                   <td className="px-4 py-2 text-center">
@@ -1208,8 +1261,8 @@ function CollectionsTab({ orders }: { orders: Order[] }) {
                   <td className="px-4 py-2 font-mono text-xs">
                     <span className={isOverdue ? "text-red-600 font-bold" : isDueSoon ? "text-orange-500 font-semibold" : "text-muted-foreground"}>
                       {dueDate}
-                      {isOverdue && <span className="ml-1 text-[10px]">({Math.abs(daysUntilDue)}d overdue)</span>}
-                      {isDueSoon && !isOverdue && <span className="ml-1 text-[10px]">(in {daysUntilDue}d)</span>}
+                      {isOverdue && <span className="ml-1 text-[10px] font-semibold">({Math.abs(daysUntilDue)}d late)</span>}
+                      {isDueSoon && <span className="ml-1 text-[10px]">(in {daysUntilDue}d)</span>}
                     </span>
                   </td>
                   <td className="px-4 py-2 text-right font-mono font-semibold text-emerald-600">
@@ -1217,7 +1270,7 @@ function CollectionsTab({ orders }: { orders: Order[] }) {
                   </td>
                   <td className="px-4 py-2 text-center">
                     <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${isOverdue ? "bg-red-100 text-red-700" : isDueSoon ? "bg-orange-100 text-orange-700" : "bg-blue-50 text-blue-700"}`}>
-                      {isOverdue ? `Overdue` : isDueSoon ? `Due in ${daysUntilDue}d` : `Upcoming · ${daysUntilDue}d`}
+                      {statusLabel}
                     </span>
                   </td>
                   <td className="px-4 py-2 text-right">
@@ -1230,10 +1283,10 @@ function CollectionsTab({ orders }: { orders: Order[] }) {
               );
             })}
           </tbody>
-          {rows.length > 0 && (
+          {filtered.length > 0 && (
             <tfoot>
-              <tr style={{ backgroundColor: "#1C2340", color: "#fff" }}>
-                <td colSpan={6} className="px-4 py-2 text-xs font-semibold">Total ({rows.length} invoices)</td>
+              <tr style={{backgroundColor:"#1C2340", color:"#fff"}}>
+                <td colSpan={6} className="px-4 py-2 text-xs font-semibold">Total ({filtered.length} invoices)</td>
                 <td className="px-4 py-2 text-right font-mono font-bold text-emerald-400">${Math.round(totalPending).toLocaleString()}</td>
                 <td colSpan={2} />
               </tr>
