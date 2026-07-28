@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { PageHeader } from "@/components/app-shell";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
@@ -10,6 +11,95 @@ type Status = Database["public"]["Enums"]["order_status"];
 
 const DISTRIBUTORS: Distributor[] = ["UNFI", "KeHe", "Rainforest", "RFD", "Direct", "Other"];
 const STATUSES: Status[] = ["Open", "Acknowledged", "Shipment", "Invoiced"];
+
+const NEXT_STATUS: Record<Status, Status | null> = {
+  Open: "Acknowledged",
+  Acknowledged: "Shipment",
+  Shipment: "Invoiced",
+  Invoiced: null,
+};
+
+const STATUS_STYLES: Record<Status, string> = {
+  Open: "bg-muted text-foreground",
+  Acknowledged: "bg-blue-100 text-blue-900 dark:bg-blue-950 dark:text-blue-100",
+  Shipment: "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-100",
+  Invoiced: "bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-100",
+};
+
+function StatusCell({
+  order,
+  onChanged,
+}: {
+  order: Order;
+  onChanged: (updated: Order) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const next = NEXT_STATUS[order.status];
+
+  async function changeTo(newStatus: Status) {
+    setSaving(true);
+    setOpen(false);
+    const oldStatus = order.status;
+    const patch: Database["public"]["Tables"]["customer_orders"]["Update"] = {
+      status: newStatus,
+    };
+    if (newStatus === "Invoiced" && !order.invoice_date) {
+      patch.invoice_date = new Date().toISOString().slice(0, 10);
+    }
+    const { data, error } = await supabase
+      .from("customer_orders")
+      .update(patch)
+      .eq("id", order.id)
+      .select()
+      .single();
+    if (error || !data) {
+      setSaving(false);
+      toast.error(error?.message ?? "Failed to update status");
+      return;
+    }
+    const { data: userData } = await supabase.auth.getUser();
+    await supabase.from("audit_log").insert({
+      table_name: "customer_orders",
+      record_id: order.id,
+      action: "status_change",
+      user_id: userData.user?.id ?? null,
+      old_data: { field: "status", old_value: oldStatus },
+      new_data: { field: "status", new_value: newStatus },
+    });
+    onChanged(data);
+    setSaving(false);
+    toast.success(`Status updated to ${newStatus}`);
+  }
+
+  return (
+    <div className="relative inline-block">
+      <button
+        type="button"
+        disabled={!next || saving}
+        onClick={() => setOpen((o) => !o)}
+        className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[order.status]} ${next && !saving ? "cursor-pointer hover:ring-2 hover:ring-ring/40" : "cursor-default opacity-80"}`}
+      >
+        {order.status}
+        {next ? " ▾" : ""}
+      </button>
+      {open && next && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 z-20 mt-1 min-w-[10rem] rounded-md border border-border bg-popover p-1 shadow-md">
+            <button
+              type="button"
+              className="block w-full rounded px-2 py-1 text-left text-xs hover:bg-muted"
+              onClick={() => changeTo(next)}
+            >
+              Move to <span className="font-semibold">{next}</span>
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 const COLUMNS: { key: keyof Order; label: string; numeric?: boolean }[] = [
   { key: "po_number", label: "PO #" },
@@ -87,6 +177,10 @@ function PipelinePO() {
 
   const fmtNum = (v: unknown) =>
     v == null || v === "" ? "—" : typeof v === "number" ? v.toLocaleString() : String(v);
+
+  function applyUpdate(updated: Order) {
+    setRows((rs) => rs.map((r) => (r.id === updated.id ? updated : r)));
+  }
 
   return (
     <>
@@ -182,7 +276,13 @@ function PipelinePO() {
                       key={String(c.key)}
                       className={`px-3 py-2 ${c.numeric ? "text-right font-mono" : ""}`}
                     >
-                      {c.numeric ? fmtNum(r[c.key]) : (r[c.key] as string) ?? "—"}
+                      {c.key === "status" ? (
+                        <StatusCell order={r} onChanged={applyUpdate} />
+                      ) : c.numeric ? (
+                        fmtNum(r[c.key])
+                      ) : (
+                        ((r[c.key] as string) ?? "—")
+                      )}
                     </td>
                   ))}
                 </tr>
