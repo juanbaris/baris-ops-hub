@@ -303,7 +303,7 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
     const movements = SKU_ITEMS
       .filter(sk => Number(patch[sk.key]) > 0)
       .map(sk => ({
-        movement_date: patch.invoice_date,
+        movement_date: String(patch.invoice_date ?? new Date().toISOString().slice(0, 10)),
         type: "Out" as const,
         sku: sk.label.replace("&", "").replace(" ", "") as Database["public"]["Enums"]["sku"],
         cases: Number(patch[sk.key]),
