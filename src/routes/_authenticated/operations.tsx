@@ -21,7 +21,7 @@ const FP_CONCEPTS: FPConcept[] = ["Production","Sale","Sample","Damage","Transfe
 const IP_CONCEPTS: IPConcept[] = ["Procurement","Consumption","Damage","Transfer"];
 const FACILITIES: Facility[] = ["Heinlein","Empire","OOE"];
 
-type OpsTab = "stock" | "fp" | "ip" | "production";
+type OpsTab = "stock" | "fp" | "ip" | "production" | "cogs";
 
 function ymd(d = new Date()) { return d.toISOString().slice(0,10); }
 
@@ -560,6 +560,217 @@ function ProductionTab({ onAdded }: { onAdded: () => void }) {
   );
 }
 
+// ─── COGS Simulator Tab ───────────────────────────────────────────────────────
+const BOM_DATA: Record<string, { lbs_per_case: number; ingredients: Record<string, number> }> = {
+  PW:     { lbs_per_case: 2.5, ingredients: { "IQF Raspberry": 0.825, "Chocolate": 1.428, "Pistachio Paste": 0.200, "Cocoa Butter": 0.042, "Spirulina": 0.001 } },
+  XD:     { lbs_per_case: 2.5, ingredients: { "IQF Raspberry": 1.125, "Chocolate": 1.375 } },
+  HM:     { lbs_per_case: 2.5, ingredients: { "IQF Raspberry": 0.825, "Chocolate": 1.398, "Hazelnut Butter": 0.250, "Cocoa Butter": 0.024 } },
+  WD:     { lbs_per_case: 2.5, ingredients: { "IQF Raspberry": 0.750, "Chocolate": 1.719, "Cocoa Butter": 0.029 } },
+  WM:     { lbs_per_case: 2.5, ingredients: { "IQF Raspberry": 0.750, "Chocolate": 1.719, "Cocoa Butter": 0.029 } },
+  Matcha: { lbs_per_case: 2.5, ingredients: { "IQF Raspberry": 1.125, "Chocolate": 1.322, "Matcha Powder": 0.022, "Cocoa Butter": 0.025 } },
+};
+
+const DEFAULT_PRICES: Record<string, number> = {
+  "IQF Raspberry":   2.91,
+  "Chocolate":       3.80,
+  "Pistachio Paste": 9.50,
+  "Hazelnut Butter": 5.20,
+  "Matcha Powder":   15.00,
+  "Cocoa Butter":    6.00,
+  "Sea Salt":        0.50,
+  "Soy Lecithin":    2.00,
+  "Spirulina":       20.00,
+};
+
+const DEFAULT_TOLLING = 1.45;
+const DEFAULT_PACKAGING = 0.65;
+
+function COGSSimulatorTab() {
+  const [prices, setPrices] = useState({ ...DEFAULT_PRICES });
+  const [tolling, setTolling] = useState(DEFAULT_TOLLING);
+  const [packaging, setPackaging] = useState(DEFAULT_PACKAGING);
+  const [selectedSku, setSelectedSku] = useState<string>("XD");
+
+  function setPrice(ingredient: string, val: string) {
+    setPrices(p => ({ ...p, [ingredient]: parseFloat(val) || 0 }));
+  }
+
+  function calcCOGS(sku: string) {
+    const bom = BOM_DATA[sku];
+    if (!bom) return { rm: 0, total: 0, breakdown: [] };
+    const breakdown = Object.entries(bom.ingredients).map(([ing, lbs]) => ({
+      ingredient: ing,
+      lbs,
+      price: prices[ing] ?? DEFAULT_PRICES[ing] ?? 3.0,
+      cost: lbs * (prices[ing] ?? DEFAULT_PRICES[ing] ?? 3.0),
+    }));
+    const rm = breakdown.reduce((s, b) => s + b.cost, 0);
+    return { rm, total: rm + tolling + packaging, breakdown };
+  }
+
+  const allIngredients = [...new Set(Object.values(BOM_DATA).flatMap(b => Object.keys(b.ingredients)))].sort();
+  const detail = calcCOGS(selectedSku);
+
+  // Price sensitivity: what % change in each ingredient moves total COGS
+  const baseCOGS = calcCOGS(selectedSku).total;
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+        {/* Ingredient price inputs */}
+        <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+          <div className="px-5 py-3 border-b border-border bg-muted/30 flex items-center justify-between">
+            <p className="text-sm font-bold" style={{color:"#1C2340"}}>Ingredient Prices ($/lb)</p>
+            <button onClick={() => setPrices({...DEFAULT_PRICES})}
+              className="rounded-lg px-3 py-1 text-xs border border-border hover:bg-muted">
+              ↺ Reset
+            </button>
+          </div>
+          <div className="divide-y divide-border/60">
+            {allIngredients.map(ing => {
+              const current = prices[ing] ?? DEFAULT_PRICES[ing] ?? 0;
+              const def = DEFAULT_PRICES[ing] ?? 0;
+              const diff = def > 0 ? ((current - def) / def * 100) : 0;
+              return (
+                <div key={ing} className="flex items-center justify-between px-5 py-2.5 hover:bg-muted/20">
+                  <span className="text-sm">{ing}</span>
+                  <div className="flex items-center gap-3">
+                    {Math.abs(diff) > 0.5 && (
+                      <span className={`text-[10px] font-semibold ${diff > 0 ? "text-red-500" : "text-emerald-600"}`}>
+                        {diff > 0 ? "+" : ""}{diff.toFixed(1)}%
+                      </span>
+                    )}
+                    <input type="number" step="0.01" min="0"
+                      value={current}
+                      onChange={e => setPrice(ing, e.target.value)}
+                      className="w-20 text-right rounded-lg border border-border bg-background px-2 py-1 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/30" />
+                  </div>
+                </div>
+              );
+            })}
+            <div className="flex items-center justify-between px-5 py-2.5 bg-muted/10">
+              <span className="text-sm text-muted-foreground">Tolling ($/case)</span>
+              <input type="number" step="0.01" value={tolling} onChange={e => setTolling(parseFloat(e.target.value)||0)}
+                className="w-20 text-right rounded-lg border border-border bg-background px-2 py-1 text-sm font-mono focus:outline-none" />
+            </div>
+            <div className="flex items-center justify-between px-5 py-2.5 bg-muted/10">
+              <span className="text-sm text-muted-foreground">Packaging ($/case)</span>
+              <input type="number" step="0.01" value={packaging} onChange={e => setPackaging(parseFloat(e.target.value)||0)}
+                className="w-20 text-right rounded-lg border border-border bg-background px-2 py-1 text-sm font-mono focus:outline-none" />
+            </div>
+          </div>
+        </div>
+
+        {/* COGS breakdown for selected SKU */}
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+            <div className="px-5 py-3 border-b border-border bg-muted/30 flex items-center gap-3">
+              <p className="text-sm font-bold" style={{color:"#1C2340"}}>COGS Breakdown</p>
+              <div className="flex gap-1 ml-auto">
+                {SKUS.map(s => (
+                  <button key={s} onClick={() => setSelectedSku(s)}
+                    className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${selectedSku === s ? "text-white" : "bg-muted text-muted-foreground"}`}
+                    style={selectedSku === s ? {backgroundColor:"#A3224A"} : {}}>
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="divide-y divide-border/60">
+              {detail.breakdown.map(b => (
+                <div key={b.ingredient} className="flex items-center justify-between px-5 py-2 hover:bg-muted/20">
+                  <div>
+                    <span className="text-sm">{b.ingredient}</span>
+                    <span className="ml-2 text-xs text-muted-foreground font-mono">{b.lbs.toFixed(3)} lbs × ${b.price.toFixed(2)}</span>
+                  </div>
+                  <span className="font-mono text-sm font-semibold">${b.cost.toFixed(2)}</span>
+                </div>
+              ))}
+              <div className="flex items-center justify-between px-5 py-2 bg-muted/10">
+                <span className="text-sm text-muted-foreground">Tolling</span>
+                <span className="font-mono text-sm">${tolling.toFixed(2)}</span>
+              </div>
+              <div className="flex items-center justify-between px-5 py-2 bg-muted/10">
+                <span className="text-sm text-muted-foreground">Packaging</span>
+                <span className="font-mono text-sm">${packaging.toFixed(2)}</span>
+              </div>
+              <div className="flex items-center justify-between px-5 py-3" style={{backgroundColor:"#1C2340"}}>
+                <span className="text-sm font-bold text-white">Total COGS / case</span>
+                <span className="font-mono text-lg font-bold text-emerald-400">${detail.total.toFixed(2)}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* GM preview at $36.96 */}
+          <div className="rounded-2xl border border-border bg-card shadow-sm p-4">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Gross Margin preview at standard price</p>
+            {[["UNFI/KeHe", 36.96], ["RFD", 38.50]].map(([dist, price]) => {
+              const net = (price as number) * 0.82; // ~18% deductions
+              const gm = ((net - detail.total) / net * 100);
+              return (
+                <div key={dist as string} className="flex items-center justify-between py-1.5 border-b border-border/40 last:border-0">
+                  <span className="text-sm">{dist as string} · ${price as number}/case</span>
+                  <span className={`font-mono text-sm font-bold ${gm > 30 ? "text-emerald-600" : gm > 15 ? "text-orange-500" : "text-red-500"}`}>
+                    {gm.toFixed(1)}% GM
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* All SKUs comparison table */}
+      <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+        <div className="px-5 py-3 border-b border-border bg-muted/30">
+          <p className="text-sm font-bold" style={{color:"#1C2340"}}>All SKUs COGS Comparison</p>
+          <p className="text-xs text-muted-foreground">Based on current prices above · Source: Super BOM 04/20/2026</p>
+        </div>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
+              <th className="px-4 py-2.5 text-left">SKU</th>
+              <th className="px-4 py-2.5 text-right">RM Cost</th>
+              <th className="px-4 py-2.5 text-right">Tolling</th>
+              <th className="px-4 py-2.5 text-right">Packaging</th>
+              <th className="px-4 py-2.5 text-right font-bold">Total COGS</th>
+              <th className="px-4 py-2.5 text-right">vs Default</th>
+              <th className="px-4 py-2.5 text-right">GM @ $36.96</th>
+            </tr>
+          </thead>
+          <tbody>
+            {SKUS.map(sku => {
+              const r = calcCOGS(sku);
+              const defaultRM = Object.entries(BOM_DATA[sku]?.ingredients ?? {})
+                .reduce((s, [ing, lbs]) => s + lbs * (DEFAULT_PRICES[ing] ?? 3), 0);
+              const defaultTotal = defaultRM + DEFAULT_TOLLING + DEFAULT_PACKAGING;
+              const delta = r.total - defaultTotal;
+              const net = 36.96 * 0.82;
+              const gm = ((net - r.total) / net * 100);
+              return (
+                <tr key={sku} className="border-t border-border/60 hover:bg-muted/20">
+                  <td className="px-4 py-2 font-semibold" style={{color:"#1C2340"}}>{sku}</td>
+                  <td className="px-4 py-2 text-right font-mono">${r.rm.toFixed(2)}</td>
+                  <td className="px-4 py-2 text-right font-mono text-muted-foreground">${tolling.toFixed(2)}</td>
+                  <td className="px-4 py-2 text-right font-mono text-muted-foreground">${packaging.toFixed(2)}</td>
+                  <td className="px-4 py-2 text-right font-mono font-bold" style={{color:"#1C2340"}}>${r.total.toFixed(2)}</td>
+                  <td className={`px-4 py-2 text-right font-mono text-xs ${Math.abs(delta) < 0.01 ? "text-muted-foreground" : delta > 0 ? "text-red-500" : "text-emerald-600"}`}>
+                    {Math.abs(delta) < 0.01 ? "—" : (delta > 0 ? "+" : "") + delta.toFixed(2)}
+                  </td>
+                  <td className={`px-4 py-2 text-right font-mono font-semibold ${gm > 30 ? "text-emerald-600" : gm > 15 ? "text-orange-500" : "text-red-500"}`}>
+                    {gm.toFixed(1)}%
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 function OperationsPage() {
   const [tab, setTab] = useState<OpsTab>("stock");
@@ -584,6 +795,7 @@ function OperationsPage() {
     { id:"fp",         label:"FP Input" },
     { id:"ip",         label:"I&P Input" },
     { id:"production", label:"Production" },
+    { id:"cogs",       label:"COGS Simulator" },
   ];
 
   return (
@@ -604,6 +816,7 @@ function OperationsPage() {
       {tab === "fp"         && <FPInputTab movements={fpMovements} loading={loading} onAdded={loadAll} />}
       {tab === "ip"         && <IPInputTab movements={ipMovements} loading={loading} onAdded={loadAll} />}
       {tab === "production" && <ProductionTab onAdded={loadAll} />}
+      {tab === "cogs"       && <COGSSimulatorTab />}
     </>
   );
 }
