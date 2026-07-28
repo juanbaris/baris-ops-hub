@@ -19,6 +19,7 @@ import { Route as AuthenticatedIpMovementsRouteImport } from './routes/_authenti
 import { Route as AuthenticatedHomeRouteImport } from './routes/_authenticated/home'
 import { Route as AuthenticatedFulfillmentRouteImport } from './routes/_authenticated/fulfillment'
 import { Route as AuthenticatedFpStockRouteImport } from './routes/_authenticated/fp-stock'
+import { Route as AuthenticatedFpMovementsRouteImport } from './routes/_authenticated/fp-movements'
 import { Route as AuthenticatedFinanceRouteImport } from './routes/_authenticated/finance'
 import { Route as AuthenticatedCollectionsRouteImport } from './routes/_authenticated/collections'
 import { Route as ApiPublicSeedUsersRouteImport } from './routes/api/public/seed-users'
@@ -74,6 +75,12 @@ const AuthenticatedFpStockRoute = AuthenticatedFpStockRouteImport.update({
   path: '/fp-stock',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedFpMovementsRoute =
+  AuthenticatedFpMovementsRouteImport.update({
+    id: '/fp-movements',
+    path: '/fp-movements',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedFinanceRoute = AuthenticatedFinanceRouteImport.update({
   id: '/finance',
   path: '/finance',
@@ -96,6 +103,7 @@ export interface FileRoutesByFullPath {
   '/auth': typeof AuthRoute
   '/collections': typeof AuthenticatedCollectionsRoute
   '/finance': typeof AuthenticatedFinanceRoute
+  '/fp-movements': typeof AuthenticatedFpMovementsRoute
   '/fp-stock': typeof AuthenticatedFpStockRoute
   '/fulfillment': typeof AuthenticatedFulfillmentRoute
   '/home': typeof AuthenticatedHomeRoute
@@ -110,6 +118,7 @@ export interface FileRoutesByTo {
   '/auth': typeof AuthRoute
   '/collections': typeof AuthenticatedCollectionsRoute
   '/finance': typeof AuthenticatedFinanceRoute
+  '/fp-movements': typeof AuthenticatedFpMovementsRoute
   '/fp-stock': typeof AuthenticatedFpStockRoute
   '/fulfillment': typeof AuthenticatedFulfillmentRoute
   '/home': typeof AuthenticatedHomeRoute
@@ -126,6 +135,7 @@ export interface FileRoutesById {
   '/auth': typeof AuthRoute
   '/_authenticated/collections': typeof AuthenticatedCollectionsRoute
   '/_authenticated/finance': typeof AuthenticatedFinanceRoute
+  '/_authenticated/fp-movements': typeof AuthenticatedFpMovementsRoute
   '/_authenticated/fp-stock': typeof AuthenticatedFpStockRoute
   '/_authenticated/fulfillment': typeof AuthenticatedFulfillmentRoute
   '/_authenticated/home': typeof AuthenticatedHomeRoute
@@ -142,6 +152,7 @@ export interface FileRouteTypes {
     | '/auth'
     | '/collections'
     | '/finance'
+    | '/fp-movements'
     | '/fp-stock'
     | '/fulfillment'
     | '/home'
@@ -156,6 +167,7 @@ export interface FileRouteTypes {
     | '/auth'
     | '/collections'
     | '/finance'
+    | '/fp-movements'
     | '/fp-stock'
     | '/fulfillment'
     | '/home'
@@ -171,6 +183,7 @@ export interface FileRouteTypes {
     | '/auth'
     | '/_authenticated/collections'
     | '/_authenticated/finance'
+    | '/_authenticated/fp-movements'
     | '/_authenticated/fp-stock'
     | '/_authenticated/fulfillment'
     | '/_authenticated/home'
@@ -260,6 +273,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedFpStockRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/fp-movements': {
+      id: '/_authenticated/fp-movements'
+      path: '/fp-movements'
+      fullPath: '/fp-movements'
+      preLoaderRoute: typeof AuthenticatedFpMovementsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/finance': {
       id: '/_authenticated/finance'
       path: '/finance'
@@ -287,6 +307,7 @@ declare module '@tanstack/react-router' {
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedCollectionsRoute: typeof AuthenticatedCollectionsRoute
   AuthenticatedFinanceRoute: typeof AuthenticatedFinanceRoute
+  AuthenticatedFpMovementsRoute: typeof AuthenticatedFpMovementsRoute
   AuthenticatedFpStockRoute: typeof AuthenticatedFpStockRoute
   AuthenticatedFulfillmentRoute: typeof AuthenticatedFulfillmentRoute
   AuthenticatedHomeRoute: typeof AuthenticatedHomeRoute
@@ -299,6 +320,7 @@ interface AuthenticatedRouteRouteChildren {
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedCollectionsRoute: AuthenticatedCollectionsRoute,
   AuthenticatedFinanceRoute: AuthenticatedFinanceRoute,
+  AuthenticatedFpMovementsRoute: AuthenticatedFpMovementsRoute,
   AuthenticatedFpStockRoute: AuthenticatedFpStockRoute,
   AuthenticatedFulfillmentRoute: AuthenticatedFulfillmentRoute,
   AuthenticatedHomeRoute: AuthenticatedHomeRoute,
