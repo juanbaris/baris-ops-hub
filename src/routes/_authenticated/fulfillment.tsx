@@ -22,7 +22,7 @@ const SKU_ITEMS = [
 
 type DateFilter = "all" | "this_month" | "last_month" | "quarter" | "this_year" | "last_year" | "custom";
 type Quarter = "Q1" | "Q2" | "Q3" | "Q4";
-type Tab = "pipeline" | "shipments";
+type Tab = "pipeline" | "shipments" | "collections";
 
 function ymd(d: Date) { return d.toISOString().slice(0, 10); }
 
@@ -777,12 +777,12 @@ const COLUMNS: { key: ColumnKey; label: string; numeric?: boolean; sku?: boolean
   { key: "ship_est_date", label: "Ship Est." }, { key: "invoice_date", label: "Invoice" },
   { key: "distributor", label: "Distributor" }, { key: "customer", label: "Customer" },
   { key: "status", label: "Status" },
-  { key: "wd_cases", label: "WD", numeric: true, sku: true },
-  { key: "pw_cases", label: "PW", numeric: true, sku: true },
-  { key: "hm_cases", label: "HM", numeric: true, sku: true },
-  { key: "matcha_cases", label: "MA", numeric: true, sku: true },
-  { key: "xd_cases", label: "XD", numeric: true, sku: true },
-  { key: "wm_cases", label: "WM", numeric: true, sku: true },
+  { key: "wd_cases", label: "W&D (23141)", numeric: true, sku: true },
+  { key: "pw_cases", label: "P&W (77670)", numeric: true, sku: true },
+  { key: "hm_cases", label: "H&M (77671)", numeric: true, sku: true },
+  { key: "matcha_cases", label: "Matcha (77672)", numeric: true, sku: true },
+  { key: "xd_cases", label: "XD (88021)", numeric: true, sku: true },
+  { key: "wm_cases", label: "W&M (93562)", numeric: true, sku: true },
   { key: "total_cases", label: "Total", numeric: true },
   { key: "gross_sales", label: "Gross", numeric: true, money: true },
   { key: "promo_discount", label: "Promo", numeric: true, money: true },
@@ -806,6 +806,7 @@ function cellClass(c: (typeof COLUMNS)[number]) {
 
 function renderBodyCell(r: Order, c: (typeof COLUMNS)[number], onChanged: (o: Order) => void, onOpenDetail: (o: Order) => void) {
   if (c.key === "status") return <StatusCell order={r} onChanged={onChanged} />;
+  if (c.key === "ship_est_date") return <ShipDateCell date={r.ship_est_date} />;
   if (c.key === "po_number") return (
     <button type="button" onClick={() => onOpenDetail(r)}
       className="font-mono text-xs font-semibold hover:underline" style={{ color: "#A3224A" }}>
@@ -842,8 +843,10 @@ function Fulfillment() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("pipeline");
-  const [dist, setDist] = useState<Distributor | "all">("all");
-  const [status, setStatus] = useState<Status | "all">("all");
+  // Multi-select filters
+  const [selDist, setSelDist] = useState<Set<string>>(new Set());
+  const [selStatus, setSelStatus] = useState<Set<string>>(new Set());
+  const [selCustomer, setSelCustomer] = useState<Set<string>>(new Set());
   const [dateFilter, setDateFilter] = useState<DateFilter>("all");
   const [quarter, setQuarter] = useState<Quarter>("Q1");
   const [customFrom, setCustomFrom] = useState("");
@@ -867,11 +870,15 @@ function Fulfillment() {
 
   const existingPONumbers = useMemo(() => new Set(rows.map(r => r.po_number)), [rows]);
 
+  // Unique customers for filter
+  const allCustomers = useMemo(() => [...new Set(rows.map(r => r.customer).filter(Boolean))].sort(), [rows]);
+
   const filtered = useMemo(() => {
     const range = computeRange(dateFilter, quarter, customFrom, customTo);
     return [...rows.filter(r =>
-      (dist === "all" || r.distributor === dist) &&
-      (status === "all" || r.status === status) &&
+      (selDist.size === 0 || selDist.has(r.distributor)) &&
+      (selStatus.size === 0 || selStatus.has(r.status)) &&
+      (selCustomer.size === 0 || selCustomer.has(r.customer)) &&
       (!range.from || (r.po_date ?? "") >= range.from) &&
       (!range.to || (r.po_date ?? "") <= range.to),
     )].sort((a, b) => {
@@ -880,7 +887,7 @@ function Fulfillment() {
       if (av == null && bv == null) return 0; if (av == null) return 1; if (bv == null) return -1;
       if (av < bv) return sortDir === "asc" ? -1 : 1; if (av > bv) return sortDir === "asc" ? 1 : -1; return 0;
     });
-  }, [rows, dist, status, dateFilter, quarter, customFrom, customTo, sortKey, sortDir]);
+  }, [rows, selDist, selStatus, selCustomer, dateFilter, quarter, customFrom, customTo, sortKey, sortDir]);
 
   const totals = useMemo(() => {
     const t: Record<string, number> = { total_cases: 0 };
@@ -898,6 +905,7 @@ function Fulfillment() {
   const tabs: { id: Tab; label: string }[] = [
     { id: "pipeline", label: "Pipeline PO" },
     { id: "shipments", label: "Shipments" },
+    { id: "collections", label: "Collections" },
   ];
 
   return (
@@ -912,15 +920,14 @@ function Fulfillment() {
             {t.label}
           </button>
         ))}
-        <Link to="/collections" className="ml-auto self-center text-sm font-medium hover:underline pb-2" style={{ color: "#A3224A" }}>
-          Collections →
-        </Link>
       </div>
 
       {activeTab === "shipments" && <ShipmentsTab orders={rows} onUpdated={applyUpdate} />}
+      {activeTab === "collections" && <CollectionsTab orders={rows} />}
 
       {activeTab === "pipeline" && (
         <>
+          {/* Filter bar */}
           <div className="mb-5 flex flex-wrap items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3 shadow-sm">
             <FilterSelect label="Date" value={dateFilter} onChange={v => setDateFilter(v as DateFilter)} options={[
               { value: "all", label: "All" }, { value: "this_month", label: "This month" },
@@ -938,10 +945,15 @@ function Fulfillment() {
                 <input type="date" className="rounded-lg border border-border bg-background px-3 py-1.5 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/30 normal-case tracking-normal font-normal text-foreground"
                   value={customTo} onChange={e => setCustomTo(e.target.value)} /></label>
             </>)}
-            <FilterSelect label="Distributor" value={dist} onChange={v => setDist(v as Distributor | "all")}
-              options={[{ value: "all", label: "All" }, ...DISTRIBUTORS.map(d => ({ value: d, label: d }))]} />
-            <FilterSelect label="Status" value={status} onChange={v => setStatus(v as Status | "all")}
-              options={[{ value: "all", label: "All" }, ...STATUSES.map(s => ({ value: s, label: s }))]} />
+            <MultiSelect label="Distributor" options={DISTRIBUTORS} selected={selDist} onChange={setSelDist} />
+            <MultiSelect label="Status" options={STATUSES} selected={selStatus} onChange={setSelStatus} />
+            <MultiSelect label="Customer" options={allCustomers} selected={selCustomer} onChange={setSelCustomer} />
+            {(selDist.size > 0 || selStatus.size > 0 || selCustomer.size > 0) && (
+              <button onClick={() => { setSelDist(new Set()); setSelStatus(new Set()); setSelCustomer(new Set()); }}
+                className="text-xs text-muted-foreground hover:text-foreground underline">
+                Clear filters
+              </button>
+            )}
             <span className="rounded-full bg-muted px-3 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               {filtered.length} {filtered.length === 1 ? "order" : "orders"}
             </span>
@@ -1006,6 +1018,230 @@ function Fulfillment() {
         existingPONumbers={existingPONumbers}
         onCreated={o => { setRows(rs => [o, ...rs]); setShowNewOrder(false); }} />}
     </>
+  );
+}
+
+// ─── Multi-select filter component ───────────────────────────────────────────
+function MultiSelect({ label, options, selected, onChange }: {
+  label: string;
+  options: string[];
+  selected: Set<string>;
+  onChange: (v: Set<string>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handle(e: MouseEvent) { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); }
+    document.addEventListener("mousedown", handle);
+    return () => document.removeEventListener("mousedown", handle);
+  }, []);
+
+  const allSelected = selected.size === 0;
+  const displayLabel = allSelected ? "All" : selected.size === 1 ? [...selected][0] : `${selected.size} selected`;
+
+  function toggle(v: string) {
+    const next = new Set(selected);
+    if (next.has(v)) next.delete(v); else next.add(v);
+    onChange(next);
+  }
+
+  return (
+    <div ref={ref} className="relative">
+      <label className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        {label}
+        <button type="button" onClick={() => setOpen(o => !o)}
+          className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-normal normal-case tracking-normal shadow-sm focus:outline-none ${!allSelected ? "border-[#A3224A] bg-[#A3224A]/5 text-[#A3224A]" : "border-border bg-background text-foreground"}`}>
+          {displayLabel}
+          <span className="text-[10px]">▾</span>
+        </button>
+      </label>
+      {open && (
+        <div className="absolute top-full mt-1 left-0 z-30 min-w-[160px] rounded-xl border border-border bg-popover shadow-lg p-1">
+          <button type="button" onClick={() => { onChange(new Set()); setOpen(false); }}
+            className={`flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-xs hover:bg-muted ${allSelected ? "font-semibold" : ""}`}>
+            <span className={`w-3 h-3 rounded border flex items-center justify-center ${allSelected ? "bg-[#A3224A] border-[#A3224A]" : "border-border"}`}>
+              {allSelected && <span className="text-white text-[8px]">✓</span>}
+            </span>
+            All
+          </button>
+          {options.map(opt => (
+            <button key={opt} type="button" onClick={() => toggle(opt)}
+              className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-xs hover:bg-muted">
+              <span className={`w-3 h-3 rounded border flex items-center justify-center flex-shrink-0 ${selected.has(opt) ? "bg-[#A3224A] border-[#A3224A]" : "border-border"}`}>
+                {selected.has(opt) && <span className="text-white text-[8px]">✓</span>}
+              </span>
+              {opt}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Ship date cell — colored by urgency ─────────────────────────────────────
+function ShipDateCell({ date }: { date: string | null }) {
+  if (!date) return <span className="text-muted-foreground">—</span>;
+  const today = new Date(); today.setHours(0,0,0,0);
+  const d = new Date(date); d.setHours(0,0,0,0);
+  const diff = Math.floor((d.getTime() - today.getTime()) / 86400000);
+  // End of current week (Sunday)
+  const dayOfWeek = today.getDay();
+  const daysUntilSunday = 7 - dayOfWeek;
+  const endOfWeek = new Date(today); endOfWeek.setDate(today.getDate() + daysUntilSunday);
+
+  const isOverdue = d < today;
+  const isThisWeek = d >= today && d <= endOfWeek;
+
+  return (
+    <span className={`font-mono text-xs ${isOverdue ? "text-red-600 font-bold" : isThisWeek ? "text-orange-500 font-semibold" : "text-muted-foreground"}`}
+      title={isOverdue ? `Overdue by ${Math.abs(diff)}d — claim BOL` : isThisWeek ? "Ships this week" : ""}>
+      {date}
+      {isOverdue && " ⚠️"}
+      {isThisWeek && !isOverdue && " 🔶"}
+    </span>
+  );
+}
+
+// ─── Collections Tab ──────────────────────────────────────────────────────────
+function CollectionsTab({ orders }: { orders: Order[] }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const TERMS: Record<string, number> = { UNFI: 30, KeHe: 30, RFD: 30, Rainforest: 60, Direct: 30, Other: 30 };
+
+  // Build collections rows — invoiced POs within payment window
+  const rows = useMemo(() => {
+    return orders
+      .filter(o => o.status === "Invoiced" && o.invoice_date && !o.collected_at)
+      .map(o => {
+        const terms = TERMS[o.distributor] ?? 30;
+        const invDate = new Date(o.invoice_date!);
+        const dueDate = new Date(invDate.getTime() + terms * 86400000);
+        const dueDateStr = dueDate.toISOString().slice(0, 10);
+        const daysUntilDue = Math.floor((dueDate.getTime() - new Date(today).getTime()) / 86400000);
+        const cutoff = new Date(new Date(today).getTime() - terms * 86400000).toISOString().slice(0, 10);
+        // Only show if within payment window (invoice_date >= cutoff)
+        if (o.invoice_date! < cutoff) return null;
+        return { order: o, terms, dueDate: dueDateStr, daysUntilDue };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a!.daysUntilDue - b!.daysUntilDue) as { order: Order; terms: number; dueDate: string; daysUntilDue: number }[];
+  }, [orders, today]);
+
+  const totalPending = rows.reduce((s, r) => s + (Number(r.order.net_sales) || 0), 0);
+  const dueThisWeek = rows.filter(r => r.daysUntilDue <= 7 && r.daysUntilDue >= 0).reduce((s, r) => s + (Number(r.order.net_sales) || 0), 0);
+  const overdue = rows.filter(r => r.daysUntilDue < 0).reduce((s, r) => s + (Number(r.order.net_sales) || 0), 0);
+
+  const [marking, setMarking] = useState<string | null>(null);
+
+  async function markCollected(orderId: string) {
+    setMarking(orderId);
+    await supabase.from("customer_orders").update({ collected_at: new Date().toISOString() }).eq("id", orderId);
+    toast.success("Marked as collected");
+    setMarking(null);
+    // Refresh via parent would be ideal — for now show toast
+  }
+
+  return (
+    <div className="space-y-5">
+      {/* KPIs */}
+      <div className="grid grid-cols-3 gap-4">
+        <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2">Total Pending</p>
+          <p className="text-2xl font-bold font-mono text-orange-500">${Math.round(totalPending).toLocaleString()}</p>
+          <p className="text-xs text-muted-foreground mt-1">{rows.length} invoices within terms</p>
+        </div>
+        <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2">Due This Week</p>
+          <p className="text-2xl font-bold font-mono text-orange-600">${Math.round(dueThisWeek).toLocaleString()}</p>
+          <p className="text-xs text-muted-foreground mt-1">{rows.filter(r => r.daysUntilDue <= 7 && r.daysUntilDue >= 0).length} invoices</p>
+        </div>
+        <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2">Overdue</p>
+          <p className={`text-2xl font-bold font-mono ${overdue > 0 ? "text-red-600" : "text-emerald-600"}`}>${Math.round(overdue).toLocaleString()}</p>
+          <p className="text-xs text-muted-foreground mt-1">{rows.filter(r => r.daysUntilDue < 0).length} invoices past due</p>
+        </div>
+      </div>
+
+      {/* Payment terms reminder */}
+      <div className="flex gap-2 flex-wrap">
+        {[["UNFI","30d"],["KeHe","30d"],["RFD","30d"],["Rainforest","60d ⚠️"]].map(([d,t]) => (
+          <span key={d} className={`rounded-full px-3 py-1 text-xs font-semibold ${d === "Rainforest" ? "bg-orange-100 text-orange-700 border border-orange-200" : "bg-muted text-muted-foreground"}`}>
+            {d}: {t}
+          </span>
+        ))}
+      </div>
+
+      {/* Collections table */}
+      <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/40 border-b border-border">
+              <th className="px-4 py-2.5 text-left">Distributor</th>
+              <th className="px-4 py-2.5 text-left">PO #</th>
+              <th className="px-4 py-2.5 text-left">Customer</th>
+              <th className="px-4 py-2.5 text-left">Invoice Date</th>
+              <th className="px-4 py-2.5 text-center">Terms</th>
+              <th className="px-4 py-2.5 text-left">Due Date</th>
+              <th className="px-4 py-2.5 text-right">Amount</th>
+              <th className="px-4 py-2.5 text-center">Status</th>
+              <th className="px-4 py-2.5" />
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr><td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">No pending collections — all invoices collected ✅</td></tr>
+            ) : rows.map(({ order: o, terms, dueDate, daysUntilDue }) => {
+              const isOverdue = daysUntilDue < 0;
+              const isDueSoon = daysUntilDue <= 7 && daysUntilDue >= 0;
+              return (
+                <tr key={o.id} className={`border-t border-border/60 hover:bg-muted/20 ${isOverdue ? "bg-red-50/30" : ""}`}>
+                  <td className="px-4 py-2 font-semibold" style={{ color: "#1C2340" }}>{o.distributor}</td>
+                  <td className="px-4 py-2 font-mono text-xs text-[#A3224A] font-semibold">{o.po_number}</td>
+                  <td className="px-4 py-2 text-muted-foreground text-xs">{o.customer}</td>
+                  <td className="px-4 py-2 font-mono text-xs">{o.invoice_date}</td>
+                  <td className="px-4 py-2 text-center">
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${terms === 60 ? "bg-orange-100 text-orange-700" : "bg-muted text-muted-foreground"}`}>
+                      {terms}d
+                    </span>
+                  </td>
+                  <td className="px-4 py-2 font-mono text-xs">
+                    <span className={isOverdue ? "text-red-600 font-bold" : isDueSoon ? "text-orange-500 font-semibold" : "text-muted-foreground"}>
+                      {dueDate}
+                      {isOverdue && <span className="ml-1 text-[10px]">({Math.abs(daysUntilDue)}d overdue)</span>}
+                      {isDueSoon && !isOverdue && <span className="ml-1 text-[10px]">(in {daysUntilDue}d)</span>}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2 text-right font-mono font-semibold text-emerald-600">
+                    ${Math.round(Number(o.net_sales) || 0).toLocaleString()}
+                  </td>
+                  <td className="px-4 py-2 text-center">
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${isOverdue ? "bg-red-100 text-red-700" : isDueSoon ? "bg-orange-100 text-orange-700" : "bg-blue-50 text-blue-700"}`}>
+                      {isOverdue ? `Overdue` : isDueSoon ? `Due in ${daysUntilDue}d` : `Upcoming · ${daysUntilDue}d`}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2 text-right">
+                    <button onClick={() => markCollected(o.id)} disabled={marking === o.id}
+                      className="rounded-lg px-3 py-1 text-xs font-semibold border border-border hover:bg-muted disabled:opacity-50">
+                      {marking === o.id ? "…" : "Mark collected"}
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+          {rows.length > 0 && (
+            <tfoot>
+              <tr style={{ backgroundColor: "#1C2340", color: "#fff" }}>
+                <td colSpan={6} className="px-4 py-2 text-xs font-semibold">Total ({rows.length} invoices)</td>
+                <td className="px-4 py-2 text-right font-mono font-bold text-emerald-400">${Math.round(totalPending).toLocaleString()}</td>
+                <td colSpan={2} />
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+    </div>
   );
 }
 
