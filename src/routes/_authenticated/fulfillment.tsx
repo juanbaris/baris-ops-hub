@@ -12,6 +12,47 @@ type Status = Database["public"]["Enums"]["order_status"];
 const DISTRIBUTORS: Distributor[] = ["UNFI", "KeHe", "Rainforest", "RFD", "Direct", "Other"];
 const STATUSES: Status[] = ["Open", "Acknowledged", "Shipment", "Invoiced"];
 
+type DateFilter = "all" | "this_month" | "last_month" | "quarter" | "this_year" | "last_year" | "custom";
+type Quarter = "Q1" | "Q2" | "Q3" | "Q4";
+
+function ymd(d: Date) {
+  return d.toISOString().slice(0, 10);
+}
+
+function computeRange(
+  filter: DateFilter,
+  quarter: Quarter,
+  from: string,
+  to: string,
+): { from: string | null; to: string | null } {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = now.getMonth();
+  const start = (yr: number, mo: number, day = 1) => ymd(new Date(yr, mo, day));
+  const endOfMonth = (yr: number, mo: number) => ymd(new Date(yr, mo + 1, 0));
+  switch (filter) {
+    case "all":
+      return { from: null, to: null };
+    case "this_month":
+      return { from: start(y, m), to: endOfMonth(y, m) };
+    case "last_month": {
+      const lm = m === 0 ? 11 : m - 1;
+      const ly = m === 0 ? y - 1 : y;
+      return { from: start(ly, lm), to: endOfMonth(ly, lm) };
+    }
+    case "quarter": {
+      const qStart = { Q1: 0, Q2: 3, Q3: 6, Q4: 9 }[quarter];
+      return { from: start(y, qStart), to: endOfMonth(y, qStart + 2) };
+    }
+    case "this_year":
+      return { from: start(y, 0), to: endOfMonth(y, 11) };
+    case "last_year":
+      return { from: start(y - 1, 0), to: endOfMonth(y - 1, 11) };
+    case "custom":
+      return { from: from || null, to: to || null };
+  }
+}
+
 const NEXT_STATUS: Record<Status, Status | null> = {
   Open: "Acknowledged",
   Acknowledged: "Shipment",
@@ -127,6 +168,10 @@ function PipelinePO() {
   const [err, setErr] = useState<string | null>(null);
   const [dist, setDist] = useState<Distributor | "all">("all");
   const [status, setStatus] = useState<Status | "all">("all");
+  const [dateFilter, setDateFilter] = useState<DateFilter>("all");
+  const [quarter, setQuarter] = useState<Quarter>("Q1");
+  const [customFrom, setCustomFrom] = useState<string>("");
+  const [customTo, setCustomTo] = useState<string>("");
   const [sortKey, setSortKey] = useState<keyof Order>("po_date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
@@ -149,10 +194,13 @@ function PipelinePO() {
   }, []);
 
   const filtered = useMemo(() => {
+    const range = computeRange(dateFilter, quarter, customFrom, customTo);
     const f = rows.filter(
       (r) =>
         (dist === "all" || r.distributor === dist) &&
-        (status === "all" || r.status === status),
+        (status === "all" || r.status === status) &&
+        (!range.from || r.po_date >= range.from) &&
+        (!range.to || r.po_date <= range.to),
     );
     const sorted = [...f].sort((a, b) => {
       const av = a[sortKey];
@@ -165,7 +213,7 @@ function PipelinePO() {
       return 0;
     });
     return sorted;
-  }, [rows, dist, status, sortKey, sortDir]);
+  }, [rows, dist, status, dateFilter, quarter, customFrom, customTo, sortKey, sortDir]);
 
   function toggleSort(k: keyof Order) {
     if (sortKey === k) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -196,6 +244,56 @@ function PipelinePO() {
       </div>
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
+        <label className="flex items-center gap-2 text-sm">
+          <span className="text-muted-foreground">Date</span>
+          <select
+            className="rounded-md border border-border bg-background px-2 py-1 text-sm"
+            value={dateFilter}
+            onChange={(e) => setDateFilter(e.target.value as DateFilter)}
+          >
+            <option value="all">All</option>
+            <option value="this_month">This month</option>
+            <option value="last_month">Last month</option>
+            <option value="quarter">By Quarter</option>
+            <option value="this_year">This year</option>
+            <option value="last_year">Last year</option>
+            <option value="custom">Custom range</option>
+          </select>
+        </label>
+        {dateFilter === "quarter" && (
+          <select
+            className="rounded-md border border-border bg-background px-2 py-1 text-sm"
+            value={quarter}
+            onChange={(e) => setQuarter(e.target.value as Quarter)}
+          >
+            <option value="Q1">Q1</option>
+            <option value="Q2">Q2</option>
+            <option value="Q3">Q3</option>
+            <option value="Q4">Q4</option>
+          </select>
+        )}
+        {dateFilter === "custom" && (
+          <>
+            <label className="flex items-center gap-1 text-sm">
+              <span className="text-muted-foreground">From</span>
+              <input
+                type="date"
+                className="rounded-md border border-border bg-background px-2 py-1 text-sm"
+                value={customFrom}
+                onChange={(e) => setCustomFrom(e.target.value)}
+              />
+            </label>
+            <label className="flex items-center gap-1 text-sm">
+              <span className="text-muted-foreground">To</span>
+              <input
+                type="date"
+                className="rounded-md border border-border bg-background px-2 py-1 text-sm"
+                value={customTo}
+                onChange={(e) => setCustomTo(e.target.value)}
+              />
+            </label>
+          </>
+        )}
         <label className="flex items-center gap-2 text-sm">
           <span className="text-muted-foreground">Distributor</span>
           <select
