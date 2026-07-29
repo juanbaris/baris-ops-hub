@@ -172,10 +172,33 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
         <div className="p-6">
           <div className="flex items-start justify-between mb-1">
             <h2 className="text-lg font-bold" style={{ color: "#1C2340" }}>PO #{order.po_number}</h2>
-            <button onClick={deletePO} disabled={deleting}
-              className="rounded-lg px-3 py-1 text-xs font-semibold text-white bg-red-500 hover:bg-red-600 disabled:opacity-50 mr-8">
-              {deleting ? "Deleting…" : "Delete PO"}
-            </button>
+            <div className="flex gap-2 mr-8">
+              <button
+                onClick={() => {
+                  const ps = generatePackingSlip({
+                    po_number: order.po_number, po_date: order.po_date,
+                    ship_est_date: order.ship_est_date, distributor: order.distributor,
+                    customer: order.customer,
+                    wd_cases: order.wd_cases, pw_cases: order.pw_cases,
+                    hm_cases: order.hm_cases, matcha_cases: order.matcha_cases,
+                    xd_cases: order.xd_cases, wm_cases: order.wm_cases,
+                  });
+                  // Upload to storage
+                  const blob = new Blob([ps.html], { type: "text/html" });
+                  supabase.storage.from("po-attachments").upload(`${order.po_number}/${ps.filename}`, blob, { upsert: true })
+                    .then(() => { toast.success("Packing Slip saved to attachments"); loadFiles(); });
+                  // Also open it
+                  const url = URL.createObjectURL(blob);
+                  window.open(url, "_blank");
+                }}
+                className="rounded-lg px-3 py-1 text-xs font-semibold border border-border hover:bg-muted">
+                📋 Packing Slip
+              </button>
+              <button onClick={deletePO} disabled={deleting}
+                className="rounded-lg px-3 py-1 text-xs font-semibold text-white bg-red-500 hover:bg-red-600 disabled:opacity-50">
+                {deleting ? "Deleting…" : "Delete PO"}
+              </button>
+            </div>
           </div>
           <p className="text-sm text-muted-foreground mb-5">{order.distributor} · {order.customer} · PO Date: {order.po_date ?? "—"}</p>
 
@@ -395,17 +418,35 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
       const base64 = await new Promise<string>((res, rej) => {
         const r = new FileReader(); r.onload = () => res((r.result as string).split(",")[1]); r.onerror = rej; r.readAsDataURL(file);
       });
-      const mediaType = file.type as "image/jpeg" | "image/png" | "application/pdf";
-      const response = await fetch("/api/process-po", {
+      const mediaType = (file.type || "image/jpeg") as "application/pdf" | "image/jpeg" | "image/png";
+
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fileBase64: base64, mediaType, mode: "bol" }),
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: 1000,
+          messages: [{
+            role: "user",
+            content: [
+              { type: mediaType === "application/pdf" ? "document" : "image",
+                source: { type: "base64", media_type: mediaType, data: base64 } },
+              { type: "text", text: `Extract cases per SKU from this Bill of Lading. Return ONLY valid JSON, no markdown:
+{"wd_cases":0,"pw_cases":0,"hm_cases":0,"matcha_cases":0,"xd_cases":0,"wm_cases":0}
+SKU item numbers: WD=23141, PW=77670, HM=77671, Matcha=77672, XD=88021, WM=93562. Use 0 if not found.` }
+            ]
+          }]
+        })
       });
+
       if (response.ok) {
         const data = await response.json();
+        const text = data.content?.find((b: any) => b.type === "text")?.text ?? "{}";
+        const clean = text.replace(/```json|```/g, "").trim();
+        const parsed = JSON.parse(clean);
         setBolCases({
-          wd: data.wd_cases ?? 0, pw: data.pw_cases ?? 0, hm: data.hm_cases ?? 0,
-          matcha: data.matcha_cases ?? 0, xd: data.xd_cases ?? 0, wm: data.wm_cases ?? 0,
+          wd: parsed.wd_cases ?? 0, pw: parsed.pw_cases ?? 0, hm: parsed.hm_cases ?? 0,
+          matcha: parsed.matcha_cases ?? 0, xd: parsed.xd_cases ?? 0, wm: parsed.wm_cases ?? 0,
         });
         toast.success("BOL extracted — review quantities");
       } else {
@@ -549,7 +590,51 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
   );
 }
 
-// ─── New Order Modal ───────────────────────────────────────────────────────────
+// ─── Generate Packing Slip HTML in browser ────────────────────────────────────
+function generatePackingSlip(po: any): { html: string; filename: string } {
+  const filename = `BARIS_PS_${po.po_number || "DRAFT"}.html`;
+  const skus = [
+    { label: "W&D", item: "23141", cases: po.wd_cases },
+    { label: "P&W", item: "77670", cases: po.pw_cases },
+    { label: "H&M", item: "77671", cases: po.hm_cases },
+    { label: "Matcha", item: "77672", cases: po.matcha_cases },
+    { label: "XD", item: "88021", cases: po.xd_cases },
+    { label: "W&M", item: "93562", cases: po.wm_cases },
+  ].filter(s => Number(s.cases) > 0);
+
+  const totalCases = skus.reduce((s, r) => s + Number(r.cases), 0);
+  const rows = skus.map(s => `
+    <tr>
+      <td style="border:1px solid #ddd;padding:8px">${s.label}</td>
+      <td style="border:1px solid #ddd;padding:8px">${s.item}</td>
+      <td style="border:1px solid #ddd;padding:8px;text-align:right">${s.cases}</td>
+    </tr>`).join("");
+
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>BARIS Packing Slip ${po.po_number}</title>
+<style>body{font-family:Arial,sans-serif;margin:40px;color:#1C2340}
+h1{color:#A3224A}table{border-collapse:collapse;width:100%;margin-top:16px}
+th{background:#1C2340;color:white;padding:8px;border:1px solid #1C2340;text-align:left}
+td{border:1px solid #ddd;padding:8px}.total{font-weight:bold;background:#f5f5f5}</style>
+</head><body>
+<h1>BARIS — Packing Slip</h1>
+<p><strong>PO #:</strong> ${po.po_number || "—"} &nbsp;&nbsp;
+<strong>Date:</strong> ${po.po_date || "—"} &nbsp;&nbsp;
+<strong>Ship Est.:</strong> ${po.ship_est_date || "—"}</p>
+<p><strong>Distributor:</strong> ${po.distributor || "—"} &nbsp;&nbsp;
+<strong>Customer:</strong> ${po.customer || "—"}</p>
+<table>
+<thead><tr><th>SKU</th><th>Item #</th><th>Cases</th></tr></thead>
+<tbody>${rows}
+<tr class="total"><td colspan="2"><strong>Total</strong></td><td style="text-align:right;border:1px solid #ddd;padding:8px"><strong>${totalCases}</strong></td></tr>
+</tbody></table>
+<p style="margin-top:24px;font-size:12px;color:#888">Generated by BARIS Ops Hub</p>
+</body></html>`;
+
+  return { html, filename };
+}
+
+
 function NewOrderModal({ onClose, onCreated, existingPONumbers }: {
   onClose: () => void; onCreated: (o: Order) => void; existingPONumbers: Set<string>;
 }) {
@@ -585,30 +670,61 @@ function NewOrderModal({ onClose, onCreated, existingPONumbers }: {
       const base64 = await new Promise<string>((res, rej) => {
         const r = new FileReader(); r.onload = () => res((r.result as string).split(",")[1]); r.onerror = rej; r.readAsDataURL(file);
       });
-      const mediaType = file.type || "application/pdf";
-      const response = await fetch("/api/process-po", {
+      const mediaType = (file.type || "application/pdf") as "application/pdf" | "image/jpeg" | "image/png";
+
+      // Call Anthropic API directly (works in Lovable browser context)
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fileBase64: base64, mediaType }),
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: 1000,
+          messages: [{
+            role: "user",
+            content: [
+              { type: mediaType === "application/pdf" ? "document" : "image",
+                source: { type: "base64", media_type: mediaType, data: base64 } },
+              { type: "text", text: `Extract PO fields from this document. Return ONLY valid JSON, no markdown:
+{"po_number":"","po_date":"YYYY-MM-DD","ship_est_date":"YYYY-MM-DD","distributor":"UNFI|KeHe|Rainforest|RFD|Direct|Other","customer":"","wd_cases":0,"pw_cases":0,"hm_cases":0,"matcha_cases":0,"xd_cases":0,"wm_cases":0,"gross_sales":0,"promo_discount":0,"net_sales":0}
+SKU item numbers: WD=23141, PW=77670, HM=77671, Matcha=77672, XD=88021, WM=93562. If field not found use empty string or 0.` }
+            ]
+          }]
+        })
       });
-      if (!response.ok) throw new Error(`Error: ${response.status}`);
-      const ex = await response.json();
+
+      if (!response.ok) throw new Error(`API error: ${response.status}`);
+      const data = await response.json();
+      const text = data.content?.find((b: any) => b.type === "text")?.text ?? "{}";
+      const clean = text.replace(/```json|```/g, "").trim();
+      const ex = JSON.parse(clean);
+
       setForm(f => ({
         ...f,
-        po_number: ex.po_number || f.po_number, po_date: ex.po_date || f.po_date,
+        po_number: ex.po_number || f.po_number,
+        po_date: ex.po_date || f.po_date,
         ship_est_date: ex.ship_est_date || f.ship_est_date,
-        distributor: ex.distributor || f.distributor, customer: ex.customer || f.customer,
-        wd_cases: String(ex.wd_cases || 0), pw_cases: String(ex.pw_cases || 0),
-        hm_cases: String(ex.hm_cases || 0), matcha_cases: String(ex.matcha_cases || 0),
-        xd_cases: String(ex.xd_cases || 0), wm_cases: String(ex.wm_cases || 0),
-        gross_sales: String(ex.gross_sales || 0), promo_discount: String(ex.promo_discount || 0),
+        distributor: ex.distributor || f.distributor,
+        customer: ex.customer || f.customer,
+        wd_cases: String(ex.wd_cases || 0),
+        pw_cases: String(ex.pw_cases || 0),
+        hm_cases: String(ex.hm_cases || 0),
+        matcha_cases: String(ex.matcha_cases || 0),
+        xd_cases: String(ex.xd_cases || 0),
+        wm_cases: String(ex.wm_cases || 0),
+        gross_sales: String(ex.gross_sales || 0),
+        promo_discount: String(ex.promo_discount || 0),
         net_sales: String(ex.net_sales || 0),
       }));
-      if (ex.packing_slip_html) setPackingSlip({ html: ex.packing_slip_html, filename: ex.packing_slip_filename });
+
+      // Generate packing slip HTML in browser (no server needed)
+      const ps = generatePackingSlip(ex);
+      setPackingSlip(ps);
       setMode("manual");
       toast.success("PO extracted — review fields and save");
     } catch (e) {
-      console.error(e); toast.error("Could not extract — fill in manually"); setMode("manual");
+      console.error(e);
+      toast.error("Could not extract — fill in manually");
+      setMode("manual");
     }
     setProcessing(false);
   }
@@ -626,10 +742,9 @@ function NewOrderModal({ onClose, onCreated, existingPONumbers }: {
     }).select().single();
     if (error || !data) { toast.error(error?.message ?? "Failed to create order"); return; }
 
-    // Auto-upload packing slip to storage if generated
+    // Auto-upload packing slip to storage
     if (packingSlip && data.po_number) {
-      const html = decodeURIComponent(escape(atob(packingSlip.html)));
-      const blob = new Blob([html], { type: "text/html" });
+      const blob = new Blob([packingSlip.html], { type: "text/html" });
       await supabase.storage.from("po-attachments").upload(`${data.po_number}/${packingSlip.filename}`, blob, { upsert: true });
     }
 
