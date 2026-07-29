@@ -47,10 +47,12 @@ export type PoItem = {
 
 export function generatePackingSlipHTML(data: {
   poNumber: string; poDate: string; pickupDate: string;
-  shipTo: string; shipToName: string;
+  shipTo: string; shipToName: string; distributor?: string;
   items: PoItem[];
   totalCases: number; totalLbs: number;
 }): string {
+  const totalPallets = Math.ceil(data.totalCases / 255);
+  const dateLabel = data.distributor === "KeHe" ? "PICKUP DATE" : "DELIVERY DATE";
   const itemRows = data.items.map((item, i) => `
     <tr style="background:${i % 2 === 0 ? "#ffffff" : "#F2E0E5"}">
       <td style="padding:6px 8px;border:1px solid #ccc;">${SKU_DESCRIPTIONS[item.sku] ?? item.sku}</td>
@@ -59,6 +61,9 @@ export function generatePackingSlipHTML(data: {
       <td style="padding:6px 8px;border:1px solid #ccc;text-align:center;">${item.cases}</td>
       <td style="padding:6px 8px;border:1px solid #ccc;text-align:center;">${item.weight}</td>
     </tr>`).join("");
+
+  const shipToHtml = [data.shipToName, ...(data.shipTo ? data.shipTo.split(/\n|,\s*/) : [])]
+    .filter(Boolean).join("<br>");
 
   return `<!DOCTYPE html>
 <html>
@@ -80,9 +85,11 @@ export function generatePackingSlipHTML(data: {
   <tr><td class="th-dark" style="width:30%">PO #</td><td class="td">${data.poNumber}</td></tr>
   <tr><td class="th-dark">PO DATE</td><td class="td alt">${data.poDate}</td></tr>
   <tr><td class="th-dark">VENDOR #</td><td class="td">PATAGONIA BITES CORP</td></tr>
-  <tr><td class="th-dark">TEMPERATURE</td><td class="td alt">Frozen (0 F)</td></tr>
-  <tr><td class="th-dark">PICKUP DATE</td><td class="td">${data.pickupDate}</td></tr>
+  <tr><td class="th-dark">TEMPERATURE</td><td class="td alt">Frozen (0°F)</td></tr>
+  <tr><td class="th-dark">${dateLabel}</td><td class="td">${data.pickupDate}</td></tr>
 </table>
+
+<p style="font-style:italic;font-size:11px;color:#555">Note: Freight Prepaid by Seller - Destination.</p>
 
 <table>
   <tr>
@@ -91,11 +98,9 @@ export function generatePackingSlipHTML(data: {
   </tr>
   <tr>
     <td class="td" style="vertical-align:top">LINEAGE NEWARK<br>360 Avenue P<br>Newark, NJ 07105</td>
-    <td class="td" style="vertical-align:top">${data.shipToName}<br>${(data.shipTo ?? "").replace(/\n/g, "<br>")}</td>
+    <td class="td" style="vertical-align:top">${shipToHtml}</td>
   </tr>
 </table>
-
-<p>Note: Freight Prepaid by Seller - Destination.</p>
 
 <div class="section-title">LOAD</div>
 <table>
@@ -105,17 +110,17 @@ export function generatePackingSlipHTML(data: {
     <td class="th-dark" style="width:33%">Total Cases</td>
   </tr>
   <tr>
-    <td class="td"><strong>TBD</strong></td>
-    <td class="td"><strong>${data.totalLbs}</strong></td>
-    <td class="td"><strong>${data.totalCases}</strong></td>
+    <td class="td" style="text-align:center"><strong>${totalPallets}</strong></td>
+    <td class="td" style="text-align:center"><strong>${data.totalLbs}</strong></td>
+    <td class="td" style="text-align:center"><strong>${data.totalCases}</strong></td>
   </tr>
 </table>
 
 <table>
   <tr>
-    <td class="th-dark" style="width:30%">Total Load</td>
+    <td class="th-dark" style="width:30%">Product</td>
     <td class="th-dark" style="width:20%">Case UPC</td>
-    <td class="th-dark" style="width:20%">Item/unit number</td>
+    <td class="th-dark" style="width:20%">Item #</td>
     <td class="th-dark" style="width:15%">Cases</td>
     <td class="th-dark" style="width:15%">Weight (LBS)</td>
   </tr>
@@ -132,7 +137,7 @@ export function generatePackingSlipHTML(data: {
 <table>
   <tr>
     <td class="td" style="width:50%">____________________________<br><strong>Shipper (Lineage Newark)</strong><br>Sign / Print / Date</td>
-    <td class="td" style="width:50%">____________________________<br><strong>Carrier / Driver (${data.shipToName})</strong><br>Sign / Print / Date</td>
+    <td class="td" style="width:50%">____________________________<br><strong>Carrier / Driver (${data.distributor ?? data.shipToName})</strong><br>Sign / Print / Date</td>
   </tr>
 </table>
 </body></html>`;
@@ -147,7 +152,7 @@ Return ONLY valid JSON with this exact structure:
   "ship_date": "YYYY-MM-DD",
   "distributor": "UNFI|KeHe|Rainforest|RFD|Direct|Other",
   "customer": "string (DC name e.g. UNFI Iowa City Warehouse)",
-  "ship_to_address": "string (full address)",
+  "ship_to_address": "string (street address and city/state/zip on separate lines, e.g. 14900 Meridian Parkway\nRiverside, CA 92518)",
   "location_id": "string or empty",
   "freight_terms": "string",
   "items": [
