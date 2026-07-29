@@ -235,36 +235,81 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
             </div>
           </div>
 
-          {/* CHANGE 3: File attachments */}
+          {/* File attachments */}
           <div className="mb-5">
             <div className="flex items-center justify-between mb-2">
-              <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Attachments</p>
-              <button onClick={() => fileRef.current?.click()} disabled={uploading}
-                className="rounded-lg px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
-                style={{ backgroundColor: "#1C2340" }}>
-                {uploading ? "Uploading…" : "+ Upload file"}
-              </button>
-              <input ref={fileRef} type="file" className="hidden"
-                onChange={e => { const f = e.target.files?.[0]; if (f) uploadFile(f); }} />
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">
+                Attachments ({files.length})
+              </p>
+              <div className="flex gap-2">
+                {/* Quick upload buttons by type */}
+                {[
+                  { label: "SPS PO", prefix: "SPS_PO" },
+                  { label: "BOL", prefix: "BOL" },
+                  { label: "Invoice", prefix: "INV" },
+                ].map(({ label, prefix }) => (
+                  <label key={label} className="rounded-lg px-2 py-1 text-[10px] font-semibold border border-border hover:bg-muted cursor-pointer">
+                    + {label}
+                    <input type="file" className="hidden"
+                      onChange={e => {
+                        const f = e.target.files?.[0];
+                        if (!f) return;
+                        const ext = f.name.split(".").pop();
+                        const renamed = new File([f], `${prefix}_${order.po_number}.${ext}`, { type: f.type });
+                        uploadFile(renamed);
+                      }} />
+                  </label>
+                ))}
+                <button onClick={() => fileRef.current?.click()} disabled={uploading}
+                  className="rounded-lg px-2 py-1 text-[10px] font-semibold text-white disabled:opacity-50"
+                  style={{ backgroundColor: "#1C2340" }}>
+                  {uploading ? "…" : "+ Other"}
+                </button>
+                <input ref={fileRef} type="file" className="hidden"
+                  onChange={e => { const f = e.target.files?.[0]; if (f) uploadFile(f); }} />
+              </div>
             </div>
+
             {files.length === 0 ? (
-              <p className="text-xs text-muted-foreground py-3 text-center rounded-lg border border-dashed border-border">No attachments yet — upload SPS PO, Packing Slip, BOL or Invoice</p>
+              <div className="rounded-lg border border-dashed border-border p-4 text-center">
+                <p className="text-xs text-muted-foreground">No attachments yet</p>
+                <p className="text-[10px] text-muted-foreground mt-1">Upload: SPS PO · BARIS Packing Slip · BOL · Invoice</p>
+              </div>
             ) : (
               <div className="space-y-1.5">
-                {files.map(f => (
-                  <div key={f.name} className="flex items-center gap-3 rounded-lg border border-border px-3 py-2 hover:bg-muted/30">
-                    <span className="text-base">📄</span>
-                    <span className="flex-1 text-xs font-medium truncate">{f.name}</span>
-                    <a href={f.url} download={f.name} target="_blank" rel="noreferrer"
-                      className="rounded px-2 py-0.5 text-[10px] font-semibold text-white" style={{ backgroundColor: "#1C2340" }}>
-                      Download
-                    </a>
-                    <button onClick={() => deleteFile(f.name)}
-                      className="rounded px-2 py-0.5 text-[10px] font-semibold text-red-600 hover:bg-red-50">
-                      Remove
-                    </button>
-                  </div>
-                ))}
+                {files.map(f => {
+                  // Detect file type by name
+                  const nl = f.name.toLowerCase();
+                  const isPS = nl.includes("baris_ps") || nl.includes("packing");
+                  const isBOL = nl.includes("bol");
+                  const isSPS = nl.includes("sps_po") || nl.includes("sps");
+                  const isInvoice = nl.includes("inv_") || nl.includes("invoice");
+                  const icon = isPS ? "📋" : isBOL ? "🚚" : isSPS ? "📥" : isInvoice ? "💰" : "📄";
+                  const badge = isPS ? { label: "Packing Slip", color: "bg-purple-100 text-purple-700" }
+                    : isBOL ? { label: "BOL", color: "bg-blue-100 text-blue-700" }
+                    : isSPS ? { label: "SPS PO", color: "bg-orange-100 text-orange-700" }
+                    : isInvoice ? { label: "Invoice", color: "bg-emerald-100 text-emerald-700" }
+                    : { label: "File", color: "bg-muted text-muted-foreground" };
+                  return (
+                    <div key={f.name} className="flex items-center gap-2.5 rounded-lg border border-border px-3 py-2 hover:bg-muted/30">
+                      <span className="text-base flex-shrink-0">{icon}</span>
+                      <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold flex-shrink-0 ${badge.color}`}>{badge.label}</span>
+                      <span className="flex-1 text-xs font-medium truncate" title={f.name}>{f.name}</span>
+                      <a href={f.url} target="_blank" rel="noreferrer"
+                        className="rounded px-2 py-0.5 text-[10px] font-semibold text-white flex-shrink-0" style={{ backgroundColor: "#1C2340" }}>
+                        Open
+                      </a>
+                      <a href={f.url} download={f.name}
+                        className="rounded px-2 py-0.5 text-[10px] font-semibold border border-border hover:bg-muted flex-shrink-0">
+                        ↓
+                      </a>
+                      <button onClick={() => deleteFile(f.name)}
+                        className="rounded px-2 py-0.5 text-[10px] font-semibold text-red-500 hover:bg-red-50 flex-shrink-0">
+                        ✕
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -318,7 +363,7 @@ function LineageModal({ order, onClose, onSent }: { order: Order; onClose: () =>
         </div>
         {isKehe && <div className="mb-3 rounded-lg bg-orange-50 border border-orange-200 px-3 py-2 text-xs text-orange-700 font-medium">KeHe → FOB pickup at Lineage</div>}
         <div className="mb-3 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-700">
-          💡 Attach <strong>BARIS_PS_{order.po_number}</strong> Packing Slip before sending. Find it in the PO attachments.
+          📋 Before sending, attach the <strong>BARIS Packing Slip</strong> — open the PO detail (click PO# in Pipeline), go to Attachments, and find <strong>BARIS_PS_{order.po_number}</strong>. Open it and attach to the email.
         </div>
         <button onClick={openMail} className="w-full rounded-lg py-2 text-sm font-semibold text-white" style={{ backgroundColor: "#A3224A" }}>
           Open in Mail & Mark as Shipment
