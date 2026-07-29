@@ -119,7 +119,8 @@ export const Route = createFileRoute("/api/process-po")({
             (po.total_amount as number | undefined) ??
             items.reduce((s, i) => s + i.cases * i.unitPrice, 0);
           const discountPct = (po.discount_percent as number | undefined) ?? 0;
-          const promoDiscount = (grossSales * discountPct) / 100;
+          const promoDiscount = (po.promo_discount_amount as number | undefined)
+            ?? Math.round(grossSales * discountPct) / 100;
           const netSales = grossSales - promoDiscount;
 
           const poNumber = (po.po_number as string | undefined) ?? "";
@@ -143,6 +144,7 @@ export const Route = createFileRoute("/api/process-po")({
             ship_est_date: (po.ship_date as string | undefined) ?? "",
             distributor: normDist((po.distributor as string | undefined) ?? ""),
             customer: (po.customer as string | undefined) ?? "",
+            ship_to_address: (po.ship_to_address as string | undefined) ?? "",
             wd_cases: casesFor("WD"),
             pw_cases: casesFor("PW"),
             hm_cases: casesFor("HM"),
