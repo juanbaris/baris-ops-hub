@@ -797,7 +797,6 @@ function generatePackingSlip(po: any): { html: string; filename: string } {
   <tr><td>${po.distributor === "KeHe" ? "PICKUP DATE" : "DELIVERY DATE"}</td><td><strong>${po.ship_est_date || "TBD"}</strong></td></tr>
 </table>
 
-<p class="note">Note: Freight Prepaid by Seller - Destination.</p>
 <hr class="divider">
 
 <table class="ship-table"><tr>
@@ -882,13 +881,13 @@ function PackingSlipModal({ order, onClose, onSaved }: {
     wd_cases: String(order.wd_cases ?? 0),
     wm_cases: String(order.wm_cases ?? 0),
     matcha_cases: String(order.matcha_cases ?? 0),
-    // Editable UPCs — default to standard values, can be cleared
-    upc_wd: "00860013723141",
-    upc_pw: "00860013776701",
-    upc_hm: "00860013776718",
-    upc_matcha: "00860013777672",
-    upc_xd: "00860013788810",
-    upc_wm: "00860013793562",
+    // Editable UPCs — correct case UPCs
+    upc_wd: "10197644231413",
+    upc_pw: "10860013776708",
+    upc_hm: "10860013776715",
+    upc_matcha: "10860013776722",
+    upc_xd: "10197644880215",
+    upc_wm: "10197644935625",
     notes: "",
   });
   const [saving, setSaving] = useState(false);
@@ -983,9 +982,7 @@ table{border-collapse:collapse;width:100%;margin-bottom:16px}
   <tr><td class="th">TEMPERATURE</td><td class="td">Frozen (0°F)</td></tr>
   <tr><td class="th">${dateLabel}</td><td class="td alt"><strong>${psData.ship_est_date}</strong></td></tr>
 </table>
-<p class="note">Note: Freight Prepaid by Seller - Destination.</p>
 <hr style="border:none;border-top:2px solid #A3224A;margin:10px 0 14px">
-<table><tr>
   <td class="th" style="width:50%">SHIP FROM</td>
   <td class="th" style="width:50%">SHIP TO</td>
 </tr><tr>
