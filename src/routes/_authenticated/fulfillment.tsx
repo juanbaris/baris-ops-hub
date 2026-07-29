@@ -471,15 +471,7 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
                       <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold flex-shrink-0 ${badge.color}`}>{badge.label}</span>
                       <span className="flex-1 text-xs font-medium truncate" title={f.name}>{f.name}</span>
                       <button
-                        onClick={async () => {
-                          try {
-                            const res = await fetch(f.url);
-                            const blob = await res.blob();
-                            const url = URL.createObjectURL(blob);
-                            window.open(url, "_blank");
-                            setTimeout(() => URL.revokeObjectURL(url), 10000);
-                          } catch { window.open(f.url, "_blank"); }
-                        }}
+                        onClick={() => window.open(f.url, "_blank", "noopener,noreferrer")}
                         className="rounded px-2 py-0.5 text-[10px] font-semibold text-white flex-shrink-0" style={{ backgroundColor: "#1C2340" }}>
                         Open
                       </button>
