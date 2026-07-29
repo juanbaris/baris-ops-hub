@@ -115,6 +115,41 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
   const steps: Status[] = ["Open", "Acknowledged", "Shipment", "Invoiced"];
   const currentIdx = steps.indexOf(order.status);
 
+  // Edit mode
+  const [editing, setEditing] = useState(false);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editData, setEditData] = useState({
+    ship_est_date: order.ship_est_date ?? "",
+    customer: order.customer ?? "",
+    distributor: order.distributor as Distributor,
+    wd_cases: String(order.wd_cases ?? ""),
+    pw_cases: String(order.pw_cases ?? ""),
+    hm_cases: String(order.hm_cases ?? ""),
+    matcha_cases: String(order.matcha_cases ?? ""),
+    xd_cases: String(order.xd_cases ?? ""),
+    wm_cases: String(order.wm_cases ?? ""),
+    gross_sales: String(order.gross_sales ?? ""),
+    promo_discount: String(order.promo_discount ?? ""),
+  });
+  // Sync editData when order prop updates (after a save) and we're not editing
+  useEffect(() => {
+    if (!editing) {
+      setEditData({
+        ship_est_date: order.ship_est_date ?? "",
+        customer: order.customer ?? "",
+        distributor: order.distributor as Distributor,
+        wd_cases: String(order.wd_cases ?? ""),
+        pw_cases: String(order.pw_cases ?? ""),
+        hm_cases: String(order.hm_cases ?? ""),
+        matcha_cases: String(order.matcha_cases ?? ""),
+        xd_cases: String(order.xd_cases ?? ""),
+        wm_cases: String(order.wm_cases ?? ""),
+        gross_sales: String(order.gross_sales ?? ""),
+        promo_discount: String(order.promo_discount ?? ""),
+      });
+    }
+  }, [order, editing]);
+
   useEffect(() => { loadFiles(); }, [order.id]);
 
   async function loadFiles() {
@@ -149,6 +184,32 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
     onUpdated(data); toast.success("Notes saved");
   }
 
+  async function saveEdit() {
+    setEditSaving(true);
+    const gross = parseFloat(editData.gross_sales) || 0;
+    const promo = parseFloat(editData.promo_discount) || 0;
+    const payload = {
+      ship_est_date: editData.ship_est_date || null,
+      customer: editData.customer,
+      distributor: editData.distributor,
+      wd_cases: parseInt(editData.wd_cases) || 0,
+      pw_cases: parseInt(editData.pw_cases) || 0,
+      hm_cases: parseInt(editData.hm_cases) || 0,
+      matcha_cases: parseInt(editData.matcha_cases) || 0,
+      xd_cases: parseInt(editData.xd_cases) || 0,
+      wm_cases: parseInt(editData.wm_cases) || 0,
+      gross_sales: gross || null,
+      promo_discount: promo || null,
+      net_sales: gross > 0 ? gross - promo : null,
+    };
+    const { data, error } = await supabase.from("customer_orders").update(payload).eq("id", order.id).select().single();
+    setEditSaving(false);
+    if (error || !data) { toast.error("Failed to save changes"); return; }
+    onUpdated(data);
+    toast.success("Order updated");
+    setEditing(false);
+  }
+
   // CHANGE 4: delete PO
   async function deletePO() {
     if (!confirm(`Delete PO #${order.po_number}? This cannot be undone.`)) return;
@@ -174,6 +235,10 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
           <div className="flex items-start justify-between mb-1">
             <h2 className="text-lg font-bold" style={{ color: "#1C2340" }}>PO #{order.po_number}</h2>
             <div className="flex gap-2 mr-8">
+              <button onClick={() => setEditing(e => !e)}
+                className={`rounded-lg px-3 py-1 text-xs font-semibold border ${editing ? "bg-amber-50 text-amber-700 border-amber-300 hover:bg-amber-100" : "border-border hover:bg-muted"}`}>
+                {editing ? "✕ Cancel" : "✏️ Edit"}
+              </button>
               <button onClick={() => setShowPS(true)}
                 className="rounded-lg px-3 py-1 text-xs font-semibold border border-border hover:bg-muted">
                 📋 Packing Slip
@@ -184,7 +249,35 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
               </button>
             </div>
           </div>
-          <p className="text-sm text-muted-foreground mb-5">{order.distributor} · {order.customer} · PO Date: {order.po_date ?? "—"}</p>
+          {editing ? (
+            <div className="flex flex-wrap gap-3 mb-5">
+              <div className="flex flex-col gap-0.5">
+                <label className="text-[9px] uppercase tracking-wide text-muted-foreground font-semibold">Distributor</label>
+                <select value={editData.distributor}
+                  onChange={e => setEditData(d => ({ ...d, distributor: e.target.value as Distributor }))}
+                  className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400">
+                  {DISTRIBUTORS.map(d => <option key={d} value={d}>{d}</option>)}
+                </select>
+              </div>
+              <div className="flex flex-col gap-0.5 flex-1 min-w-[140px]">
+                <label className="text-[9px] uppercase tracking-wide text-muted-foreground font-semibold">Customer</label>
+                <input type="text" value={editData.customer}
+                  onChange={e => setEditData(d => ({ ...d, customer: e.target.value }))}
+                  className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400" />
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <label className="text-[9px] uppercase tracking-wide text-muted-foreground font-semibold">Ship Date</label>
+                <input type="date" value={editData.ship_est_date}
+                  onChange={e => setEditData(d => ({ ...d, ship_est_date: e.target.value }))}
+                  className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400" />
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground mb-5">
+              {order.distributor} · {order.customer} · PO Date: {order.po_date ?? "—"}
+              {order.ship_est_date && <> · Ship: {order.ship_est_date}</>}
+            </p>
+          )}
 
           {/* Timeline */}
           <div className="flex items-center gap-0 mb-6">
@@ -205,42 +298,111 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
 
           {/* Quantities + Financials */}
           <div className="grid grid-cols-2 gap-4 mb-5">
-            <div className="rounded-xl border border-border p-4">
+            {/* Quantities — view or edit */}
+            <div className={`rounded-xl border p-4 ${editing ? "border-amber-300 bg-amber-50/40" : "border-border"}`}>
               <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2">PO Quantities</p>
-              {SKU_ITEMS.filter(sk => Number(order[sk.key]) > 0).map(sk => (
-                <div key={sk.key} className="flex justify-between text-sm py-0.5">
-                  <span className="text-muted-foreground">{sk.label} ({sk.item})</span>
-                  <span className="font-mono font-semibold">{Number(order[sk.key]).toLocaleString()}</span>
-                </div>
-              ))}
-              <div className="flex justify-between text-sm py-0.5 mt-1 border-t border-border pt-1">
-                <span className="font-semibold">Total</span>
-                <span className="font-mono font-bold">{totalCases.toLocaleString()} cases</span>
-              </div>
-              {/* Fill rate in detail modal */}
-              {fillRate != null && (
-                <div className={`flex justify-between text-sm py-0.5 mt-1 border-t border-border pt-1 ${fillRateColor}`}>
-                  <span className="font-semibold">Fill Rate</span>
-                  <span className="font-mono font-bold">{fillRate.toFixed(1)}%</span>
-                </div>
+              {editing ? (
+                <>
+                  {SKU_ITEMS.map(sk => (
+                    <div key={sk.key} className="flex items-center justify-between gap-2 py-0.5">
+                      <span className="text-xs text-muted-foreground w-20">{sk.label}</span>
+                      <input type="number" min="0"
+                        value={editData[sk.key]}
+                        onChange={e => setEditData(d => ({ ...d, [sk.key]: e.target.value }))}
+                        className="w-24 rounded border border-amber-300 bg-white px-2 py-0.5 text-xs font-mono text-right focus:outline-none focus:ring-1 focus:ring-amber-400" />
+                    </div>
+                  ))}
+                  <div className="flex justify-between text-sm py-0.5 mt-1 border-t border-amber-200 pt-1">
+                    <span className="font-semibold">Total</span>
+                    <span className="font-mono font-bold">
+                      {SKU_ITEMS.reduce((s, sk) => s + (parseInt(editData[sk.key]) || 0), 0).toLocaleString()} cases
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  {SKU_ITEMS.filter(sk => Number(order[sk.key]) > 0).map(sk => (
+                    <div key={sk.key} className="flex justify-between text-sm py-0.5">
+                      <span className="text-muted-foreground">{sk.label} ({sk.item})</span>
+                      <span className="font-mono font-semibold">{Number(order[sk.key]).toLocaleString()}</span>
+                    </div>
+                  ))}
+                  <div className="flex justify-between text-sm py-0.5 mt-1 border-t border-border pt-1">
+                    <span className="font-semibold">Total</span>
+                    <span className="font-mono font-bold">{totalCases.toLocaleString()} cases</span>
+                  </div>
+                  {fillRate != null && (
+                    <div className={`flex justify-between text-sm py-0.5 mt-1 border-t border-border pt-1 ${fillRateColor}`}>
+                      <span className="font-semibold">Fill Rate</span>
+                      <span className="font-mono font-bold">{fillRate.toFixed(1)}%</span>
+                    </div>
+                  )}
+                </>
               )}
             </div>
-            <div className="rounded-xl border border-border p-4">
+
+            {/* Financials — view or edit */}
+            <div className={`rounded-xl border p-4 ${editing ? "border-amber-300 bg-amber-50/40" : "border-border"}`}>
               <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2">Financials</p>
-              <div className="flex justify-between text-sm py-0.5">
-                <span className="text-muted-foreground">Gross Sales</span>
-                <span className="font-mono">${Math.round(Number(order.gross_sales) || 0).toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between text-sm py-0.5">
-                <span className="text-muted-foreground">Allowance</span>
-                <span className="font-mono text-destructive">-${Math.round(Number(order.promo_discount) || 0).toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between text-sm py-0.5 border-t border-border pt-1 mt-1">
-                <span className="font-semibold">Net Sales</span>
-                <span className="font-mono font-bold text-emerald-600">${Math.round(Number(order.net_sales) || 0).toLocaleString()}</span>
-              </div>
+              {editing ? (
+                <>
+                  <div className="flex flex-col gap-1.5">
+                    <div>
+                      <label className="text-[9px] uppercase tracking-wide text-muted-foreground">Gross Sales ($)</label>
+                      <input type="number" min="0" step="0.01"
+                        value={editData.gross_sales}
+                        onChange={e => {
+                          const g = e.target.value;
+                          const net = (parseFloat(g) || 0) - (parseFloat(editData.promo_discount) || 0);
+                          setEditData(d => ({ ...d, gross_sales: g }));
+                          // net_sales auto-shown below
+                        }}
+                        className="w-full rounded border border-amber-300 bg-white px-2 py-1 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-amber-400" />
+                    </div>
+                    <div>
+                      <label className="text-[9px] uppercase tracking-wide text-muted-foreground">Allowance ($)</label>
+                      <input type="number" min="0" step="0.01"
+                        value={editData.promo_discount}
+                        onChange={e => setEditData(d => ({ ...d, promo_discount: e.target.value }))}
+                        className="w-full rounded border border-amber-300 bg-white px-2 py-1 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-amber-400" />
+                    </div>
+                    <div className="flex justify-between text-sm border-t border-amber-200 pt-1 mt-0.5">
+                      <span className="font-semibold">Net Sales</span>
+                      <span className="font-mono font-bold text-emerald-600">
+                        ${Math.max(0, (parseFloat(editData.gross_sales) || 0) - (parseFloat(editData.promo_discount) || 0)).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                      </span>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex justify-between text-sm py-0.5">
+                    <span className="text-muted-foreground">Gross Sales</span>
+                    <span className="font-mono">${Math.round(Number(order.gross_sales) || 0).toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between text-sm py-0.5">
+                    <span className="text-muted-foreground">Allowance</span>
+                    <span className="font-mono text-destructive">-${Math.round(Number(order.promo_discount) || 0).toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between text-sm py-0.5 border-t border-border pt-1 mt-1">
+                    <span className="font-semibold">Net Sales</span>
+                    <span className="font-mono font-bold text-emerald-600">${Math.round(Number(order.net_sales) || 0).toLocaleString()}</span>
+                  </div>
+                </>
+              )}
             </div>
           </div>
+
+          {/* Save button — only visible in edit mode */}
+          {editing && (
+            <div className="mb-5">
+              <button onClick={saveEdit} disabled={editSaving}
+                className="w-full rounded-lg py-2 text-sm font-semibold text-white disabled:opacity-60"
+                style={{ backgroundColor: "#A3224A" }}>
+                {editSaving ? "Saving…" : "💾 Save Changes"}
+              </button>
+            </div>
+          )}
 
           {/* File attachments */}
           <div className="mb-5">
@@ -351,7 +513,7 @@ function LineageModal({ order, onClose, onSent }: { order: Order; onClose: () =>
 
   async function openMail() {
     const url = `mailto:${to}?cc=${cc}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    window.location.href = url;
+    window.open(url, "_blank");
     const { data, error } = await supabase.from("customer_orders").update({ status: "Shipment" }).eq("id", order.id).select().single();
     if (!error && data) { onSent(data); toast.success("Status updated to Shipment"); }
     onClose();
@@ -626,7 +788,7 @@ function generatePackingSlip(po: any): { html: string; filename: string } {
   <tr><td><strong>PO DATE</strong></td><td>${po.po_date || "—"}</td></tr>
   <tr><td><strong>VENDOR #</strong></td><td>PATAGONIA BITES CORP</td></tr>
   <tr><td><strong>TEMPERATURE</strong></td><td>Frozen (0 F)</td></tr>
-  <tr><td><strong>PICKUP DATE</strong></td><td>${po.ship_est_date || "TBD"}</td></tr>
+  <tr><td><strong>${po.distributor === "KeHe" ? "PICKUP DATE" : "DELIVERY DATE"}</strong></td><td>${po.ship_est_date || "TBD"}</td></tr>
 </table>
 
 <p style="font-style:italic;font-size:11px;margin:4px 0 10px">Note: Freight Prepaid by Seller - Destination.</p>
@@ -642,7 +804,7 @@ function generatePackingSlip(po: any): { html: string; filename: string } {
     <th>Total Pallets</th><th>Total LBS</th><th>Total Cases</th>
   </tr>
   <tr>
-    <td style="text-align:center"><strong>TBD</strong></td>
+    <td style="text-align:center"><strong>${Math.ceil(totalCases / 255)}</strong></td>
     <td style="text-align:center"><strong>${totalLbs}</strong></td>
     <td style="text-align:center"><strong>${totalCases}</strong></td>
   </tr>
