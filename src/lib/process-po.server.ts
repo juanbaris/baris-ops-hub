@@ -155,8 +155,10 @@ Return ONLY valid JSON with this exact structure:
   ],
   "total_cases": 120,
   "total_amount": 4435.20,
-  "discount_percent": 2.0
-}`;
+  "promo_discount_amount": 0,
+  "discount_percent": 0
+}
+IMPORTANT for discounts/allowances: Look for any explicit allowance, discount, or deduction listed in the PO document. If found, set discount_percent to that value and promo_discount_amount to the dollar amount. If NO allowance or discount is mentioned in the document, set BOTH to 0. Do NOT assume or invent a default discount.`;
 
 export function toBase64Utf8(input: string): string {
   const bytes = new TextEncoder().encode(input);
