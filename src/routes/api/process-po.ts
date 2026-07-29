@@ -130,6 +130,7 @@ export const Route = createFileRoute("/api/process-po")({
             pickupDate: (po.ship_date as string | undefined) ?? "",
             shipToName: (po.customer as string | undefined) ?? "",
             shipTo: (po.ship_to_address as string | undefined) ?? "",
+            distributor: normDist((po.distributor as string | undefined) ?? ""),
             items,
             totalCases,
             totalLbs,
