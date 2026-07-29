@@ -69,7 +69,7 @@ function periodSlice(arr: number[], period: Period, refMonth: number) {
 // ─── Chart wrapper using Chart.js via CDN ─────────────────────────────────────
 declare global { interface Window { Chart: any } }
 
-function useChart(canvasRef: React.RefObject<HTMLCanvasElement>, builder: () => any, deps: any[]) {
+function useChart(canvasRef: React.RefObject<HTMLCanvasElement | null>, builder: () => any, deps: any[]) {
   const chartRef = useRef<any>(null);
   useEffect(() => {
     if (!canvasRef.current || !window.Chart) return;
