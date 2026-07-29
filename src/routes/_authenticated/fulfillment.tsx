@@ -1021,7 +1021,10 @@ function NewOrderModal({ onClose, onCreated, existingPONumbers }: {
         body: JSON.stringify({ fileBase64: base64, mediaType }),
       });
 
-      if (!response.ok) throw new Error(`Error: ${response.status}`);
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(`Server error ${response.status}: ${errData.error ?? "unknown"}`);
+      }
       const ex = await response.json();
 
       setForm(f => ({
