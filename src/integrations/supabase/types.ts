@@ -100,6 +100,7 @@ export type Database = {
           promo_discount: number | null
           pw_cases: number | null
           ship_est_date: string | null
+          ship_to_address: string | null
           status: Database["public"]["Enums"]["order_status"]
           updated_at: string
           wd_cases: number | null
@@ -125,6 +126,7 @@ export type Database = {
           promo_discount?: number | null
           pw_cases?: number | null
           ship_est_date?: string | null
+          ship_to_address?: string | null
           status?: Database["public"]["Enums"]["order_status"]
           updated_at?: string
           wd_cases?: number | null
@@ -150,6 +152,7 @@ export type Database = {
           promo_discount?: number | null
           pw_cases?: number | null
           ship_est_date?: string | null
+          ship_to_address?: string | null
           status?: Database["public"]["Enums"]["order_status"]
           updated_at?: string
           wd_cases?: number | null
