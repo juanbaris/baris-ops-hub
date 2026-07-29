@@ -153,20 +153,26 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
   useEffect(() => { loadFiles(); }, [order.id]);
 
   async function loadFiles() {
-    const { data } = await supabase.storage.from("po-attachments").list(`${order.po_number}/`);
-    if (!data) return;
+    const { data, error } = await supabase.storage.from("po-attachments").list(`${order.po_number}/`);
+    if (error || !data || data.length === 0) { setFiles([]); return; }
     const withUrls = await Promise.all(data.map(async f => {
       const { data: urlData } = await supabase.storage.from("po-attachments").createSignedUrl(`${order.po_number}/${f.name}`, 3600);
       return { name: f.name, url: urlData?.signedUrl ?? "", created_at: f.created_at ?? "" };
     }));
-    setFiles(withUrls);
+    setFiles(withUrls.filter(f => f.url !== ""));
   }
 
   async function uploadFile(file: File) {
     setUploading(true);
     const path = `${order.po_number}/${file.name}`;
     const { error } = await supabase.storage.from("po-attachments").upload(path, file, { upsert: true });
-    if (error) { toast.error("Upload failed: " + error.message); } else { toast.success("File uploaded"); await loadFiles(); }
+    if (error) {
+      toast.error(`Upload failed: ${error.message}`);
+      console.error("Storage upload error:", error);
+    } else {
+      toast.success("File uploaded ✓");
+      await loadFiles();
+    }
     setUploading(false);
   }
 
@@ -565,35 +571,17 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
       const base64 = await new Promise<string>((res, rej) => {
         const r = new FileReader(); r.onload = () => res((r.result as string).split(",")[1]); r.onerror = rej; r.readAsDataURL(file);
       });
-      const mediaType = (file.type || "image/jpeg") as "application/pdf" | "image/jpeg" | "image/png";
-
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
+      const mediaType = file.type || "application/pdf";
+      const response = await fetch("/api/process-po", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-6",
-          max_tokens: 1000,
-          messages: [{
-            role: "user",
-            content: [
-              { type: mediaType === "application/pdf" ? "document" : "image",
-                source: { type: "base64", media_type: mediaType, data: base64 } },
-              { type: "text", text: `Extract cases per SKU from this Bill of Lading. Return ONLY valid JSON, no markdown:
-{"wd_cases":0,"pw_cases":0,"hm_cases":0,"matcha_cases":0,"xd_cases":0,"wm_cases":0}
-SKU item numbers: WD=23141, PW=77670, HM=77671, Matcha=77672, XD=88021, WM=93562. Use 0 if not found.` }
-            ]
-          }]
-        })
+        body: JSON.stringify({ fileBase64: base64, mediaType, mode: "bol" }),
       });
-
       if (response.ok) {
         const data = await response.json();
-        const text = data.content?.find((b: any) => b.type === "text")?.text ?? "{}";
-        const clean = text.replace(/```json|```/g, "").trim();
-        const parsed = JSON.parse(clean);
         setBolCases({
-          wd: parsed.wd_cases ?? 0, pw: parsed.pw_cases ?? 0, hm: parsed.hm_cases ?? 0,
-          matcha: parsed.matcha_cases ?? 0, xd: parsed.xd_cases ?? 0, wm: parsed.wm_cases ?? 0,
+          wd: data.wd_cases ?? 0, pw: data.pw_cases ?? 0, hm: data.hm_cases ?? 0,
+          matcha: data.matcha_cases ?? 0, xd: data.xd_cases ?? 0, wm: data.wm_cases ?? 0,
         });
         toast.success("BOL extracted — review quantities");
       } else {
@@ -981,33 +969,16 @@ function NewOrderModal({ onClose, onCreated, existingPONumbers }: {
       const base64 = await new Promise<string>((res, rej) => {
         const r = new FileReader(); r.onload = () => res((r.result as string).split(",")[1]); r.onerror = rej; r.readAsDataURL(file);
       });
-      const mediaType = (file.type || "application/pdf") as "application/pdf" | "image/jpeg" | "image/png";
+      const mediaType = file.type || "application/pdf";
 
-      // Call Anthropic API directly (works in Lovable browser context)
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
+      const response = await fetch("/api/process-po", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-6",
-          max_tokens: 1000,
-          messages: [{
-            role: "user",
-            content: [
-              { type: mediaType === "application/pdf" ? "document" : "image",
-                source: { type: "base64", media_type: mediaType, data: base64 } },
-              { type: "text", text: `Extract PO fields from this document. Return ONLY valid JSON, no markdown:
-{"po_number":"","po_date":"YYYY-MM-DD","ship_est_date":"YYYY-MM-DD","distributor":"UNFI|KeHe|Rainforest|RFD|Direct|Other","customer":"","wd_cases":0,"pw_cases":0,"hm_cases":0,"matcha_cases":0,"xd_cases":0,"wm_cases":0,"gross_sales":0,"promo_discount":0,"net_sales":0}
-SKU item numbers: WD=23141, PW=77670, HM=77671, Matcha=77672, XD=88021, WM=93562. If field not found use empty string or 0.` }
-            ]
-          }]
-        })
+        body: JSON.stringify({ fileBase64: base64, mediaType }),
       });
 
-      if (!response.ok) throw new Error(`API error: ${response.status}`);
-      const data = await response.json();
-      const text = data.content?.find((b: any) => b.type === "text")?.text ?? "{}";
-      const clean = text.replace(/```json|```/g, "").trim();
-      const ex = JSON.parse(clean);
+      if (!response.ok) throw new Error(`Error: ${response.status}`);
+      const ex = await response.json();
 
       setForm(f => ({
         ...f,
@@ -1027,9 +998,12 @@ SKU item numbers: WD=23141, PW=77670, HM=77671, Matcha=77672, XD=88021, WM=93562
         net_sales: String(ex.net_sales || 0),
       }));
 
-      // Generate packing slip HTML in browser (no server needed)
-      const ps = generatePackingSlip(ex);
-      setPackingSlip(ps);
+      if (ex.packing_slip_html) {
+        setPackingSlip({ html: ex.packing_slip_html, filename: ex.packing_slip_filename });
+      } else {
+        // Fallback: generate PS in browser from extracted data
+        setPackingSlip(generatePackingSlip(ex));
+      }
       setMode("manual");
       toast.success("PO extracted — review fields and save");
     } catch (e) {
@@ -1038,6 +1012,7 @@ SKU item numbers: WD=23141, PW=77670, HM=77671, Matcha=77672, XD=88021, WM=93562
       setMode("manual");
     }
     setProcessing(false);
+  }
   }
 
   async function save() {
