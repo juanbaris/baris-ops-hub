@@ -1807,3 +1807,4 @@ export const Route = createFileRoute("/_authenticated/fulfillment")({
   component: Fulfillment,
   head: () => ({ meta: [{ title: "Fulfillment · BARIS" }] }),
 });
+
