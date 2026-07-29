@@ -10,7 +10,8 @@ const BodySchema = z.object({
     "image/webp",
     "image/gif",
   ]),
-});
+  mode: z.string().optional(),
+}).passthrough();
 
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 
