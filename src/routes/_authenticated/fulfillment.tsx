@@ -470,10 +470,19 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
                       <span className="text-base flex-shrink-0">{icon}</span>
                       <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold flex-shrink-0 ${badge.color}`}>{badge.label}</span>
                       <span className="flex-1 text-xs font-medium truncate" title={f.name}>{f.name}</span>
-                      <a href={f.url} target="_blank" rel="noreferrer"
+                      <button
+                        onClick={async () => {
+                          try {
+                            const res = await fetch(f.url);
+                            const blob = await res.blob();
+                            const url = URL.createObjectURL(blob);
+                            window.open(url, "_blank");
+                            setTimeout(() => URL.revokeObjectURL(url), 10000);
+                          } catch { window.open(f.url, "_blank"); }
+                        }}
                         className="rounded px-2 py-0.5 text-[10px] font-semibold text-white flex-shrink-0" style={{ backgroundColor: "#1C2340" }}>
                         Open
-                      </a>
+                      </button>
                       <a href={f.url} download={f.name}
                         className="rounded px-2 py-0.5 text-[10px] font-semibold border border-border hover:bg-muted flex-shrink-0">
                         ↓
@@ -752,67 +761,99 @@ function generatePackingSlip(po: any): { html: string; filename: string } {
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
 <title>Packing Slip ${po.po_number}</title>
 <style>
-  body { font-family: Arial, sans-serif; margin: 40px; font-size: 12px; color: #000; }
-  h1 { font-size: 18px; margin-bottom: 4px; }
-  h2 { font-size: 14px; margin: 0 0 12px 0; color: #333; }
-  table { border-collapse: collapse; width: 100%; margin-top: 10px; }
-  th { background: #1C2340; color: white; padding: 7px 8px; text-align: left; font-size: 11px; border: 1px solid #1C2340; }
-  td { border: 1px solid #ccc; padding: 6px 8px; font-size: 11px; }
-  .header-table td { border: none; padding: 3px 8px; }
-  .section-header { background: #f0f0f0; font-weight: bold; padding: 5px 8px; margin-top: 12px; border: 1px solid #ccc; }
-  .ship-table td { border: 1px solid #ccc; padding: 8px; vertical-align: top; width: 50%; }
-  .total-row td { background: #f0f0f0; font-weight: bold; }
-  .sign-table td { border: none; padding: 12px 16px; vertical-align: bottom; font-size: 11px; }
-  .sign-line { border-bottom: 1px solid #000; width: 200px; margin-bottom: 4px; height: 24px; }
-  @media print { body { margin: 20px; } }
+  * { box-sizing: border-box; }
+  body { font-family: Arial, sans-serif; margin: 0; padding: 30px 40px; font-size: 12px; color: #000; }
+  .brand-header { background: #1C2340; color: white; padding: 14px 20px; margin: -30px -40px 20px; display: flex; align-items: center; justify-content: space-between; }
+  .brand-header h1 { margin: 0; font-size: 22px; color: #A3224A; letter-spacing: 2px; }
+  .brand-header p { margin: 0; font-size: 11px; color: #9CA3AF; }
+  h2 { font-size: 13px; font-weight: bold; margin: 0 0 8px; color: #1C2340; }
+  table { border-collapse: collapse; width: 100%; margin-top: 8px; }
+  th { background: #1C2340; color: white; padding: 7px 10px; text-align: left; font-size: 11px; border: 1px solid #1C2340; }
+  td { border: 1px solid #ccc; padding: 6px 10px; font-size: 11px; }
+  .meta-table td { border: none; padding: 2px 8px 2px 0; }
+  .meta-table td:first-child { font-weight: bold; color: #1C2340; width: 130px; }
+  .divider { border: none; border-top: 2px solid #A3224A; margin: 14px 0; }
+  .ship-table td { border: 1px solid #ccc; padding: 10px 12px; vertical-align: top; width: 50%; }
+  .ship-table td strong { color: #1C2340; display: block; margin-bottom: 4px; font-size: 11px; letter-spacing: 0.5px; }
+  .section-label { background: #1C2340; color: white; font-weight: bold; font-size: 11px; letter-spacing: 1px; padding: 5px 10px; margin-top: 14px; }
+  .summary-table td { border: 1px solid #ccc; padding: 8px 12px; text-align: center; font-weight: bold; font-size: 13px; }
+  .summary-table th { text-align: center; }
+  .total-row td { background: #F5F0E8; font-weight: bold; }
+  .sign-table td { border: none; padding: 8px 20px; vertical-align: bottom; font-size: 11px; width: 50%; }
+  .sign-line { border-bottom: 1.5px solid #1C2340; margin-bottom: 5px; height: 30px; }
+  .note { font-style: italic; font-size: 10px; color: #555; margin: 8px 0; }
+  .footer { margin-top: 20px; font-size: 9px; color: #aaa; text-align: right; }
+  @media print { body { margin: 0; padding: 20px; } .brand-header { margin: -20px -20px 16px; } }
 </style>
 </head><body>
 
-<h1>Packing Slip</h1>
-<h2>PATAGONIA BITES CORP</h2>
+<div class="brand-header">
+  <div>
+    <h1>BARIS</h1>
+    <p>Patagonia Bites Corp</p>
+  </div>
+  <div style="text-align:right; color:#9CA3AF; font-size:11px">
+    <div style="font-size:14px;font-weight:bold;color:white">Packing Slip</div>
+    <div>PO # ${po.po_number || "—"}</div>
+  </div>
+</div>
 
-<table class="header-table" style="width:auto;margin-bottom:12px">
-  <tr><td><strong>PO #</strong></td><td>${po.po_number || "—"}</td></tr>
-  <tr><td><strong>PO DATE</strong></td><td>${po.po_date || "—"}</td></tr>
-  <tr><td><strong>VENDOR #</strong></td><td>PATAGONIA BITES CORP</td></tr>
-  <tr><td><strong>TEMPERATURE</strong></td><td>Frozen (0 F)</td></tr>
-  <tr><td><strong>${po.distributor === "KeHe" ? "PICKUP DATE" : "DELIVERY DATE"}</strong></td><td>${po.ship_est_date || "TBD"}</td></tr>
+<table class="meta-table" style="width:auto;margin-bottom:14px">
+  <tr><td>PO DATE</td><td>${po.po_date || "—"}</td></tr>
+  <tr><td>VENDOR #</td><td>PATAGONIA BITES CORP</td></tr>
+  <tr><td>TEMPERATURE</td><td>Frozen (0°F)</td></tr>
+  <tr><td>${po.distributor === "KeHe" ? "PICKUP DATE" : "DELIVERY DATE"}</td><td><strong>${po.ship_est_date || "TBD"}</strong></td></tr>
 </table>
 
-<p style="font-style:italic;font-size:11px;margin:4px 0 10px">Note: Freight Prepaid by Seller - Destination.</p>
+<p class="note">Note: Freight Prepaid by Seller - Destination.</p>
+<hr class="divider">
 
 <table class="ship-table"><tr>
-  <td><strong>SHIP FROM</strong><br>LINEAGE NEWARK<br>360 Avenue P<br>Newark, NJ 07105</td>
-  <td><strong>SHIP TO</strong><br>${po.customer || "—"}</td>
+  <td>
+    <strong>SHIP FROM</strong>
+    LINEAGE NEWARK<br>
+    360 Avenue P<br>
+    Newark, NJ 07105
+  </td>
+  <td>
+    <strong>SHIP TO</strong>
+    ${po.customer || "—"}
+  </td>
 </tr></table>
 
-<div class="section-header">LOAD</div>
-<table style="width:auto;margin-bottom:10px">
+<div class="section-label">LOAD</div>
+<table class="summary-table" style="width:auto;margin-bottom:12px">
   <tr>
-    <th>Total Pallets</th><th>Total LBS</th><th>Total Cases</th>
+    <th style="width:150px">Total Pallets</th>
+    <th style="width:150px">Total LBS</th>
+    <th style="width:150px">Total Cases</th>
   </tr>
   <tr>
-    <td style="text-align:center"><strong>${Math.ceil(totalCases / 255)}</strong></td>
-    <td style="text-align:center"><strong>${totalLbs}</strong></td>
-    <td style="text-align:center"><strong>${totalCases}</strong></td>
+    <td>${Math.ceil(totalCases / 255)}</td>
+    <td>${totalLbs}</td>
+    <td>${totalCases}</td>
   </tr>
 </table>
 
 <table>
   <thead><tr>
-    <th>Total Load</th><th>Case UPC</th><th>Item/unit number</th><th style="text-align:right">Cases</th><th style="text-align:right">Weight (LBS)</th>
+    <th style="width:35%">Product</th>
+    <th>Case UPC</th>
+    <th>Item #</th>
+    <th style="text-align:right;width:70px">Cases</th>
+    <th style="text-align:right;width:90px">Weight (LBS)</th>
   </tr></thead>
   <tbody>
     ${rows}
     <tr class="total-row">
-      <td colspan="3"><strong>TOTAL</strong></td>
-      <td style="text-align:right"><strong>${totalCases}</strong></td>
-      <td style="text-align:right"><strong>${totalLbs}</strong></td>
+      <td colspan="3" style="text-align:right"><strong>TOTAL</strong></td>
+      <td style="text-align:right;border:1px solid #ccc;padding:6px 10px"><strong>${totalCases}</strong></td>
+      <td style="text-align:right;border:1px solid #ccc;padding:6px 10px"><strong>${totalLbs}</strong></td>
     </tr>
   </tbody>
 </table>
 
-<table class="sign-table" style="margin-top:30px;width:100%"><tr>
+<table class="sign-table" style="margin-top:35px;width:100%"><tr>
   <td>
     <div class="sign-line"></div>
     <strong>Shipper (Lineage Newark)</strong><br>Sign / Print / Date
@@ -822,6 +863,9 @@ function generatePackingSlip(po: any): { html: string; filename: string } {
     <strong>Carrier / Driver (${po.distributor || "Carrier"})</strong><br>Sign / Print / Date
   </td>
 </tr></table>
+
+<div class="footer">Generated by BARIS Ops Hub · ${new Date().toLocaleDateString()}</div>
+</body></html>`;
 
 <p style="margin-top:20px;font-size:10px;color:#888">Generated by BARIS Ops Hub</p>
 </body></html>`;
@@ -1001,18 +1045,16 @@ function NewOrderModal({ onClose, onCreated, existingPONumbers }: {
       if (ex.packing_slip_html) {
         setPackingSlip({ html: ex.packing_slip_html, filename: ex.packing_slip_filename });
       } else {
-        // Fallback: generate PS in browser from extracted data
         setPackingSlip(generatePackingSlip(ex));
       }
       setMode("manual");
       toast.success("PO extracted — review fields and save");
-    } catch (e) {
-      console.error(e);
-      toast.error("Could not extract — fill in manually");
+    } catch (e: any) {
+      console.error("extractFromFile error:", e);
+      toast.error(`Extract failed: ${e?.message ?? "unknown error"} — fill in manually`);
       setMode("manual");
     }
     setProcessing(false);
-  }
   }
 
   async function save() {
