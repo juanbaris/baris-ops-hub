@@ -884,18 +884,147 @@ function PackingSlipModal({ order, onClose, onSaved }: {
     matcha_cases: String(order.matcha_cases ?? 0),
   });
   const [saving, setSaving] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [psHtml, setPsHtml] = useState<string | null>(null);
+  const filename = `BARIS_PS_${order.po_number}.html`;
 
-  const ps = generatePackingSlip(psData);
+  // Generate PS from server route (correct format with all styles)
+  async function generateFromServer() {
+    setGenerating(true);
+    try {
+      // Build a minimal "fake PO file" as JSON encoded as text to send to server
+      const poJson = JSON.stringify({
+        po_number: psData.po_number,
+        po_date: psData.po_date,
+        ship_date: psData.ship_est_date,
+        distributor: psData.distributor,
+        customer: psData.customer,
+        ship_to_address: psData.ship_to_address,
+        items: [
+          ...(Number(psData.wd_cases)>0 ? [{ item_number:"23141", sku:"WD", cases:Number(psData.wd_cases), unit_price:36.96, weight_lbs:Math.round(Number(psData.wd_cases)*3.41) }] : []),
+          ...(Number(psData.pw_cases)>0 ? [{ item_number:"77670", sku:"PW", cases:Number(psData.pw_cases), unit_price:36.96, weight_lbs:Math.round(Number(psData.pw_cases)*3.16) }] : []),
+          ...(Number(psData.hm_cases)>0 ? [{ item_number:"77671", sku:"HM", cases:Number(psData.hm_cases), unit_price:36.96, weight_lbs:Math.round(Number(psData.hm_cases)*3.16) }] : []),
+          ...(Number(psData.matcha_cases)>0 ? [{ item_number:"77672", sku:"Matcha", cases:Number(psData.matcha_cases), unit_price:36.96, weight_lbs:Math.round(Number(psData.matcha_cases)*3.16) }] : []),
+          ...(Number(psData.xd_cases)>0 ? [{ item_number:"88021", sku:"XD", cases:Number(psData.xd_cases), unit_price:36.96, weight_lbs:Math.round(Number(psData.xd_cases)*3.37) }] : []),
+          ...(Number(psData.wm_cases)>0 ? [{ item_number:"93562", sku:"WM", cases:Number(psData.wm_cases), unit_price:36.96, weight_lbs:Math.round(Number(psData.wm_cases)*3.41) }] : []),
+        ],
+        total_amount: 0, promo_discount_amount: 0, discount_percent: 0,
+      });
+      const base64 = btoa(unescape(encodeURIComponent(poJson)));
+      const response = await fetch("/api/process-po", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileBase64: base64, mediaType: "application/pdf", mode: "ps_only" }),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.packing_slip_html) {
+          const decoded = decodeURIComponent(escape(atob(data.packing_slip_html)));
+          setPsHtml(decoded);
+        }
+      }
+    } catch (e) {
+      console.error("PS generation error:", e);
+    }
+    setGenerating(false);
+  }
+
+  // Build HTML locally as fallback (same format as server)
+  function buildLocalHtml() {
+    const items = [
+      ...(Number(psData.wd_cases)>0 ? [{sku:"WD", item:"23141", label:"Rasp in white & dark chocolate", upc:"00860013723141", cases:Number(psData.wd_cases), lbs:Math.round(Number(psData.wd_cases)*3.41)}] : []),
+      ...(Number(psData.pw_cases)>0 ? [{sku:"PW", item:"77670", label:"Rasp covered in pistachio & white", upc:"00860013776701", cases:Number(psData.pw_cases), lbs:Math.round(Number(psData.pw_cases)*3.16)}] : []),
+      ...(Number(psData.hm_cases)>0 ? [{sku:"HM", item:"77671", label:"Rasp covered in hazelnut & milk", upc:"00860013776718", cases:Number(psData.hm_cases), lbs:Math.round(Number(psData.hm_cases)*3.16)}] : []),
+      ...(Number(psData.matcha_cases)>0 ? [{sku:"Matcha", item:"77672", label:"Rasp in matcha white chocolate", upc:"00860013777672", cases:Number(psData.matcha_cases), lbs:Math.round(Number(psData.matcha_cases)*3.16)}] : []),
+      ...(Number(psData.xd_cases)>0 ? [{sku:"XD", item:"88021", label:"Rasp in extra dark chocolate", upc:"00860013788810", cases:Number(psData.xd_cases), lbs:Math.round(Number(psData.xd_cases)*3.37)}] : []),
+      ...(Number(psData.wm_cases)>0 ? [{sku:"WM", item:"93562", label:"Rasp in white & milk chocolate", upc:"00860013793562", cases:Number(psData.wm_cases), lbs:Math.round(Number(psData.wm_cases)*3.41)}] : []),
+    ];
+    const totalCases = items.reduce((s,i) => s+i.cases, 0);
+    const totalLbs = items.reduce((s,i) => s+i.lbs, 0);
+    const pallets = Math.ceil(totalCases/255);
+    const dateLabel = psData.distributor === "KeHe" ? "PICKUP DATE" : "DELIVERY DATE";
+    const shipToHtml = [psData.customer, psData.ship_to_address].filter(Boolean).join("<br>");
+    const rows = items.map((it,i) => `<tr style="background:${i%2===0?"#fff":"#F2E0E5"}">
+      <td style="padding:6px 8px;border:1px solid #ccc">${it.label}</td>
+      <td style="padding:6px 8px;border:1px solid #ccc">${it.upc}</td>
+      <td style="padding:6px 8px;border:1px solid #ccc">${it.item}</td>
+      <td style="padding:6px 8px;border:1px solid #ccc;text-align:center">${it.cases}</td>
+      <td style="padding:6px 8px;border:1px solid #ccc;text-align:center">${it.lbs}</td>
+    </tr>`).join("");
+    return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+body{font-family:Calibri,sans-serif;font-size:13px;margin:40px;color:#1a1a1a}
+.brand{background:#1C2340;color:white;padding:14px 20px;margin:-40px -40px 20px;display:flex;align-items:center;justify-content:space-between}
+.brand-name{font-size:24px;color:#A3224A;font-weight:bold;letter-spacing:2px}
+.brand-sub{font-size:11px;color:#9CA3AF}
+.ps-label{font-size:16px;font-weight:bold}
+table{border-collapse:collapse;width:100%;margin-bottom:16px}
+.th{background:#7B1D3A;color:white;font-weight:bold;padding:6px 8px;border:1px solid #7B1D3A;font-size:12px}
+.td{padding:6px 8px;border:1px solid #ccc;font-size:12px}
+.alt{background:#F2E0E5}
+.section{font-weight:bold;font-size:13px;margin:14px 0 6px;color:#1C2340}
+.note{font-style:italic;font-size:10px;color:#555;margin:6px 0 12px}
+@media print{body{margin:20px}.brand{margin:-20px -20px 16px}}
+</style></head><body>
+<div class="brand">
+  <div><div class="brand-name">BARIS</div><div class="brand-sub">Patagonia Bites Corp</div></div>
+  <div style="text-align:right"><div class="ps-label">Packing Slip</div><div style="font-size:12px;color:#9CA3AF">PO # ${psData.po_number}</div></div>
+</div>
+<table style="width:auto">
+  <tr><td class="th" style="width:140px">PO DATE</td><td class="td">${psData.po_date}</td></tr>
+  <tr><td class="th">VENDOR #</td><td class="td alt">PATAGONIA BITES CORP</td></tr>
+  <tr><td class="th">TEMPERATURE</td><td class="td">Frozen (0°F)</td></tr>
+  <tr><td class="th">${dateLabel}</td><td class="td alt"><strong>${psData.ship_est_date}</strong></td></tr>
+</table>
+<p class="note">Note: Freight Prepaid by Seller - Destination.</p>
+<hr style="border:none;border-top:2px solid #A3224A;margin:10px 0 14px">
+<table><tr>
+  <td class="th" style="width:50%">SHIP FROM</td>
+  <td class="th" style="width:50%">SHIP TO</td>
+</tr><tr>
+  <td class="td" style="vertical-align:top">LINEAGE NEWARK<br>360 Avenue P<br>Newark, NJ 07105</td>
+  <td class="td" style="vertical-align:top">${shipToHtml}</td>
+</tr></table>
+<div class="section">LOAD</div>
+<table style="width:auto;margin-bottom:14px"><tr>
+  <td class="th" style="width:140px;text-align:center">Total Pallets</td>
+  <td class="th" style="width:140px;text-align:center">Total LBS</td>
+  <td class="th" style="width:140px;text-align:center">Total Cases</td>
+</tr><tr>
+  <td class="td" style="text-align:center"><strong>${pallets}</strong></td>
+  <td class="td" style="text-align:center"><strong>${totalLbs}</strong></td>
+  <td class="td" style="text-align:center"><strong>${totalCases}</strong></td>
+</tr></table>
+<table><tr>
+  <td class="th" style="width:32%">Product</td>
+  <td class="th" style="width:22%">Case UPC</td>
+  <td class="th" style="width:16%">Item #</td>
+  <td class="th" style="width:15%;text-align:center">Cases</td>
+  <td class="th" style="width:15%;text-align:center">Weight (LBS)</td>
+</tr>${rows}
+<tr><td class="td"></td><td class="td"></td><td class="td"><strong>TOTAL</strong></td>
+  <td class="td" style="text-align:center"><strong>${totalCases}</strong></td>
+  <td class="td" style="text-align:center"><strong>${totalLbs}</strong></td>
+</tr></table>
+<br><br>
+<table><tr>
+  <td class="td" style="width:50%">____________________________<br><strong>Shipper (Lineage Newark)</strong><br>Sign / Print / Date</td>
+  <td class="td" style="width:50%">____________________________<br><strong>Carrier / Driver (${psData.distributor})</strong><br>Sign / Print / Date</td>
+</tr></table>
+<div style="margin-top:16px;font-size:9px;color:#aaa;text-align:right">Generated by BARIS Ops Hub · ${new Date().toLocaleDateString()}</div>
+</body></html>`;
+  }
+
+  const currentHtml = psHtml ?? buildLocalHtml();
 
   async function saveAndUpload() {
     setSaving(true);
     try {
-      const blob = new Blob([ps.html], { type: "text/html" });
-      await supabase.storage.from("po-attachments").upload(`${order.po_number}/${ps.filename}`, blob, { upsert: true });
+      const blob = new Blob([currentHtml], { type: "text/html" });
+      await supabase.storage.from("po-attachments").upload(`${order.po_number}/${filename}`, blob, { upsert: true });
       toast.success("Packing Slip saved to attachments");
       onSaved();
       onClose();
-    } catch (e) {
+    } catch {
       toast.error("Failed to save");
     }
     setSaving(false);
@@ -903,10 +1032,10 @@ function PackingSlipModal({ order, onClose, onSaved }: {
 
   function printPS() {
     const w = window.open("", "_blank");
-    if (w) { w.document.write(ps.html); w.document.close(); w.print(); }
+    if (w) { w.document.write(currentHtml); w.document.close(); setTimeout(() => w.print(), 500); }
   }
 
-  const inp = "rounded-lg border border-border bg-background px-2 py-1 text-sm w-full focus:outline-none focus:ring-1 focus:ring-primary/30 font-mono";
+  const inp = "rounded-lg border border-border bg-background px-2 py-1 text-sm w-full focus:outline-none focus:ring-1 focus:ring-primary/30";
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
@@ -914,7 +1043,7 @@ function PackingSlipModal({ order, onClose, onSaved }: {
         <div className="sticky top-0 bg-card rounded-t-2xl px-6 pt-5 pb-3 border-b border-border z-10 flex items-center justify-between">
           <div>
             <h2 className="text-base font-bold" style={{color:"#1C2340"}}>Packing Slip — PO #{order.po_number}</h2>
-            <p className="text-xs text-muted-foreground">Edit before saving or printing</p>
+            <p className="text-xs text-muted-foreground">Edit fields then save or print</p>
           </div>
           <div className="flex gap-2">
             <button onClick={printPS} className="rounded-lg px-3 py-1.5 text-xs font-semibold border border-border hover:bg-muted">🖨 Print / PDF</button>
@@ -927,7 +1056,6 @@ function PackingSlipModal({ order, onClose, onSaved }: {
         </div>
 
         <div className="grid grid-cols-2 gap-0">
-          {/* Left: edit fields */}
           <div className="p-5 border-r border-border space-y-3">
             <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Edit fields</p>
             <div><label className="text-xs text-muted-foreground">Pickup / Ship Date</label>
@@ -939,7 +1067,7 @@ function PackingSlipModal({ order, onClose, onSaved }: {
             <div><label className="text-xs text-muted-foreground">Ship To Address</label>
               <textarea className={`${inp} mt-1`} rows={3} value={psData.ship_to_address}
                 onChange={e => setPsData(d => ({...d, ship_to_address: e.target.value}))}
-                placeholder="1101 Sunset Blvd&#10;Rocklin, CA 95765" /></div>
+                placeholder={"14900 Meridian Parkway\nRiverside, CA 92518"} /></div>
             <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mt-3">Cases per SKU</p>
             {[
               {key:"pw_cases", label:"P&W (77670)"},
@@ -958,13 +1086,12 @@ function PackingSlipModal({ order, onClose, onSaved }: {
             ))}
           </div>
 
-          {/* Right: live preview */}
           <div className="p-4">
             <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2">Live preview</p>
             <iframe
-              srcDoc={ps.html}
+              srcDoc={currentHtml}
               className="w-full rounded-lg border border-border"
-              style={{height: "580px"}}
+              style={{height: "600px"}}
               title="Packing Slip Preview"
             />
           </div>
@@ -1073,7 +1200,13 @@ function NewOrderModal({ onClose, onCreated, existingPONumbers }: {
 
     // Auto-upload packing slip to storage
     if (packingSlip && data.po_number) {
-      const blob = new Blob([packingSlip.html], { type: "text/html" });
+      // Server returns HTML as base64 (toBase64Utf8). Decode before saving.
+      let htmlContent = packingSlip.html;
+      try {
+        const decoded = decodeURIComponent(escape(atob(htmlContent)));
+        if (decoded.includes("<!DOCTYPE")) htmlContent = decoded;
+      } catch { /* already plain HTML */ }
+      const blob = new Blob([htmlContent], { type: "text/html" });
       await supabase.storage.from("po-attachments").upload(`${data.po_number}/${packingSlip.filename}`, blob, { upsert: true });
     }
 
