@@ -296,7 +296,8 @@ function HomePage() {
       .filter(o => ["Open","Acknowledged","Shipment"].includes(o.status))
       .reduce((s, o) => s + (Number(o.net_sales) || 0), 0);
 
-    const segs = DISTRIBUTORS.map(d => ({ label: d, value: Math.round(byDist[d] ?? 0), color: DIST_COLORS[d] }))
+    const segs: { label: string; value: number; color: string }[] = DISTRIBUTORS
+      .map(d => ({ label: d as string, value: Math.round(byDist[d] ?? 0), color: DIST_COLORS[d] }))
       .filter(d => d.value > 0);
     if (openNet > 0) segs.push({ label: "Open (pending ship)", value: Math.round(openNet), color: "#F59E0B" });
     return segs;
