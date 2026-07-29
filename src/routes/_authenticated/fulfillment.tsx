@@ -1060,7 +1060,7 @@ function NewOrderModal({ onClose, onCreated, existingPONumbers }: {
   async function save() {
     if (!form.po_number) { toast.error("PO number required"); return; }
     const { data, error } = await supabase.from("customer_orders").insert({
-      po_number: form.po_number, po_date: form.po_date || null, ship_est_date: form.ship_est_date || null,
+      po_number: form.po_number, po_date: form.po_date, ship_est_date: form.ship_est_date || null,
       distributor: form.distributor, customer: form.customer, status: form.status,
       wd_cases: parseInt(form.wd_cases) || null, pw_cases: parseInt(form.pw_cases) || null,
       hm_cases: parseInt(form.hm_cases) || null, matcha_cases: parseInt(form.matcha_cases) || null,
