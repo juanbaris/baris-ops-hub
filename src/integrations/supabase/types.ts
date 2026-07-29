@@ -47,6 +47,39 @@ export type Database = {
         }
         Relationships: []
       }
+      budget_lines: {
+        Row: {
+          budget_gross: number | null
+          budget_net: number | null
+          created_at: string | null
+          id: string
+          month: string
+          month_num: number
+          updated_at: string | null
+          year: number
+        }
+        Insert: {
+          budget_gross?: number | null
+          budget_net?: number | null
+          created_at?: string | null
+          id?: string
+          month: string
+          month_num: number
+          updated_at?: string | null
+          year: number
+        }
+        Update: {
+          budget_gross?: number | null
+          budget_net?: number | null
+          created_at?: string | null
+          id?: string
+          month?: string
+          month_num?: number
+          updated_at?: string | null
+          year?: number
+        }
+        Relationships: []
+      }
       customer_orders: {
         Row: {
           collected_at: string | null
