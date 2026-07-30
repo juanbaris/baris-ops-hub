@@ -22,7 +22,7 @@ const SKU_ITEMS = [
 
 type DateFilter = "all" | "this_month" | "last_month" | "quarter" | "this_year" | "last_year" | "custom";
 type Quarter = "Q1" | "Q2" | "Q3" | "Q4";
-type Tab = "pipeline" | "shipments" | "collections";
+type Tab = "pipeline" | "shipments" | "collections" | "logistics";
 
 function ymd(d: Date) { return d.toISOString().slice(0, 10); }
 
@@ -1479,6 +1479,368 @@ function renderBodyCell(r: Order, c: (typeof COLUMNS)[number], onChanged: (o: Or
   return String(v);
 }
 
+// ─── LOGISTICS TAB — to be inserted into fulfillment.tsx ─────────────────────
+// Add "logistics" to Tab type and tabs array, then render <LogisticsTab orders={rows} />
+
+// ─── Tariff data ──────────────────────────────────────────────────────────────
+const TARIFFS: { dc: string; state: string; quien: string; f1: number; f2: number; f3: number; f4: number }[] = [
+  { dc:"UNFI Moreno Valley",     state:"CA", quien:"Lineage",    f1:417.68, f2:300.81, f3:258.70, f4:258.70 },
+  { dc:"UNFI Rocklin",           state:"CA", quien:"Lineage",    f1:417.68, f2:307.09, f3:264.10, f4:264.10 },
+  { dc:"UNFI Ridgefield",        state:"WA", quien:"Lineage",    f1:417.68, f2:323.89, f3:278.54, f4:278.54 },
+  { dc:"UNFI Sarasota",          state:"FL", quien:"Lineage",    f1:404.04, f2:274.08, f3:235.71, f4:235.71 },
+  { dc:"UNFI Iowa City",         state:"IA", quien:"Lineage",    f1:404.04, f2:204.59, f3:175.95, f4:175.95 },
+  { dc:"UNFI Greenwood",         state:"IN", quien:"Lineage",    f1:404.04, f2:202.02, f3:173.74, f4:173.74 },
+  { dc:"UNFI Hudson Valley",     state:"NY", quien:"Lineage",    f1:264.08, f2:171.65, f3:171.65, f4:171.65 },
+  { dc:"UNFI Racine",            state:"WI", quien:"Lineage",    f1:404.04, f2:202.02, f3:173.74, f4:173.74 },
+  { dc:"UNFI Lancaster (Dallas)",state:"TX", quien:"Lineage",    f1:404.04, f2:250.57, f3:222.34, f4:222.34 },
+  { dc:"UNFI Manchester",        state:"PA", quien:"Lineage",    f1:222.77, f2:144.80, f3:144.80, f4:144.80 },
+  { dc:"UNFI York",              state:"PA", quien:"Lineage",    f1:222.77, f2:144.80, f3:144.80, f4:144.80 },
+  { dc:"UNFI Chesterfield",      state:"NH", quien:"Lineage",    f1:320.38, f2:208.25, f3:208.25, f4:208.25 },
+  { dc:"UNFI Dayville",          state:"CT", quien:"Lineage",    f1:240.29, f2:156.18, f3:156.18, f4:156.18 },
+  { dc:"UNFI Joliet",            state:"IL", quien:"Lineage",    f1:469.99, f2:235.00, f3:202.10, f4:202.10 },
+  { dc:"UNFI Twin Cities",       state:"MN", quien:"Lineage",    f1:734.36, f2:367.18, f3:315.78, f4:315.78 },
+  { dc:"Rainforest NJ",          state:"NJ", quien:"Lineage",    f1:253.81, f2:164.97, f3:164.97, f4:164.97 },
+  { dc:"Rainforest Maryland",    state:"MD", quien:"Lineage",    f1:222.77, f2:144.80, f3:144.80, f4:144.80 },
+  { dc:"KeHE Chino",             state:"CA", quien:"KeHE (FOB)", f1:706.67, f2:1413.34, f3:2120.02, f4:2826.69 },
+  { dc:"KeHE Stockton",          state:"CA", quien:"KeHE (FOB)", f1:805.49, f2:1610.98, f3:2416.47, f4:3221.96 },
+  { dc:"KeHE Phoenix",           state:"AZ", quien:"KeHE (FOB)", f1:794.38, f2:1588.75, f3:2383.13, f4:3177.50 },
+  { dc:"KeHE Aurora",            state:"CO", quien:"KeHE (FOB)", f1:1102.31, f2:2204.62, f3:3306.94, f4:4409.25 },
+  { dc:"KeHE Dallas",            state:"TX", quien:"KeHE (FOB)", f1:660.69, f2:1321.38, f3:1982.07, f4:2642.76 },
+  { dc:"KeHE Maryland",          state:"MD", quien:"KeHE (FOB)", f1:511.83, f2:1023.66, f3:1535.48, f4:2047.31 },
+  { dc:"KeHE Douglasville",      state:"GA", quien:"KeHE (FOB)", f1:675.82, f2:1351.65, f3:2027.47, f4:2703.30 },
+  { dc:"KeHE Hialeah",           state:"FL", quien:"KeHE (FOB)", f1:906.46, f2:1812.91, f3:2719.37, f4:3625.82 },
+  { dc:"KeHE Ellettsville",      state:"IN", quien:"KeHE (FOB)", f1:988.56, f2:1977.13, f3:2965.69, f4:3954.26 },
+  { dc:"KeHE Portland",          state:"OR", quien:"KeHE (FOB)", f1:871.00, f2:1742.01, f3:2613.01, f4:3484.01 },
+];
+
+// Accesorios Lineage (fixed)
+const BOL = 19.50;
+const LOADING = 4.00; // per pallet
+const CASE_PICKING = 0.35; // per case
+const CASES_PER_PALLET = 255;
+
+function calcLogistics(cases: number, dc: string): { pallets: number; flete: number; noFlete: number; total: number; quien: string } {
+  const pallets = Math.ceil(cases / CASES_PER_PALLET);
+  const tariff = TARIFFS.find(t => t.dc.toLowerCase() === dc.toLowerCase() ||
+    dc.toLowerCase().includes(t.dc.toLowerCase().split(" ").slice(-1)[0]) ||
+    t.dc.toLowerCase().includes(dc.toLowerCase().split(" ").slice(-1)[0]));
+
+  const noFlete = BOL + (pallets * LOADING) + (cases * CASE_PICKING);
+
+  if (!tariff) return { pallets, flete: 0, noFlete: round2(noFlete), total: round2(noFlete), quien: "Unknown" };
+
+  const fletiArr = [tariff.f1, tariff.f2, tariff.f3, tariff.f4];
+  const flete = fletiArr[Math.min(pallets, 4) - 1] ?? tariff.f4;
+
+  return {
+    pallets,
+    flete: round2(flete),
+    noFlete: round2(noFlete),
+    total: round2(flete + noFlete),
+    quien: tariff.quien,
+  };
+}
+
+function round2(n: number) { return Math.round(n * 100) / 100; }
+
+// Historical data summary (hardcoded from Excel)
+const HIST_BY_YEAR = [
+  { year:"2024", dist:"UNFI",        pos:31, cases:4353,  cost:14099 },
+  { year:"2024", dist:"Rainforest",  pos:5,  cases:2008,  cost:1897  },
+  { year:"2025", dist:"UNFI",        pos:55, cases:10896, cost:27493 },
+  { year:"2025", dist:"Kehe",        pos:6,  cases:465,   cost:6235  },
+  { year:"2025", dist:"Rainforest",  pos:13, cases:6741,  cost:5124  },
+  { year:"2026", dist:"Kehe",        pos:72, cases:19411, cost:89913 },
+  { year:"2026", dist:"UNFI",        pos:54, cases:10867, cost:26290 },
+  { year:"2026", dist:"Rainforest",  pos:14, cases:8485,  cost:4949  },
+];
+
+// ─── Logistics Tab Component ──────────────────────────────────────────────────
+function LogisticsTab({ orders }: { orders: Order[] }) {
+  const [logTab, setLogTab] = useState<"pipeline"|"dashboard"|"calculator">("pipeline");
+
+  // Calculator state
+  const [calcDC, setCalcDC] = useState(TARIFFS[0].dc);
+  const [calcCases, setCalcCases] = useState<number>(120);
+  const calcResult = calcLogistics(calcCases, calcDC);
+
+  // Pipeline: all non-invoiced orders with logistics cost
+  const pipelineOrders = useMemo(() => {
+    return orders
+      .filter(o => o.status !== "Invoiced")
+      .map(o => {
+        const totalCases = [o.wd_cases,o.pw_cases,o.hm_cases,o.matcha_cases,o.xd_cases,o.wm_cases]
+          .reduce((s,v) => s + (Number(v)||0), 0);
+        const log = calcLogistics(totalCases, o.customer);
+        return { order: o, totalCases, ...log };
+      })
+      .sort((a,b) => (a.order.ship_est_date ?? "") > (b.order.ship_est_date ?? "") ? 1 : -1);
+  }, [orders]);
+
+  const totalPipelineLog = pipelineOrders.reduce((s,r) => s + r.total, 0);
+  const totalPipelineCases = pipelineOrders.reduce((s,r) => s + r.totalCases, 0);
+
+  // Historical KPIs
+  const hist2026 = HIST_BY_YEAR.filter(r => r.year === "2026");
+  const total2026Cost = hist2026.reduce((s,r) => s + r.cost, 0);
+  const total2026Cases = hist2026.reduce((s,r) => s + r.cases, 0);
+  const avgCostPerCase = total2026Cases > 0 ? total2026Cost / total2026Cases : 0;
+
+  const inp = "rounded-lg border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30";
+
+  return (
+    <div className="space-y-5">
+      {/* Sub-tabs */}
+      <div className="flex gap-1 rounded-xl bg-muted p-1 w-fit">
+        {([["pipeline","Pipeline PO"],["dashboard","Dashboard"],["calculator","Calculadora"]] as const).map(([id,label]) => (
+          <button key={id} onClick={() => setLogTab(id)}
+            className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${logTab === id ? "text-white shadow-sm" : "text-muted-foreground"}`}
+            style={logTab === id ? {backgroundColor:"#1C2340"} : {}}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── PIPELINE ── */}
+      {logTab === "pipeline" && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-3 gap-4">
+            <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Costo logístico pipeline</p>
+              <p className="text-2xl font-bold font-mono" style={{color:"#A3224A"}}>${Math.round(totalPipelineLog).toLocaleString()}</p>
+              <p className="text-xs text-muted-foreground">{pipelineOrders.length} POs pendientes</p>
+            </div>
+            <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Cases a despachar</p>
+              <p className="text-2xl font-bold font-mono" style={{color:"#1C2340"}}>{totalPipelineCases.toLocaleString()}</p>
+              <p className="text-xs text-muted-foreground">{Math.ceil(totalPipelineCases/255)} pallets estimados</p>
+            </div>
+            <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Costo / case promedio</p>
+              <p className="text-2xl font-bold font-mono" style={{color:"#1C2340"}}>
+                ${totalPipelineCases > 0 ? (totalPipelineLog/totalPipelineCases).toFixed(2) : "—"}
+              </p>
+              <p className="text-xs text-muted-foreground">pipeline actual</p>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/40 border-b border-border">
+                  <th className="px-4 py-2.5 text-left">PO #</th>
+                  <th className="px-4 py-2.5 text-left">Customer / DC</th>
+                  <th className="px-4 py-2.5 text-left">Dist.</th>
+                  <th className="px-4 py-2.5 text-left">Ship Est.</th>
+                  <th className="px-4 py-2.5 text-right">Cases</th>
+                  <th className="px-4 py-2.5 text-right">Pallets</th>
+                  <th className="px-4 py-2.5 text-right">Flete</th>
+                  <th className="px-4 py-2.5 text-right">No-Flete</th>
+                  <th className="px-4 py-2.5 text-right font-bold">Total Log.</th>
+                  <th className="px-4 py-2.5 text-left">Quien flete</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pipelineOrders.length === 0 ? (
+                  <tr><td colSpan={10} className="p-8 text-center text-muted-foreground">No hay POs pendientes</td></tr>
+                ) : pipelineOrders.map(({ order: o, totalCases, pallets, flete, noFlete, total, quien }) => (
+                  <tr key={o.id} className="border-t border-border/60 hover:bg-muted/20">
+                    <td className="px-4 py-1.5 font-mono text-xs font-semibold" style={{color:"#A3224A"}}>{o.po_number}</td>
+                    <td className="px-4 py-1.5 text-xs">{o.customer}</td>
+                    <td className="px-4 py-1.5 text-xs">{o.distributor}</td>
+                    <td className="px-4 py-1.5 font-mono text-xs text-muted-foreground">{o.ship_est_date ?? "—"}</td>
+                    <td className="px-4 py-1.5 text-right font-mono">{totalCases}</td>
+                    <td className="px-4 py-1.5 text-right font-mono">{pallets}</td>
+                    <td className="px-4 py-1.5 text-right font-mono text-xs">{flete > 0 ? `$${flete.toFixed(0)}` : "—"}</td>
+                    <td className="px-4 py-1.5 text-right font-mono text-xs">${noFlete.toFixed(0)}</td>
+                    <td className="px-4 py-1.5 text-right font-mono font-semibold" style={{color: total > 2000 ? "#EF4444" : "#1C2340"}}>${total.toFixed(0)}</td>
+                    <td className="px-4 py-1.5">
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${quien === "KeHE (FOB)" ? "bg-orange-100 text-orange-700" : quien === "Unknown" ? "bg-muted text-muted-foreground" : "bg-blue-50 text-blue-700"}`}>
+                        {quien === "Unknown" ? "Sin tarifa" : quien}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              {pipelineOrders.length > 0 && (
+                <tfoot>
+                  <tr style={{backgroundColor:"#1C2340", color:"#fff"}}>
+                    <td colSpan={4} className="px-4 py-2 text-xs font-semibold">Total ({pipelineOrders.length} POs)</td>
+                    <td className="px-4 py-2 text-right font-mono font-semibold">{totalPipelineCases.toLocaleString()}</td>
+                    <td className="px-4 py-2 text-right font-mono">{Math.ceil(totalPipelineCases/255)}</td>
+                    <td className="px-4 py-2 text-right font-mono text-emerald-400">${Math.round(pipelineOrders.reduce((s,r)=>s+r.flete,0)).toLocaleString()}</td>
+                    <td className="px-4 py-2 text-right font-mono text-emerald-400">${Math.round(pipelineOrders.reduce((s,r)=>s+r.noFlete,0)).toLocaleString()}</td>
+                    <td className="px-4 py-2 text-right font-mono font-bold text-emerald-400">${Math.round(totalPipelineLog).toLocaleString()}</td>
+                    <td />
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ── DASHBOARD ── */}
+      {logTab === "dashboard" && (
+        <div className="space-y-5">
+          {/* KPIs 2026 */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Gasto logístico 2026</p>
+              <p className="text-2xl font-bold font-mono" style={{color:"#A3224A"}}>${total2026Cost.toLocaleString()}</p>
+              <p className="text-xs text-muted-foreground">{hist2026.reduce((s,r)=>s+r.pos,0)} POs</p>
+            </div>
+            <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Cases despachados 2026</p>
+              <p className="text-2xl font-bold font-mono" style={{color:"#1C2340"}}>{total2026Cases.toLocaleString()}</p>
+            </div>
+            <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Costo / case 2026</p>
+              <p className="text-2xl font-bold font-mono" style={{color:"#1C2340"}}>${avgCostPerCase.toFixed(2)}</p>
+            </div>
+            <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">KeHE % del gasto 2026</p>
+              <p className="text-2xl font-bold font-mono" style={{color:"#1C2340"}}>
+                {total2026Cost > 0 ? Math.round((hist2026.find(r=>r.dist==="Kehe")?.cost??0)/total2026Cost*100) : 0}%
+              </p>
+              <p className="text-xs text-muted-foreground">vs {Math.round((hist2026.find(r=>r.dist==="UNFI")?.cost??0)/total2026Cost*100)}% UNFI</p>
+            </div>
+          </div>
+
+          {/* By distributor breakdown */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+              <div className="px-5 py-3 border-b border-border bg-muted/30">
+                <p className="text-sm font-semibold" style={{color:"#1C2340"}}>Costo logístico por año y distribuidor</p>
+              </div>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
+                    <th className="px-4 py-2 text-left">Año</th>
+                    <th className="px-4 py-2 text-left">Distribuidor</th>
+                    <th className="px-4 py-2 text-right">POs</th>
+                    <th className="px-4 py-2 text-right">Cases</th>
+                    <th className="px-4 py-2 text-right">Costo total</th>
+                    <th className="px-4 py-2 text-right">$/case</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {HIST_BY_YEAR.map((r,i) => (
+                    <tr key={i} className="border-t border-border/60 hover:bg-muted/20">
+                      <td className="px-4 py-1.5 font-semibold" style={{color:"#1C2340"}}>{r.year}</td>
+                      <td className="px-4 py-1.5">{r.dist}</td>
+                      <td className="px-4 py-1.5 text-right font-mono">{r.pos}</td>
+                      <td className="px-4 py-1.5 text-right font-mono">{r.cases.toLocaleString()}</td>
+                      <td className="px-4 py-1.5 text-right font-mono font-semibold">${r.cost.toLocaleString()}</td>
+                      <td className="px-4 py-1.5 text-right font-mono text-muted-foreground">
+                        ${r.cases > 0 ? (r.cost/r.cases).toFixed(2) : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Tariff table */}
+            <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+              <div className="px-5 py-3 border-b border-border bg-muted/30">
+                <p className="text-sm font-semibold" style={{color:"#1C2340"}}>Tarifario por DC — flete por pallet</p>
+                <p className="text-xs text-muted-foreground">+ No-Flete: BOL $19.50 + Loading $4/plt + Case Picking $0.35/caja</p>
+              </div>
+              <div className="overflow-y-auto" style={{maxHeight:400}}>
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0">
+                    <tr className="text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/40 border-b border-border">
+                      <th className="px-3 py-2 text-left">DC</th>
+                      <th className="px-3 py-2 text-center">St.</th>
+                      <th className="px-3 py-2 text-right">1 plt</th>
+                      <th className="px-3 py-2 text-right">2 plt</th>
+                      <th className="px-3 py-2 text-right">3 plt</th>
+                      <th className="px-3 py-2 text-right">4 plt</th>
+                      <th className="px-3 py-2 text-left">Flete</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {TARIFFS.map((t,i) => (
+                      <tr key={i} className="border-t border-border/40 hover:bg-muted/20">
+                        <td className="px-3 py-1.5 font-medium">{t.dc}</td>
+                        <td className="px-3 py-1.5 text-center text-muted-foreground">{t.state}</td>
+                        <td className="px-3 py-1.5 text-right font-mono">${t.f1.toFixed(0)}</td>
+                        <td className="px-3 py-1.5 text-right font-mono">${t.f2.toFixed(0)}</td>
+                        <td className="px-3 py-1.5 text-right font-mono">${t.f3.toFixed(0)}</td>
+                        <td className="px-3 py-1.5 text-right font-mono">${t.f4.toFixed(0)}</td>
+                        <td className="px-3 py-1.5">
+                          <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${t.quien === "KeHE (FOB)" ? "bg-orange-100 text-orange-700" : "bg-blue-50 text-blue-700"}`}>
+                            {t.quien === "KeHE (FOB)" ? "KeHE" : "Lineage"}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── CALCULADORA ── */}
+      {logTab === "calculator" && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="rounded-2xl border border-border bg-card p-5 shadow-sm space-y-4">
+            <h3 className="text-sm font-bold" style={{color:"#1C2340"}}>Calculadora de costo logístico</h3>
+            <div>
+              <label className="text-xs text-muted-foreground font-semibold uppercase tracking-wide">DC / Cliente destino</label>
+              <select className={`${inp} mt-1 w-full`} value={calcDC} onChange={e => setCalcDC(e.target.value)}>
+                {TARIFFS.map(t => <option key={t.dc} value={t.dc}>{t.dc} ({t.state})</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground font-semibold uppercase tracking-wide">Cajas a enviar</label>
+              <input type="number" min={1} className={`${inp} mt-1 w-full font-mono`}
+                value={calcCases} onChange={e => setCalcCases(Number(e.target.value))} />
+            </div>
+            <div className="rounded-xl bg-muted/30 p-4 space-y-2 mt-2">
+              <div className="flex justify-between text-xs"><span className="text-muted-foreground">Pallets (255 cajas/plt)</span><span className="font-mono font-semibold">{calcResult.pallets}</span></div>
+              <div className="flex justify-between text-xs"><span className="text-muted-foreground">Quien cobra flete</span>
+                <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${calcResult.quien === "KeHE (FOB)" ? "bg-orange-100 text-orange-700" : "bg-blue-50 text-blue-700"}`}>{calcResult.quien}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className={`rounded-2xl border p-5 ${calcResult.total > 2000 ? "border-red-200 bg-red-50" : "border-emerald-200 bg-emerald-50"}`}>
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Costo logístico total</p>
+              <p className={`text-3xl font-bold font-mono ${calcResult.total > 2000 ? "text-red-600" : "text-emerald-600"}`}>
+                ${calcResult.total.toFixed(2)}
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                ${calcCases > 0 ? (calcResult.total/calcCases).toFixed(2) : "0"} por caja
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-border bg-card p-4 shadow-sm divide-y divide-border/60">
+              {[
+                { label: "Flete (por pallets)", v: calcResult.flete, color: "#1C2340" },
+                { label: `No-Flete: BOL ($${BOL})`, v: BOL, color: "#6B7280" },
+                { label: `No-Flete: Loading (${calcResult.pallets} plt × $${LOADING})`, v: calcResult.pallets * LOADING, color: "#6B7280" },
+                { label: `No-Flete: Case Picking (${calcCases} cajas × $${CASE_PICKING})`, v: calcCases * CASE_PICKING, color: "#6B7280" },
+                { label: "TOTAL", v: calcResult.total, color: "#A3224A" },
+              ].map((row,i) => (
+                <div key={i} className="flex justify-between py-2">
+                  <span className="text-xs text-muted-foreground">{row.label}</span>
+                  <span className="text-xs font-mono font-semibold" style={{color:row.color}}>${row.v.toFixed(2)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 // ─── Main component ────────────────────────────────────────────────────────────
 function Fulfillment() {
   const [rows, setRows] = useState<Order[]>([]);
@@ -1548,6 +1910,7 @@ function Fulfillment() {
     { id: "pipeline", label: "Pipeline PO" },
     { id: "shipments", label: "Shipments" },
     { id: "collections", label: "Collections" },
+    { id: "logistics", label: "Logística" },
   ];
 
   return (
@@ -1566,6 +1929,7 @@ function Fulfillment() {
 
       {activeTab === "shipments" && <ShipmentsTab orders={rows} onUpdated={applyUpdate} />}
       {activeTab === "collections" && <CollectionsTab orders={rows} />}
+      {activeTab === "logistics" && <LogisticsTab orders={rows} />}
 
       {activeTab === "pipeline" && (
         <>
