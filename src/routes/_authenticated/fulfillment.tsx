@@ -10,7 +10,7 @@ type Distributor = Database["public"]["Enums"]["distributor"];
 type Status = Database["public"]["Enums"]["order_status"];
 
 const DISTRIBUTORS: Distributor[] = ["UNFI", "KeHe", "Rainforest", "RFD", "Direct", "Other"];
-const STATUSES: Status[] = ["Open", "Acknowledged", "Shipment", "Invoiced"];
+const STATUSES: string[] = ["Open", "Accepted", "Sent to 3PL", "Shipment", "Invoiced"];
 const SKU_ITEMS = [
   { key: "wd_cases" as const, label: "W&D", item: "23141" },
   { key: "pw_cases" as const, label: "P&W", item: "77670" },
@@ -44,11 +44,13 @@ function computeRange(filter: DateFilter, quarter: Quarter, from: string, to: st
 }
 
 // CHANGE 2: All statuses available (not just next)
-const STATUS_STYLES: Record<Status, string> = {
-  Open: "bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200",
-  Acknowledged: "bg-orange-50 text-orange-700 ring-1 ring-inset ring-orange-200",
-  Shipment: "bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200",
-  Invoiced: "bg-purple-50 text-purple-700 ring-1 ring-inset ring-purple-200",
+const STATUS_STYLES: Record<string, string> = {
+  Open:           "bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200",
+  Accepted:       "bg-orange-50 text-orange-700 ring-1 ring-inset ring-orange-200",
+  Acknowledged:   "bg-orange-50 text-orange-700 ring-1 ring-inset ring-orange-200",
+  "Sent to 3PL":  "bg-yellow-50 text-yellow-700 ring-1 ring-inset ring-yellow-200",
+  Shipment:       "bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200",
+  Invoiced:       "bg-purple-50 text-purple-700 ring-1 ring-inset ring-purple-200",
 };
 
 // ─── Status cell — CHANGE 2: show all statuses, not just next ──────────────────
@@ -91,7 +93,7 @@ function StatusCell({ order, onChanged }: { order: Order; onChanged: (o: Order) 
               <button key={s} type="button"
                 className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs font-medium hover:bg-muted ${s === order.status ? "opacity-40 cursor-default" : ""}`}
                 onClick={() => changeTo(s)}>
-                <span className={`inline-block w-2 h-2 rounded-full ${s === "Open" ? "bg-blue-400" : s === "Acknowledged" ? "bg-orange-400" : s === "Shipment" ? "bg-emerald-400" : "bg-purple-400"}`} />
+                <span className={`inline-block w-2 h-2 rounded-full ${s === "Open" ? "bg-blue-400" : s === "Accepted" || s === "Acknowledged" ? "bg-orange-400" : s === "Sent to 3PL" ? "bg-yellow-400" : s === "Shipment" ? "bg-emerald-400" : "bg-purple-400"}`} />
                 {s}{s === order.status ? " ✓" : ""}
               </button>
             ))}
@@ -112,7 +114,7 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
   const [uploading, setUploading] = useState(false);
   const [showPS, setShowPS] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
-  const steps: Status[] = ["Open", "Acknowledged", "Shipment", "Invoiced"];
+  const steps: string[] = ["Open", "Accepted", "Sent to 3PL", "Shipment", "Invoiced"];
   const currentIdx = steps.indexOf(order.status);
 
   // Edit mode
@@ -1128,7 +1130,7 @@ function NewOrderModal({ onClose, onCreated, existingPONumbers }: {
   const fileRef = useRef<HTMLInputElement>(null);
   const [form, setForm] = useState({
     po_number: "", po_date: ymd(new Date()), ship_est_date: "", distributor: "UNFI" as Distributor,
-    customer: "", ship_to_address: "", status: "Open" as Status,
+    customer: "", ship_to_address: "", status: "Open" as unknown as Status,
     wd_cases: "", pw_cases: "", hm_cases: "", matcha_cases: "", xd_cases: "", wm_cases: "",
     gross_sales: "", promo_discount: "", net_sales: "", notes: "",
   });
@@ -1338,7 +1340,7 @@ function NewOrderModal({ onClose, onCreated, existingPONumbers }: {
 function ShipmentsTab({ orders, onUpdated }: { orders: Order[]; onUpdated: (o: Order) => void }) {
   const [lineageOrder, setLineageOrder] = useState<Order | null>(null);
   const [bolOrder, setBolOrder] = useState<Order | null>(null);
-  const readyToShip = orders.filter(o => o.status === "Acknowledged");
+  const readyToShip = orders.filter(o => o.status === "Accepted" || o.status === "Acknowledged");
   const inTransit = orders.filter(o => o.status === "Shipment");
 
   return (
@@ -1348,7 +1350,7 @@ function ShipmentsTab({ orders, onUpdated }: { orders: Order[]; onUpdated: (o: O
           <span className="text-sm font-semibold" style={{ color: "#1C2340" }}>Ready to Ship</span>
           <span className="rounded-full bg-orange-100 text-orange-700 text-xs font-semibold px-2 py-0.5">{readyToShip.length} orders</span>
         </div>
-        {readyToShip.length === 0 ? <p className="px-5 py-6 text-sm text-muted-foreground">No orders with Acknowledged status.</p> : (
+        {readyToShip.length === 0 ? <p className="px-5 py-6 text-sm text-muted-foreground">No orders with Accepted status.</p> : (
           <table className="w-full text-sm">
             <thead><tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20">
               <th className="px-4 py-2 text-left">PO #</th><th className="px-4 py-2 text-left">Customer</th>
