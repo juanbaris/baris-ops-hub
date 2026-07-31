@@ -103,7 +103,7 @@ Use 0 for cases not found. Use empty string for lot numbers not found.` }
           return Response.json({ wd_cases:0, pw_cases:0, hm_cases:0, matcha_cases:0, xd_cases:0, wm_cases:0 });
         }
 
-
+        if (!parsed.success) {
           return Response.json(
             { error: "Invalid body: expected fileBase64 and a supported mediaType" },
             { status: 400 },
