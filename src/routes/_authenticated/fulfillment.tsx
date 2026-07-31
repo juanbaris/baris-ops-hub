@@ -588,6 +588,7 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
   const [shipDate, setShipDate] = useState(new Date().toISOString().slice(0, 10));
   const [lots, setLots] = useState<Record<string, string>>({});
   const [processing, setProcessing] = useState(false);
+  const [bolFile, setBolFile] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // Pre-fill with PO quantities
@@ -601,6 +602,7 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
 
   async function handleFile(file: File) {
     setProcessing(true);
+    setBolFile(file);
     try {
       const base64 = await new Promise<string>((res, rej) => {
         const r = new FileReader(); r.onload = () => res((r.result as string).split(",")[1]); r.onerror = rej; r.readAsDataURL(file);
@@ -616,6 +618,15 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
         setBolCases({
           wd: data.wd_cases ?? 0, pw: data.pw_cases ?? 0, hm: data.hm_cases ?? 0,
           matcha: data.matcha_cases ?? 0, xd: data.xd_cases ?? 0, wm: data.wm_cases ?? 0,
+        });
+        if (data.bol_number) setBolNumber(String(data.bol_number));
+        if (data.ship_date && /^\d{4}-\d{2}-\d{2}$/.test(String(data.ship_date))) setShipDate(String(data.ship_date));
+        const ln = data.lot_numbers ?? {};
+        const single = Object.values(ln).find(v => typeof v === "string" && v.trim());
+        setLots({
+          wd: (ln.wd || single || "") as string, pw: (ln.pw || single || "") as string,
+          hm: (ln.hm || single || "") as string, matcha: (ln.matcha || single || "") as string,
+          xd: (ln.xd || single || "") as string, wm: (ln.wm || single || "") as string,
         });
         toast.success("BOL extracted — review quantities");
       } else {
@@ -657,6 +668,16 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
     };
     const { data, error } = await supabase.from("customer_orders").update(patch).eq("id", order.id).select().single();
     if (error || !data) { toast.error(error?.message ?? "Failed to update order"); setStep("review"); return; }
+
+    // Save the uploaded BOL file to storage
+    if (bolFile) {
+      const ext = bolFile.name.includes(".") ? bolFile.name.slice(bolFile.name.lastIndexOf(".")) : "";
+      const filename = `BOL_${(bolNumber || shipped).replace(/[^A-Za-z0-9_-]/g, "")}${ext}`;
+      const { error: upErr } = await supabase.storage
+        .from("po-attachments")
+        .upload(`${order.po_number}/${filename}`, bolFile, { upsert: true, contentType: bolFile.type || undefined });
+      if (upErr) toast.error(`BOL file not saved: ${upErr.message}`);
+    }
 
     // Create fp_movements Out records
     const lotKeyByField: Record<string, string> = { wd_cases: "wd", pw_cases: "pw", hm_cases: "hm", matcha_cases: "matcha", xd_cases: "xd", wm_cases: "wm" };
