@@ -25,6 +25,30 @@ export const Route = createFileRoute("/api/process-po")({
         }
 
         const parsed = BodySchema.safeParse(await request.json().catch(() => null));
+
+        // Handle AI search mode — no file needed
+        if (parsed.success && parsed.data.mode === "search") {
+          const { query, context } = parsed.data as any;
+          const searchResp = await fetch(ANTHROPIC_API_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+            body: JSON.stringify({
+              model: "claude-sonnet-4-6",
+              max_tokens: 512,
+              messages: [{
+                role: "user",
+                content: `You are a helpful assistant for BARIS, a frozen berry CPG brand. Answer the question based ONLY on the data provided. Be concise and direct. Use numbers from the data exactly.\n\nDATA:\n${context}\n\nQUESTION: ${query}`,
+              }],
+            }),
+          });
+          if (searchResp.ok) {
+            const searchData = await searchResp.json();
+            const answer = searchData.content?.[0]?.text ?? "No answer found.";
+            return Response.json({ answer });
+          }
+          return Response.json({ answer: "Could not get an answer." });
+        }
+
         if (!parsed.success) {
           return Response.json(
             { error: "Invalid body: expected fileBase64 and a supported mediaType" },
