@@ -510,6 +510,7 @@ export type Database = {
         | "Damage"
         | "Transfer"
         | "Free"
+        | "Historical"
       ip_concept: "Procurement" | "Consumption" | "Damage" | "Transfer"
       movement_type: "In" | "Out"
       order_status:
@@ -659,6 +660,7 @@ export const Constants = {
         "Damage",
         "Transfer",
         "Free",
+        "Historical",
       ],
       ip_concept: ["Procurement", "Consumption", "Damage", "Transfer"],
       movement_type: ["In", "Out"],
