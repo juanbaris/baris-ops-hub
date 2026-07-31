@@ -5,10 +5,10 @@ import { supabase } from "@/integrations/supabase/client";
 const NAV = [
   { to: "/home", label: "Home" },
   { to: "/fulfillment", label: "Fulfillment" },
-  { to: "/operations", label: "Operaciones" },
-  { to: "/sales", label: "Ventas" },
-  { to: "/finance", label: "Finanzas" },
-  { to: "/system", label: "Sistema" },
+  { to: "/operations", label: "Operations" },
+  { to: "/sales", label: "Sales" },
+  { to: "/finance", label: "Finance" },
+  { to: "/system", label: "System" },
 ] as const;
 
 export function AppShell({ children }: { children: ReactNode }) {

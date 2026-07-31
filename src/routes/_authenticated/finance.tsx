@@ -192,7 +192,7 @@ function DashboardTab({ period, refMonth }: { period: Period; refMonth: number }
         <KPI icon="🎯" label="Business Contribution" value={fmtK(bc)}
           sub={`${netRev ? (bc/netRev*100).toFixed(1) : 0}% of Gross`} />
         <KPI icon="📉" label="EBITDA" value={fmt(ebitda,0)}
-          sub="burn del período" subColor={ebitda < 0 ? "text-red-500" : "text-emerald-600"} />
+          sub="period burn" subColor={ebitda < 0 ? "text-red-500" : "text-emerald-600"} />
         <KPI icon="🏦" label="Cash on Hand" value={fmtK(cash)}
           sub="end of period"
           subColor={cash < 200 ? "text-red-600 font-bold" : cash < 400 ? "text-orange-500" : "text-emerald-600"} />
@@ -207,7 +207,7 @@ function DashboardTab({ period, refMonth }: { period: Period; refMonth: number }
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
         <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold" style={{color:"#1C2340"}}>Revenue mensual · Budget vs Real vs Forecast</h3>
+            <h3 className="text-sm font-semibold" style={{color:"#1C2340"}}>Monthly revenue · Budget vs Real vs Forecast</h3>
             <span className="text-[10px] text-muted-foreground">values in $K</span>
           </div>
           <div style={{height:220}}><canvas ref={revCanvas} /></div>
