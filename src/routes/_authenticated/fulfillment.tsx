@@ -22,7 +22,7 @@ const SKU_ITEMS = [
 
 type DateFilter = "all" | "this_month" | "last_month" | "quarter" | "this_year" | "last_year" | "custom";
 type Quarter = "Q1" | "Q2" | "Q3" | "Q4";
-type Tab = "pipeline" | "shipments" | "collections" | "logistics";
+type Tab = "pipeline" | "tasks" | "collections" | "logistics";
 
 function ymd(d: Date) { return d.toISOString().slice(0, 10); }
 
@@ -1989,7 +1989,7 @@ function Fulfillment() {
 
   const tabs: { id: Tab; label: string }[] = [
     { id: "pipeline", label: "Pipeline PO" },
-    { id: "shipments", label: "Shipments" },
+    { id: "tasks", label: "Task Queue" },
     { id: "collections", label: "Collections" },
     { id: "logistics", label: "Logistics" },
   ];
@@ -2008,7 +2008,7 @@ function Fulfillment() {
         ))}
       </div>
 
-      {activeTab === "shipments" && <ShipmentsTab orders={rows} onUpdated={applyUpdate} />}
+      {activeTab === "tasks" && <TaskQueueTab orders={rows} onUpdated={applyUpdate} />}
       {activeTab === "collections" && <CollectionsTab orders={rows} />}
       {activeTab === "logistics" && <LogisticsTab orders={rows} />}
 
