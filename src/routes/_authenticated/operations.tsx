@@ -1310,11 +1310,12 @@ function OperationsPage() {
         ))}
       </div>
 
-      {tab === "stock"      && <FPStockTab movements={fpMovements} loading={loading} />}
-      {tab === "fp"         && <FPInputTab movements={fpMovements} loading={loading} onAdded={loadAll} />}
-      {tab === "ip"         && <IPInputTab movements={ipMovements} loading={loading} onAdded={loadAll} />}
-      {tab === "production" && <ProductionTab onAdded={loadAll} />}
-      {tab === "cogs"       && <COGSSimulatorTab />}
+      {tab === "stock"       && <FPStockTab movements={fpMovements} loading={loading} />}
+      {tab === "fp"          && <FPInputTab movements={fpMovements} loading={loading} onAdded={loadAll} />}
+      {tab === "ip"          && <IPInputTab movements={ipMovements} loading={loading} onAdded={loadAll} />}
+      {tab === "production"  && <ProductionTab onAdded={loadAll} />}
+      {tab === "procurement" && <ProcurementTab movements={fpMovements} orders={orders} />}
+      {tab === "cogs"        && <COGSSimulatorTab />}
     </>
   );
 }
