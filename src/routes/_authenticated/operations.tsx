@@ -21,91 +21,156 @@ const FP_CONCEPTS: FPConcept[] = ["Production","Sale","Sample","Damage","Transfe
 const IP_CONCEPTS: IPConcept[] = ["Procurement","Consumption","Damage","Transfer"];
 const FACILITIES: Facility[] = ["Heinlein","Empire","OOE"];
 
-type OpsTab = "stock" | "fp" | "ip" | "production" | "cogs";
+type OpsTab = "stock" | "fp" | "ip" | "production" | "cogs" | "procurement";
 
 function ymd(d = new Date()) { return d.toISOString().slice(0,10); }
 
-// ─── FP Stock Tab ─────────────────────────────────────────────────────────────
-function FPStockTab({ movements, loading }: { movements: FPRow[]; loading: boolean }) {
-  const stock = useMemo(() => {
-    const map: Record<string, { sku: SKU; warehouse: Warehouse; cases: number }> = {};
-    for (const r of movements) {
-      const k = `${r.sku}|${r.warehouse}`;
-      if (!map[k]) map[k] = { sku: r.sku as SKU, warehouse: r.warehouse as Warehouse, cases: 0 };
-      map[k].cases += r.type === "In" ? Number(r.cases) : -Number(r.cases);
-    }
-    return Object.values(map).sort((a,b) => a.sku.localeCompare(b.sku));
-  }, [movements]);
+// ─── Forecast data (from BARIS_Demand_Forecast_2026_2027 Excel) ───────────────
+const FORECAST_MONTHS_OPS = [
+  "Ago 26","Sep 26","Oct 26","Nov 26","Dic 26","Ene 27","Feb 27","Mar 27","Abr 27","May 27","Jun 27","Jul 27"
+];
+const FORECAST_SKU_OPS: Record<string, number[]> = {
+  XD:     [1766, 4022, 2065, 707,  3614, 571,  3804, 3777, 4457, 1957, 3995, 6160],
+  PW:     [1472, 3352, 1721, 589,  3012, 476,  3170, 3148, 3714, 1631, 3329, 2355],
+  HM:     [1060, 2413, 1239, 424,  2168, 342,  2283, 2266, 2674, 1174, 2397, 1694],
+  WM:     [707,  1609, 826,  283,  1446, 228,  1522, 1511, 1783, 783,  1598, 1130],
+  WD:     [471,  1072, 551,  188,  964,  152,  1014, 1007, 1188, 522,  1065, 753],
+  Matcha: [412,  938,  482,  165,  843,  133,  888,  881,  1040, 457,  932,  659],
+};
+const MIN_WOH_TRIGGER = 6; // weeks — produce when projected drops below this
+const PROD_RUN_SIZE = 1000; // minimum cases per production run
 
-  // Summary by SKU
+// BOM: lbs per case per ingredient (from Super BOM Consolidado)
+const BOM_LBS: Record<string, Record<string, number>> = {
+  XD:     { "IQF Raspberry":1.125, "Chocolate":1.375 },
+  PW:     { "IQF Raspberry":0.825, "Chocolate":1.428, "Pistachio Paste":0.200, "Cocoa Butter":0.042 },
+  HM:     { "IQF Raspberry":0.825, "Chocolate":1.398, "Hazelnut Butter":0.250, "Cocoa Butter":0.024 },
+  WM:     { "IQF Raspberry":0.750, "Chocolate":1.719, "Cocoa Butter":0.029 },
+  WD:     { "IQF Raspberry":0.750, "Chocolate":1.719, "Cocoa Butter":0.029 },
+  Matcha: { "IQF Raspberry":1.125, "Chocolate":1.322, "Matcha Powder":0.022, "Cocoa Butter":0.025 },
+};
+const ING_PRICES: Record<string, number> = {
+  "IQF Raspberry":2.91, "Chocolate":3.80, "Pistachio Paste":9.50,
+  "Hazelnut Butter":5.20, "Matcha Powder":15.00, "Cocoa Butter":6.00,
+};
+
+// ─── FP Stock Tab — with WoH ──────────────────────────────────────────────────
+function FPStockTab({ movements, orders, loading }: { movements: FPRow[]; orders: any[]; loading: boolean }) {
+  // Stock from fp_movements (live)
   const bySku = useMemo(() => {
     const m: Record<string, number> = {};
-    for (const r of movements) m[r.sku] = (m[r.sku] ?? 0) + (r.type === "In" ? Number(r.cases) : -Number(r.cases));
+    for (const r of movements) {
+      m[r.sku] = (m[r.sku] ?? 0) + (r.type === "In" ? Number(r.cases) : -Number(r.cases));
+    }
     return m;
   }, [movements]);
 
+  // Committed = open POs (not invoiced) — cases per SKU
+  const committed = useMemo(() => {
+    const c: Record<string, number> = {};
+    const SKU_KEYS: Record<string, string> = {
+      XD:"xd_cases", PW:"pw_cases", HM:"hm_cases", WM:"wm_cases", WD:"wd_cases", Matcha:"matcha_cases"
+    };
+    const openOrders = orders.filter(o => !["Invoiced"].includes(o.status));
+    for (const sku of SKUS) {
+      c[sku] = openOrders.reduce((s, o) => s + (Number(o[SKU_KEYS[sku]]) || 0), 0);
+    }
+    return c;
+  }, [orders]);
+
+  // Available = stock - committed
+  // WoH = available / (forecast_4w / 4)
+  const skuData = useMemo(() => SKUS.map(sku => {
+    const stockCases = Math.round(bySku[sku] ?? 0);
+    const committedCases = committed[sku] ?? 0;
+    const availCases = stockCases - committedCases;
+    const fcst4w = FORECAST_SKU_OPS[sku]?.[0] ?? 0; // next month forecast as proxy for 4w
+    const woh = fcst4w > 0 ? (availCases / fcst4w) * 4 : 0;
+    const status = availCases <= 0 ? "OOS" : woh < 2 ? "CRITICAL" : woh < 4 ? "LOW" : "OK";
+    return { sku, stockCases, committedCases, availCases, fcst4w, woh, status };
+  }), [bySku, committed]);
+
   return (
     <div className="space-y-5">
-      {/* SKU summary cards */}
+      {/* SKU cards */}
       <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
-        {SKUS.map(sku => {
-          const qty = Math.round(bySku[sku] ?? 0);
-          const isCrit = qty < 200;
-          const isLow = qty < 500;
+        {skuData.map(s => {
+          const isOOS = s.status === "OOS";
+          const isCrit = s.status === "CRITICAL";
+          const isLow = s.status === "LOW";
           return (
-            <div key={sku} className={`rounded-2xl border p-4 text-center shadow-sm ${isCrit ? "border-red-200 bg-red-50" : isLow ? "border-orange-200 bg-orange-50" : "border-border bg-card"}`}>
-              <p className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground">{sku}</p>
-              <p className="text-[10px] text-muted-foreground">{SKU_ITEMS[sku]}</p>
-              <p className={`text-xl font-bold font-mono mt-1 ${isCrit ? "text-red-600" : isLow ? "text-orange-500" : ""}`} style={!isCrit && !isLow ? {color:"#1C2340"} : {}}>
-                {qty.toLocaleString()}
+            <div key={s.sku} className={`rounded-2xl border p-4 text-center shadow-sm
+              ${isOOS ? "border-red-400 bg-red-100" : isCrit ? "border-red-200 bg-red-50" : isLow ? "border-orange-200 bg-orange-50" : "border-border bg-card"}`}>
+              <p className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground">{s.sku}</p>
+              <p className="text-[10px] text-muted-foreground">{SKU_ITEMS[s.sku as SKU]}</p>
+              <p className={`text-xl font-bold font-mono mt-1 ${isOOS || isCrit ? "text-red-600" : isLow ? "text-orange-500" : ""}`}
+                style={!isOOS && !isCrit && !isLow ? {color:"#1C2340"} : {}}>
+                {s.availCases.toLocaleString()}
               </p>
-              <p className="text-[10px] text-muted-foreground">cases</p>
-              {isCrit && <p className="text-[9px] font-bold text-red-600 mt-0.5">CRITICAL</p>}
-              {!isCrit && isLow && <p className="text-[9px] font-bold text-orange-500 mt-0.5">LOW</p>}
+              <p className="text-[10px] text-muted-foreground">cases avail.</p>
+              <p className={`text-sm font-bold mt-1 ${isOOS || isCrit ? "text-red-600" : isLow ? "text-orange-500" : "text-emerald-600"}`}>
+                {s.woh.toFixed(1)}w
+              </p>
+              <p className={`text-[9px] font-bold mt-0.5 ${isOOS ? "text-red-700" : isCrit ? "text-red-600" : isLow ? "text-orange-500" : "text-emerald-600"}`}>
+                {s.status}
+              </p>
             </div>
           );
         })}
       </div>
 
-      {/* Detail by SKU × Warehouse */}
+      {/* Detail table */}
       <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
         <div className="px-5 py-3 border-b border-border bg-muted/30">
-          <p className="text-sm font-semibold" style={{color:"#1C2340"}}>Stock by SKU × Warehouse</p>
-          <p className="text-xs text-muted-foreground">Calculated from all fp_movements · last updated: {ymd()}</p>
+          <p className="text-sm font-semibold" style={{color:"#1C2340"}}>Stock Detail · Weeks on Hand</p>
+          <p className="text-xs text-muted-foreground">
+            Stock = fp_movements live · Committed = open POs (not invoiced) · WoH = available ÷ forecast próx. mes
+          </p>
         </div>
         <table className="w-full text-sm">
           <thead>
             <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
               <th className="px-4 py-2.5 text-left">SKU</th>
-              <th className="px-4 py-2.5 text-left">Item #</th>
-              <th className="px-4 py-2.5 text-left">Warehouse</th>
-              <th className="px-4 py-2.5 text-right">Cases on hand</th>
+              <th className="px-4 py-2.5 text-right">Stock (cases)</th>
+              <th className="px-4 py-2.5 text-right">Committed (cases)</th>
+              <th className="px-4 py-2.5 text-right">Available (cases)</th>
+              <th className="px-4 py-2.5 text-right">Fcst próx. mes</th>
+              <th className="px-4 py-2.5 text-right">WoH</th>
               <th className="px-4 py-2.5 text-center">Status</th>
             </tr>
           </thead>
           <tbody>
-            {loading ? (
-              <tr><td colSpan={5} className="p-8 text-center text-muted-foreground">Loading…</td></tr>
-            ) : stock.filter(s => s.cases > 0).length === 0 ? (
-              <tr><td colSpan={5} className="p-8 text-center text-muted-foreground">No stock data yet</td></tr>
-            ) : stock.filter(s => s.cases > 0).map(s => {
-              const isCrit = s.cases < 200;
-              const isLow = s.cases < 500;
-              return (
-                <tr key={`${s.sku}|${s.warehouse}`} className="border-t border-border/60 hover:bg-muted/20">
-                  <td className="px-4 py-2 font-semibold" style={{color:"#1C2340"}}>{s.sku}</td>
-                  <td className="px-4 py-2 font-mono text-xs text-muted-foreground">{SKU_ITEMS[s.sku]}</td>
-                  <td className="px-4 py-2">{s.warehouse}</td>
-                  <td className="px-4 py-2 text-right font-mono font-semibold">{Math.round(s.cases).toLocaleString()}</td>
-                  <td className="px-4 py-2 text-center">
-                    {isCrit ? <span className="rounded-full px-2 py-0.5 text-[10px] font-bold bg-red-100 text-red-700">CRITICAL</span>
-                     : isLow ? <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold bg-orange-100 text-orange-700">LOW</span>
-                     : <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold bg-emerald-100 text-emerald-700">OK</span>}
-                  </td>
-                </tr>
-              );
-            })}
+            {loading ? <tr><td colSpan={7} className="p-8 text-center text-muted-foreground">Loading…</td></tr>
+              : skuData.map(s => (
+              <tr key={s.sku} className="border-t border-border/60 hover:bg-muted/20">
+                <td className="px-4 py-2 font-semibold" style={{color:"#1C2340"}}>{s.sku} <span className="text-xs text-muted-foreground font-normal">({SKU_ITEMS[s.sku as SKU]})</span></td>
+                <td className="px-4 py-2 text-right font-mono">{s.stockCases.toLocaleString()}</td>
+                <td className="px-4 py-2 text-right font-mono text-orange-500">{s.committedCases > 0 ? s.committedCases.toLocaleString() : "—"}</td>
+                <td className={`px-4 py-2 text-right font-mono font-semibold ${s.availCases < 0 ? "text-red-600" : ""}`}>
+                  {s.availCases.toLocaleString()}
+                </td>
+                <td className="px-4 py-2 text-right font-mono text-muted-foreground">{s.fcst4w.toLocaleString()}</td>
+                <td className={`px-4 py-2 text-right font-mono font-bold ${s.status === "OOS" || s.status === "CRITICAL" ? "text-red-600" : s.status === "LOW" ? "text-orange-500" : "text-emerald-600"}`}>
+                  {s.woh.toFixed(1)}w
+                </td>
+                <td className="px-4 py-2 text-center">
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold
+                    ${s.status === "OOS" ? "bg-red-200 text-red-800" : s.status === "CRITICAL" ? "bg-red-100 text-red-700" : s.status === "LOW" ? "bg-orange-100 text-orange-700" : "bg-emerald-100 text-emerald-700"}`}>
+                    {s.status}
+                  </span>
+                </td>
+              </tr>
+            ))}
           </tbody>
+          <tfoot>
+            <tr style={{backgroundColor:"#1C2340", color:"#fff"}}>
+              <td className="px-4 py-2 text-xs font-semibold">TOTAL</td>
+              <td className="px-4 py-2 text-right font-mono">{skuData.reduce((s,r)=>s+r.stockCases,0).toLocaleString()}</td>
+              <td className="px-4 py-2 text-right font-mono text-orange-300">{skuData.reduce((s,r)=>s+r.committedCases,0).toLocaleString()}</td>
+              <td className="px-4 py-2 text-right font-mono font-bold text-emerald-400">{skuData.reduce((s,r)=>s+r.availCases,0).toLocaleString()}</td>
+              <td colSpan={3} />
+            </tr>
+          </tfoot>
         </table>
       </div>
     </div>
@@ -771,31 +836,218 @@ function COGSSimulatorTab() {
   );
 }
 
+// ─── Procurement Planning Tab ─────────────────────────────────────────────────
+function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any[] }) {
+  const [safetyWoh, setSafetyWoh] = useState(MIN_WOH_TRIGGER);
+
+  // Live stock from fp_movements
+  const bySku = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const r of movements) m[r.sku] = (m[r.sku] ?? 0) + (r.type === "In" ? Number(r.cases) : -Number(r.cases));
+    return m;
+  }, [movements]);
+
+  // Committed from open POs
+  const committed = useMemo(() => {
+    const c: Record<string, number> = {};
+    const SKU_KEYS: Record<string, string> = {
+      XD:"xd_cases", PW:"pw_cases", HM:"hm_cases", WM:"wm_cases", WD:"wd_cases", Matcha:"matcha_cases"
+    };
+    const openOrders = orders.filter(o => o.status !== "Invoiced");
+    for (const sku of SKUS) {
+      c[sku] = openOrders.reduce((s, o) => s + (Number(o[SKU_KEYS[sku]]) || 0), 0);
+    }
+    return c;
+  }, [orders]);
+
+  // Calculate production schedule for each SKU
+  const schedule = useMemo(() => SKUS.map(sku => {
+    const startCases = Math.max(0, (bySku[sku] ?? 0) - (committed[sku] ?? 0));
+    const runs: { month: string; produce: number; stockBefore: number; stockAfter: number }[] = [];
+    let running = startCases;
+    let totalProduce = 0;
+
+    for (let i = 0; i < FORECAST_MONTHS_OPS.length; i++) {
+      const fcst = FORECAST_SKU_OPS[sku]?.[i] ?? 0;
+      const woh = fcst > 0 ? (running / fcst) * 4 : 99;
+      let produce = 0;
+      if (woh < safetyWoh && fcst > 0) {
+        // Produce enough to cover safety weeks + current month
+        const needed = Math.ceil((safetyWoh / 4) * fcst) - running + fcst;
+        produce = Math.ceil(needed / PROD_RUN_SIZE) * PROD_RUN_SIZE;
+        totalProduce += produce;
+      }
+      const stockBefore = running;
+      running = running + produce - fcst;
+      if (produce > 0) runs.push({ month: FORECAST_MONTHS_OPS[i], produce, stockBefore, stockAfter: running });
+    }
+    return { sku, startCases, runs, totalProduce };
+  }), [bySku, committed, safetyWoh]);
+
+  // Raw material shopping list: aggregate all production runs × BOM
+  const shoppingList = useMemo(() => {
+    const totals: Record<string, { lbs: number; cost: number; runs: string[] }> = {};
+    for (const s of schedule) {
+      for (const run of s.runs) {
+        const bom = BOM_LBS[s.sku] ?? {};
+        for (const [ing, lbsPerCase] of Object.entries(bom)) {
+          const totalLbs = run.produce * lbsPerCase;
+          if (!totals[ing]) totals[ing] = { lbs: 0, cost: 0, runs: [] };
+          totals[ing].lbs += totalLbs;
+          totals[ing].cost += totalLbs * (ING_PRICES[ing] ?? 0);
+          totals[ing].runs.push(`${run.month}: ${run.produce}c ${s.sku}`);
+        }
+      }
+    }
+    return Object.entries(totals).map(([ing, v]) => ({
+      ingredient: ing,
+      lbs: Math.round(v.lbs),
+      cost: Math.round(v.cost),
+      price: ING_PRICES[ing] ?? 0,
+    })).sort((a,b) => b.cost - a.cost);
+  }, [schedule]);
+
+  const totalProduceCases = schedule.reduce((s,r) => s + r.totalProduce, 0);
+  const totalIngCost = shoppingList.reduce((s,r) => s + r.cost, 0);
+
+  return (
+    <div className="space-y-6">
+      {/* Config */}
+      <div className="flex items-center gap-4 rounded-2xl border border-border bg-card p-4 shadow-sm">
+        <label className="text-sm font-semibold text-muted-foreground">Safety stock (weeks on hand trigger)</label>
+        <input type="number" min={1} max={12} value={safetyWoh}
+          onChange={e => setSafetyWoh(Number(e.target.value))}
+          className="w-20 rounded-lg border border-border px-3 py-1.5 text-sm font-mono text-center focus:outline-none focus:ring-2 focus:ring-primary/30" />
+        <span className="text-xs text-muted-foreground">Produce when projected WoH drops below this threshold</span>
+        <div className="ml-auto flex gap-6 text-center">
+          <div><p className="text-[10px] text-muted-foreground uppercase tracking-wide">Total to produce</p>
+            <p className="text-xl font-bold font-mono" style={{color:"#A3224A"}}>{totalProduceCases.toLocaleString()} cases</p></div>
+          <div><p className="text-[10px] text-muted-foreground uppercase tracking-wide">Est. ingredient cost</p>
+            <p className="text-xl font-bold font-mono" style={{color:"#1C2340"}}>${Math.round(totalIngCost/1000)}K</p></div>
+        </div>
+      </div>
+
+      {/* Production schedule per SKU */}
+      <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+        <div className="px-5 py-3 border-b border-border bg-muted/30">
+          <p className="text-sm font-semibold" style={{color:"#1C2340"}}>Production Schedule — Ago 2026 → Jul 2027</p>
+          <p className="text-xs text-muted-foreground">Based on live stock (fp_movements) + open POs + demand forecast. Produce when WoH {"<"} {safetyWoh}w.</p>
+        </div>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
+              <th className="px-4 py-2.5 text-left">SKU</th>
+              <th className="px-4 py-2.5 text-right">Stock avail.</th>
+              <th className="px-4 py-2.5 text-left">Production runs needed</th>
+              <th className="px-4 py-2.5 text-right">Total to produce</th>
+            </tr>
+          </thead>
+          <tbody>
+            {schedule.map(s => (
+              <tr key={s.sku} className="border-t border-border/60 hover:bg-muted/20">
+                <td className="px-4 py-2 font-semibold" style={{color:"#1C2340"}}>{s.sku}</td>
+                <td className="px-4 py-2 text-right font-mono text-muted-foreground">{s.startCases.toLocaleString()} cases</td>
+                <td className="px-4 py-2">
+                  {s.runs.length === 0 ? (
+                    <span className="text-xs text-emerald-600 font-semibold">✓ No production needed</span>
+                  ) : (
+                    <div className="flex flex-wrap gap-1.5">
+                      {s.runs.map((r,i) => (
+                        <span key={i} className="rounded-full px-2 py-0.5 text-[10px] font-semibold bg-orange-100 text-orange-700 border border-orange-200">
+                          {r.month}: <strong>{r.produce.toLocaleString()}</strong> cases
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </td>
+                <td className="px-4 py-2 text-right font-mono font-bold" style={{color: s.totalProduce > 0 ? "#A3224A" : "#10B981"}}>
+                  {s.totalProduce > 0 ? s.totalProduce.toLocaleString() : "—"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Raw material shopping list */}
+      <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+        <div className="px-5 py-3 border-b border-border bg-muted/30">
+          <p className="text-sm font-semibold" style={{color:"#1C2340"}}>Raw Material Shopping List</p>
+          <p className="text-xs text-muted-foreground">
+            From BOM (Super BOM Consolidado) × production schedule above · prices from procurement planning
+          </p>
+        </div>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
+              <th className="px-4 py-2.5 text-left">Ingredient</th>
+              <th className="px-4 py-2.5 text-right">Total lbs needed</th>
+              <th className="px-4 py-2.5 text-right">Price/lb</th>
+              <th className="px-4 py-2.5 text-right">Est. cost</th>
+              <th className="px-4 py-2.5 text-right">% of total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {shoppingList.length === 0 ? (
+              <tr><td colSpan={5} className="p-8 text-center text-emerald-600 font-semibold">✓ No purchases needed — stock covers full forecast</td></tr>
+            ) : shoppingList.map((r,i) => (
+              <tr key={i} className="border-t border-border/60 hover:bg-muted/20">
+                <td className="px-4 py-2 font-semibold">{r.ingredient}</td>
+                <td className="px-4 py-2 text-right font-mono">{r.lbs.toLocaleString()} lbs</td>
+                <td className="px-4 py-2 text-right font-mono text-muted-foreground">${r.price.toFixed(2)}</td>
+                <td className="px-4 py-2 text-right font-mono font-semibold" style={{color:"#A3224A"}}>${r.cost.toLocaleString()}</td>
+                <td className="px-4 py-2 text-right text-muted-foreground text-xs">
+                  {totalIngCost > 0 ? `${((r.cost/totalIngCost)*100).toFixed(1)}%` : "—"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+          {shoppingList.length > 0 && (
+            <tfoot>
+              <tr style={{backgroundColor:"#1C2340", color:"#fff"}}>
+                <td className="px-4 py-2 font-semibold text-xs">TOTAL</td>
+                <td className="px-4 py-2 text-right font-mono">{shoppingList.reduce((s,r)=>s+r.lbs,0).toLocaleString()} lbs</td>
+                <td />
+                <td className="px-4 py-2 text-right font-mono font-bold text-emerald-400">${totalIngCost.toLocaleString()}</td>
+                <td />
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 function OperationsPage() {
   const [tab, setTab] = useState<OpsTab>("stock");
   const [fpMovements, setFpMovements] = useState<FPRow[]>([]);
   const [ipMovements, setIpMovements] = useState<IPRow[]>([]);
+  const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   async function loadAll() {
-    const [fp, ip] = await Promise.all([
+    const [fp, ip, ord] = await Promise.all([
       supabase.from("fp_movements").select("*").order("movement_date", { ascending: false }),
       supabase.from("ip_movements").select("*").order("movement_date", { ascending: false }),
+      supabase.from("customer_orders").select("xd_cases,pw_cases,hm_cases,wm_cases,wd_cases,matcha_cases,status").neq("status","Invoiced"),
     ]);
     setFpMovements(fp.data ?? []);
     setIpMovements(ip.data ?? []);
+    setOrders(ord.data ?? []);
     setLoading(false);
   }
 
   useEffect(() => { loadAll(); }, []);
 
   const tabs: { id: OpsTab; label: string }[] = [
-    { id:"stock",      label:"FP Stock" },
-    { id:"fp",         label:"FP Input" },
-    { id:"ip",         label:"I&P Input" },
-    { id:"production", label:"Production" },
-    { id:"cogs",       label:"COGS Simulator" },
+    { id:"stock",       label:"Stock & WoH" },
+    { id:"fp",          label:"FP Input" },
+    { id:"ip",          label:"I&P Input" },
+    { id:"production",  label:"Production" },
+    { id:"cogs",        label:"COGS Simulator" },
+    { id:"procurement", label:"Procurement Planning" },
   ];
 
   return (
@@ -812,11 +1064,12 @@ function OperationsPage() {
         ))}
       </div>
 
-      {tab === "stock"      && <FPStockTab movements={fpMovements} loading={loading} />}
-      {tab === "fp"         && <FPInputTab movements={fpMovements} loading={loading} onAdded={loadAll} />}
-      {tab === "ip"         && <IPInputTab movements={ipMovements} loading={loading} onAdded={loadAll} />}
-      {tab === "production" && <ProductionTab onAdded={loadAll} />}
-      {tab === "cogs"       && <COGSSimulatorTab />}
+      {tab === "stock"       && <FPStockTab movements={fpMovements} orders={orders} loading={loading} />}
+      {tab === "fp"          && <FPInputTab movements={fpMovements} loading={loading} onAdded={loadAll} />}
+      {tab === "ip"          && <IPInputTab movements={ipMovements} loading={loading} onAdded={loadAll} />}
+      {tab === "production"  && <ProductionTab onAdded={loadAll} />}
+      {tab === "cogs"        && <COGSSimulatorTab />}
+      {tab === "procurement" && <ProcurementTab movements={fpMovements} orders={orders} />}
     </>
   );
 }
