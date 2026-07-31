@@ -130,9 +130,9 @@ function calcForecast(
 type SalesTab = "real"|"resumen"|"detalle"|"sku"|"simulador"|"estacionalidad";
 declare global { interface Window { Chart: any } }
 
-// ─── Real Mensual Tab ─────────────────────────────────────────────────────────
+// ─── Real Monthly Tab ─────────────────────────────────────────────────────────
 type MonthReal = {net_sales:string;wm:string;wd:string;xd:string;pw:string;hm:string;matcha:string};
-function RealMensualTab({onRealUpdate}:{onRealUpdate:(label:string,cases:number)=>void}) {
+function RealMonthlyTab({onRealUpdate}:{onRealUpdate:(label:string,cases:number)=>void}) {
   const [data,setData] = useState<Record<string,MonthReal>>(() => {
     const init: Record<string,MonthReal> = {};
     for (const m of ALL_MONTHS_REAL) {
@@ -175,7 +175,7 @@ function RealMensualTab({onRealUpdate}:{onRealUpdate:(label:string,cases:number)
         ))}
       </div>
       <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-700">
-        💡 Ene–Jul 2026 pre-cargados desde BARIS_Acc. Completá el mes corriente al cierre con ventas netas ($) y cajas por SKU.
+        💡 Ene–Jul 2026 pre-cargados desde BARIS_Acc. Completá el mes corriente al cierre con ventas netas ($) y cases por SKU.
       </div>
       <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
         <table className="w-full text-xs min-w-max">
@@ -237,8 +237,8 @@ function RealMensualTab({onRealUpdate}:{onRealUpdate:(label:string,cases:number)
   );
 }
 
-// ─── Resumen Tab ──────────────────────────────────────────────────────────────
-function ResumenTab({forecast,scenario,reals}:{forecast:any[];scenario:string;reals:Record<string,number>}) {
+// ─── Summary Tab ──────────────────────────────────────────────────────────────
+function SummaryTab({forecast,scenario,reals}:{forecast:any[];scenario:string;reals:Record<string,number>}) {
   const mainCanvas = useRef<HTMLCanvasElement>(null);
   useEffect(()=>{
     if(!mainCanvas.current||!window.Chart) return;
@@ -270,10 +270,10 @@ function ResumenTab({forecast,scenario,reals}:{forecast:any[];scenario:string;re
     <div className="space-y-5">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
-          {label:"Forecast 12m (casos)",value:totalFcst.toLocaleString(),sub:`Escenario ${scenario}`,color:"#A3224A"},
+          {label:"Forecast 12m (casos)",value:totalFcst.toLocaleString(),sub:`Scenario ${scenario}`,color:"#A3224A"},
           {label:"Revenue forecast 12m",value:`$${Math.round(totalRev/1000)}K`,sub:`@$${PRICE_PER_CASE}/case`,color:"#1C2340"},
           {label:"vs Budget",value:`${((totalFcst/totalBudget-1)*100).toFixed(1)}%`,sub:"Normal baseline",color:totalFcst>=totalBudget?"#10B981":"#EF4444"},
-          {label:"Meses con real",value:`${coveredMonths}/12`,sub:"Actualizar mensualmente",color:"#6B7280"},
+          {label:"Months with actuals",value:`${coveredMonths}/12`,sub:"Update monthly",color:"#6B7280"},
         ].map((k,i)=>(
           <div key={i} className="rounded-2xl border border-border bg-card p-5 shadow-sm">
             <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">{k.label}</p>
@@ -656,8 +656,8 @@ function SimuladorTab({onConfigChange}:{onConfigChange:(cfg:any)=>void}) {
   );
 }
 
-// ─── Estacionalidad Tab ───────────────────────────────────────────────────────
-function EstacionalidadTab() {
+// ─── Seasonality Tab ───────────────────────────────────────────────────────
+function SeasonalityTab() {
   const months=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
   const indices=[0.21,1.40,1.39,1.64,0.72,1.47,0.68,0.65,1.48,0.76,0.26,1.33];
   const maxIdx=Math.max(...indices);
@@ -743,12 +743,12 @@ function SalesPage() {
   },[]);
 
   const tabs: {id:SalesTab;label:string}[] = [
-    {id:"real",label:"Real Mensual"},
-    {id:"resumen",label:"Resumen"},
-    {id:"detalle",label:"Detalle mensual"},
-    {id:"sku",label:"Por SKU"},
+    {id:"real",label:"Real Monthly"},
+    {id:"resumen",label:"Summary"},
+    {id:"detalle",label:"Monthly detail"},
+    {id:"sku",label:"By SKU"},
     {id:"simulador",label:"Simulador"},
-    {id:"estacionalidad",label:"Estacionalidad"},
+    {id:"estacionalidad",label:"Seasonality"},
   ];
   const SCENARIO_INFO = {
     Pesimista:"0% YoY · mismo volumen · piso",
@@ -783,12 +783,12 @@ function SalesPage() {
           </button>
         ))}
       </div>
-      {tab==="real"          && <RealMensualTab onRealUpdate={(l,v)=>setReals(r=>({...r,[l]:v}))}/>}
-      {tab==="resumen"       && <ResumenTab forecast={forecast} scenario={scenario} reals={reals}/>}
+      {tab==="real"          && <RealMonthlyTab onRealUpdate={(l,v)=>setReals(r=>({...r,[l]:v}))}/>}
+      {tab==="resumen"       && <SummaryTab forecast={forecast} scenario={scenario} reals={reals}/>}
       {tab==="detalle"       && <DetalleTab forecast={forecast} reals={reals} onRealUpdate={(l,v)=>setReals(r=>({...r,[l]:v}))}/>}
       {tab==="sku"           && <SKUTab forecast={forecast}/>}
       {tab==="simulador"     && <SimuladorTab onConfigChange={setSimConfig}/>}
-      {tab==="estacionalidad"&& <EstacionalidadTab/>}
+      {tab==="estacionalidad"&& <SeasonalityTab/>}
     </div>
   );
 }
