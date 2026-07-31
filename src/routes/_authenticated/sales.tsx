@@ -105,8 +105,8 @@ function useChart(ref: React.RefObject<HTMLCanvasElement | null>, builder: () =>
 
 // ─── Resumen Tab ──────────────────────────────────────────────────────────────
 function ResumenTab({ forecast, scenario, reals }: { forecast: any[]; scenario: string; reals: Record<string, number> }) {
-  const mainCanvas = useRef<HTMLCanvasElement>(null);
-  const distCanvas = useRef<HTMLCanvasElement>(null);
+  const mainCanvas = useRef<HTMLCanvasElement | null>(null);
+  const distCanvas = useRef<HTMLCanvasElement | null>(null);
 
   const allMonths = [...HISTORICAL.map(h => h.label), ...forecast.map(f => f.label)];
   const realVals = [...HISTORICAL.map(h => h.cases), ...forecast.map(f => reals[f.label] ?? null)];
