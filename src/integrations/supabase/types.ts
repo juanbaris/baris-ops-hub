@@ -47,6 +47,62 @@ export type Database = {
         }
         Relationships: []
       }
+      bol_lines: {
+        Row: {
+          bol_date: string
+          bol_number: string
+          cases_shipped: number
+          created_at: string | null
+          exp_date: string | null
+          fp_movement_id: string | null
+          id: string
+          item_number: string | null
+          lot_number: string
+          order_id: string
+          po_number: string
+          sku: string
+          warehouse: string | null
+        }
+        Insert: {
+          bol_date: string
+          bol_number: string
+          cases_shipped: number
+          created_at?: string | null
+          exp_date?: string | null
+          fp_movement_id?: string | null
+          id?: string
+          item_number?: string | null
+          lot_number: string
+          order_id: string
+          po_number: string
+          sku: string
+          warehouse?: string | null
+        }
+        Update: {
+          bol_date?: string
+          bol_number?: string
+          cases_shipped?: number
+          created_at?: string | null
+          exp_date?: string | null
+          fp_movement_id?: string | null
+          id?: string
+          item_number?: string | null
+          lot_number?: string
+          order_id?: string
+          po_number?: string
+          sku?: string
+          warehouse?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bol_lines_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "customer_orders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       budget_lines: {
         Row: {
           budget_gross: number | null
@@ -82,6 +138,8 @@ export type Database = {
       }
       customer_orders: {
         Row: {
+          bol_date: string | null
+          bol_number: string | null
           collected_at: string | null
           created_at: string
           created_by: string | null
@@ -92,6 +150,8 @@ export type Database = {
           hm_cases: number | null
           id: string
           invoice_date: string | null
+          invoice_number: string | null
+          invoiced_at: string | null
           matcha_cases: number | null
           net_sales: number | null
           notes: string | null
@@ -108,6 +168,8 @@ export type Database = {
           xd_cases: number | null
         }
         Insert: {
+          bol_date?: string | null
+          bol_number?: string | null
           collected_at?: string | null
           created_at?: string
           created_by?: string | null
@@ -118,6 +180,8 @@ export type Database = {
           hm_cases?: number | null
           id?: string
           invoice_date?: string | null
+          invoice_number?: string | null
+          invoiced_at?: string | null
           matcha_cases?: number | null
           net_sales?: number | null
           notes?: string | null
@@ -134,6 +198,8 @@ export type Database = {
           xd_cases?: number | null
         }
         Update: {
+          bol_date?: string | null
+          bol_number?: string | null
           collected_at?: string | null
           created_at?: string
           created_by?: string | null
@@ -144,6 +210,8 @@ export type Database = {
           hm_cases?: number | null
           id?: string
           invoice_date?: string | null
+          invoice_number?: string | null
+          invoiced_at?: string | null
           matcha_cases?: number | null
           net_sales?: number | null
           notes?: string | null
@@ -451,6 +519,7 @@ export type Database = {
         | "Invoiced"
         | "Accepted"
         | "Sent to 3PL"
+        | "BOL Confirmed"
       sku: "XD" | "PW" | "HM" | "WM" | "WD" | "Matcha"
       warehouse: "Lineage Newark" | "Cold Chain" | "Empire" | "Heinlein" | "OOE"
     }
@@ -600,6 +669,7 @@ export const Constants = {
         "Invoiced",
         "Accepted",
         "Sent to 3PL",
+        "BOL Confirmed",
       ],
       sku: ["XD", "PW", "HM", "WM", "WD", "Matcha"],
       warehouse: ["Lineage Newark", "Cold Chain", "Empire", "Heinlein", "OOE"],
