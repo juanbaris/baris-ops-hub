@@ -21,7 +21,7 @@ const FP_CONCEPTS: FPConcept[] = ["Production","Sale","Sample","Damage","Transfe
 const IP_CONCEPTS: IPConcept[] = ["Procurement","Consumption","Damage","Transfer"];
 const FACILITIES: Facility[] = ["Heinlein","Empire","OOE"];
 
-type OpsTab = "stock" | "fp" | "ip" | "production" | "cogs";
+type OpsTab = "stock" | "fp" | "ip" | "production" | "cogs" | "procurement";
 
 function ymd(d = new Date()) { return d.toISOString().slice(0,10); }
 
