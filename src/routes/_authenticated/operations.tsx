@@ -1366,7 +1366,7 @@ function OperationsPage() {
         ))}
       </div>
 
-      {tab === "stock"       && <FPStockTab movements={fpMovements} loading={loading} />}
+      {tab === "stock"       && <FPStockTab movements={fpMovements} orders={orders} loading={loading} />}
       {tab === "fp"          && <FPInputTab movements={fpMovements} loading={loading} onAdded={loadAll} />}
       {tab === "ip"          && <IPInputTab movements={ipMovements} loading={loading} onAdded={loadAll} />}
       {tab === "production"  && <ProductionTab onAdded={loadAll} />}
