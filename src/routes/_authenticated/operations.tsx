@@ -162,6 +162,7 @@ function FPInputTab({ movements, loading, onAdded }: { movements: FPRow[]; loadi
     cogs_per_case: "", po_number_ref: "", notes: "",
   });
   const [saving, setSaving] = useState(false);
+  const [saveErr, setSaveErr] = useState<string | null>(null);
   const [filterSku, setFilterSku] = useState<string>("all");
   const [filterType, setFilterType] = useState<string>("all");
   const [sortDir, setSortDir] = useState<"asc"|"desc">("desc");
@@ -169,23 +170,34 @@ function FPInputTab({ movements, loading, onAdded }: { movements: FPRow[]; loadi
   function set(k: string, v: string) { setForm(f => ({ ...f, [k]: v })); }
 
   async function save() {
-    if (!form.cases || Number(form.cases) <= 0) { toast.error("Cases required"); return; }
-    if (!form.lot_number && form.concept === "Production") { toast.error("Lot number required for Production"); return; }
+    setSaveErr(null);
+    if (!form.movement_date) { setSaveErr("Date is required"); toast.error("Date is required"); return; }
+    if (!form.cases || Number.isNaN(Number(form.cases)) || Number(form.cases) <= 0) { setSaveErr("Cases must be a number greater than 0"); toast.error("Cases required"); return; }
+    if (!form.sku || !form.type || !form.warehouse || !form.concept) { setSaveErr("SKU, type, warehouse and concept are required"); toast.error("Missing required fields"); return; }
+    if (!form.lot_number && form.concept === "Production") { setSaveErr("Lot number is required for Production"); toast.error("Lot number required for Production"); return; }
     setSaving(true);
-    const { error } = await supabase.from("fp_movements").insert({
+    const { data: userData } = await supabase.auth.getUser();
+    const payload = {
       movement_date: form.movement_date,
       type: form.type,
       sku: form.sku,
-      cases: Number(form.cases),
+      cases: Math.round(Number(form.cases)),
       warehouse: form.warehouse,
-      lot_number: form.lot_number || `LOT-${form.sku}-${form.movement_date}`,
+      lot_number: form.lot_number.trim() || `LOT-${form.sku}-${form.movement_date}`,
       concept: form.concept,
       cogs_per_case: form.cogs_per_case ? Number(form.cogs_per_case) : null,
-      po_number_ref: form.po_number_ref || null,
-      notes: form.notes || null,
-    });
+      po_number_ref: form.po_number_ref.trim() || null,
+      notes: form.notes.trim() || null,
+      created_by: userData.user?.id ?? null,
+    };
+    const { error } = await supabase.from("fp_movements").insert(payload);
     setSaving(false);
-    if (error) { toast.error(error.message); return; }
+    if (error) {
+      const msg = [error.message, error.details, error.hint].filter(Boolean).join(" · ");
+      setSaveErr(msg || "Insert failed");
+      toast.error(msg || "Insert failed");
+      return;
+    }
     toast.success(`FP movement added: ${form.type} ${form.cases} cases ${form.sku}`);
     setForm(f => ({ ...f, cases: "", lot_number: "", cogs_per_case: "", po_number_ref: "", notes: "" }));
     onAdded();
@@ -248,6 +260,9 @@ function FPInputTab({ movements, loading, onAdded }: { movements: FPRow[]; loadi
           style={{backgroundColor:"#A3224A"}}>
           {saving ? "Saving…" : `+ Add ${form.type} · ${form.cases || "?"} cases ${form.sku}`}
         </button>
+        {saveErr && (
+          <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{saveErr}</p>
+        )}
       </div>
 
       {/* Movements table */}

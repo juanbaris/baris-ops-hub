@@ -233,6 +233,25 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
 
   const totalCases = SKU_ITEMS.reduce((s, sk) => s + (Number(order[sk.key]) || 0), 0);
 
+  async function markInvoiced() {
+    setShowInvoice(true);
+    const today = new Date().toISOString().slice(0, 10);
+    const { data, error } = await supabase.from("customer_orders")
+      .update({ status: "Invoiced" as Status, invoice_date: order.invoice_date ?? today })
+      .eq("id", order.id).select().single();
+    setShowInvoice(false);
+    if (error || !data) { toast.error(error?.message ?? "Failed to mark as invoiced"); return; }
+    const { data: userData } = await supabase.auth.getUser();
+    await supabase.from("audit_log").insert({
+      table_name: "customer_orders", record_id: order.id, action: "status_change",
+      user_id: userData.user?.id ?? null,
+      old_data: { field: "status", old_value: order.status },
+      new_data: { field: "status", new_value: "Invoiced" },
+    });
+    onUpdated(data);
+    toast.success(`PO #${order.po_number} marked as Invoiced`);
+  }
+
   // CHANGE 5: fill rate calculation
   const fillRate = order.fill_rate != null ? Number(order.fill_rate) : null;
   const fillRateColor = fillRate == null ? "" : fillRate >= 99 ? "text-emerald-600" : fillRate >= 90 ? "text-orange-500" : "text-red-600";
@@ -254,10 +273,10 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
                 📋 Packing Slip
               </button>
               {order.status === "BOL Confirmed" && (
-                <button onClick={() => setShowInvoice(true)}
+                <button onClick={markInvoiced} disabled={showInvoice}
                   className="rounded-lg px-3 py-1 text-xs font-semibold text-white"
                   style={{ backgroundColor: "#1C2340" }}>
-                  📄 Mark as Invoiced
+                  {showInvoice ? "Saving…" : "📄 Mark as Invoiced"}
                 </button>
               )}
               <button onClick={deletePO} disabled={deleting}
@@ -565,6 +584,9 @@ function LineageModal({ order, onClose, onSent }: { order: Order; onClose: () =>
 function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () => void; onConfirmed: (o: Order) => void }) {
   const [step, setStep] = useState<"upload" | "review" | "saving">("upload");
   const [bolCases, setBolCases] = useState<Record<string, number>>({});
+  const [bolNumber, setBolNumber] = useState("");
+  const [shipDate, setShipDate] = useState(new Date().toISOString().slice(0, 10));
+  const [lots, setLots] = useState<Record<string, string>>({});
   const [processing, setProcessing] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -618,10 +640,12 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
     setStep("saving");
     const today = new Date().toISOString().slice(0, 10);
     const fillRate = computeFillRate();
+    const shipped = shipDate || today;
 
     const patch: Database["public"]["Tables"]["customer_orders"]["Update"] = {
-      status: "Invoiced",
-      invoice_date: order.invoice_date ?? today,
+      status: "BOL Confirmed",
+      bol_number: bolNumber || null,
+      bol_date: shipped,
       fill_rate: fillRate,
       wd_cases: bolCases.wd || order.wd_cases,
       pw_cases: bolCases.pw || order.pw_cases,
@@ -631,21 +655,22 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
       wm_cases: bolCases.wm || order.wm_cases,
     };
     const { data, error } = await supabase.from("customer_orders").update(patch).eq("id", order.id).select().single();
-    if (error || !data) { toast.error("Failed to update order"); setStep("review"); return; }
+    if (error || !data) { toast.error(error?.message ?? "Failed to update order"); setStep("review"); return; }
 
     // Create fp_movements Out records
+    const lotKeyByField: Record<string, string> = { wd_cases: "wd", pw_cases: "pw", hm_cases: "hm", matcha_cases: "matcha", xd_cases: "xd", wm_cases: "wm" };
     const movements = SKU_ITEMS
       .filter(sk => Number(patch[sk.key]) > 0)
       .map(sk => ({
-        movement_date: String(patch.invoice_date ?? today),
+        movement_date: shipped,
         type: "Out" as const,
         sku: sk.label.replace("&", "").replace(" ", "") as Database["public"]["Enums"]["sku"],
         cases: Number(patch[sk.key]),
         warehouse: "Lineage Newark" as Database["public"]["Enums"]["warehouse"],
-        lot_number: `BOL-${order.po_number}-${patch.invoice_date}`,
+        lot_number: lots[lotKeyByField[sk.key]!]?.trim() || `BOL-${order.po_number}-${shipped}`,
         concept: "Sale" as Database["public"]["Enums"]["fp_concept"],
         po_number_ref: order.po_number,
-        notes: `BOL confirmed · PO ${order.po_number} · Fill ${fillRate}%`,
+        notes: `BOL ${bolNumber || "—"} · PO ${order.po_number} · Fill ${fillRate}%`,
       }));
     if (movements.length > 0) await supabase.from("fp_movements").insert(movements);
 
@@ -654,7 +679,7 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
       table_name: "customer_orders", record_id: order.id, action: "bol_confirmed",
       user_id: userData.user?.id ?? null,
       old_data: { status: order.status },
-      new_data: { status: "Invoiced", fill_rate: fillRate, bol_cases: bolCases },
+      new_data: { status: "BOL Confirmed", fill_rate: fillRate, bol_cases: bolCases, bol_number: bolNumber, bol_date: shipped },
     });
     onConfirmed(data);
     toast.success(`BOL confirmed — Fill rate: ${fillRate}%${fillRate < 100 ? " ⚠️" : ""}`);
@@ -697,6 +722,18 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
 
         {step === "review" && (
           <div>
+            <div className="grid grid-cols-2 gap-2 mb-3">
+              <div>
+                <label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">BOL Number</label>
+                <input value={bolNumber} onChange={e => setBolNumber(e.target.value)} placeholder="A6-247427"
+                  className="mt-0.5 w-full rounded-lg border border-border px-2 py-1 text-sm font-mono" />
+              </div>
+              <div>
+                <label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Ship Date</label>
+                <input type="date" value={shipDate} onChange={e => setShipDate(e.target.value)}
+                  className="mt-0.5 w-full rounded-lg border border-border px-2 py-1 text-sm font-mono" />
+              </div>
+            </div>
             <p className="text-xs text-muted-foreground mb-3">BOL quantities — compare vs PO (shown in parentheses):</p>
             <div className="grid grid-cols-3 gap-2 mb-3">
               {skuMap.map(([label, bolKey, orderKey]) => {
@@ -715,6 +752,9 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
                         PO: {poQty}{diff < 0 ? ` (${diff})` : diff > 0 ? ` (+${diff})` : " ✓"}
                       </p>
                     )}
+                    <input value={lots[bolKey] ?? ""} onChange={e => setLots(x => ({ ...x, [bolKey]: e.target.value }))}
+                      placeholder="Lot #"
+                      className="mt-1 w-full rounded-lg border border-border px-2 py-1 text-[11px] font-mono" />
                   </div>
                 );
               })}
@@ -727,7 +767,7 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
             </div>
 
             <button onClick={confirm} className="w-full rounded-lg py-2 text-sm font-semibold text-white" style={{ backgroundColor: "#A3224A" }}>
-              Confirm & Mark as Invoiced
+              Confirm BOL → Set as BOL Confirmed
             </button>
           </div>
         )}
@@ -1651,7 +1691,7 @@ function LogisticsTab({ orders }: { orders: Order[] }) {
               </thead>
               <tbody>
                 {pipelineOrders.length === 0 ? (
-                  <tr><td colSpan={10} className="p-8 text-center text-muted-foreground">No hay POs pendientes</td></tr>
+                  <tr><td colSpan={10} className="p-8 text-center text-muted-foreground">No pending POs</td></tr>
                 ) : pipelineOrders.map(({ order: o, totalCases, pallets, flete, noFlete, total, quien }) => (
                   <tr key={o.id} className="border-t border-border/60 hover:bg-muted/20">
                     <td className="px-4 py-1.5 font-mono text-xs font-semibold" style={{color:"#A3224A"}}>{o.po_number}</td>
