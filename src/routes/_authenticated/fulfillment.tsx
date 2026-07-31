@@ -1615,7 +1615,7 @@ function LogisticsTab({ orders }: { orders: Order[] }) {
         <div className="space-y-4">
           <div className="grid grid-cols-3 gap-4">
             <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-              <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Costo logístico pipeline</p>
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Pipeline logistics cost</p>
               <p className="text-2xl font-bold font-mono" style={{color:"#A3224A"}}>${Math.round(totalPipelineLog).toLocaleString()}</p>
               <p className="text-xs text-muted-foreground">{pipelineOrders.length} POs pendientes</p>
             </div>
@@ -1625,7 +1625,7 @@ function LogisticsTab({ orders }: { orders: Order[] }) {
               <p className="text-xs text-muted-foreground">{Math.ceil(totalPipelineCases/255)} pallets estimados</p>
             </div>
             <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-              <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Costo / case promedio</p>
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Avg. cost / case</p>
               <p className="text-2xl font-bold font-mono" style={{color:"#1C2340"}}>
                 ${totalPipelineCases > 0 ? (totalPipelineLog/totalPipelineCases).toFixed(2) : "—"}
               </p>
@@ -1643,10 +1643,10 @@ function LogisticsTab({ orders }: { orders: Order[] }) {
                   <th className="px-4 py-2.5 text-left">Ship Est.</th>
                   <th className="px-4 py-2.5 text-right">Cases</th>
                   <th className="px-4 py-2.5 text-right">Pallets</th>
-                  <th className="px-4 py-2.5 text-right">Flete</th>
-                  <th className="px-4 py-2.5 text-right">No-Flete</th>
+                  <th className="px-4 py-2.5 text-right">Freight</th>
+                  <th className="px-4 py-2.5 text-right">Non-Freight</th>
                   <th className="px-4 py-2.5 text-right font-bold">Total Log.</th>
-                  <th className="px-4 py-2.5 text-left">Quien flete</th>
+                  <th className="px-4 py-2.5 text-left">Freight payer</th>
                 </tr>
               </thead>
               <tbody>
@@ -1695,7 +1695,7 @@ function LogisticsTab({ orders }: { orders: Order[] }) {
           {/* KPIs 2026 */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-              <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Gasto logístico 2026</p>
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">2026 logistics spend</p>
               <p className="text-2xl font-bold font-mono" style={{color:"#A3224A"}}>${total2026Cost.toLocaleString()}</p>
               <p className="text-xs text-muted-foreground">{hist2026.reduce((s,r)=>s+r.pos,0)} POs</p>
             </div>
@@ -1704,7 +1704,7 @@ function LogisticsTab({ orders }: { orders: Order[] }) {
               <p className="text-2xl font-bold font-mono" style={{color:"#1C2340"}}>{total2026Cases.toLocaleString()}</p>
             </div>
             <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-              <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Costo / case 2026</p>
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Cost / case 2026</p>
               <p className="text-2xl font-bold font-mono" style={{color:"#1C2340"}}>${avgCostPerCase.toFixed(2)}</p>
             </div>
             <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
@@ -1720,16 +1720,16 @@ function LogisticsTab({ orders }: { orders: Order[] }) {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
               <div className="px-5 py-3 border-b border-border bg-muted/30">
-                <p className="text-sm font-semibold" style={{color:"#1C2340"}}>Costo logístico por año y distribuidor</p>
+                <p className="text-sm font-semibold" style={{color:"#1C2340"}}>Logistics cost by year and distributor</p>
               </div>
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
-                    <th className="px-4 py-2 text-left">Año</th>
-                    <th className="px-4 py-2 text-left">Distribuidor</th>
+                    <th className="px-4 py-2 text-left">Year</th>
+                    <th className="px-4 py-2 text-left">Distributor</th>
                     <th className="px-4 py-2 text-right">POs</th>
                     <th className="px-4 py-2 text-right">Cases</th>
-                    <th className="px-4 py-2 text-right">Costo total</th>
+                    <th className="px-4 py-2 text-right">Total cost</th>
                     <th className="px-4 py-2 text-right">$/case</th>
                   </tr>
                 </thead>
@@ -1753,8 +1753,8 @@ function LogisticsTab({ orders }: { orders: Order[] }) {
             {/* Tariff table */}
             <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
               <div className="px-5 py-3 border-b border-border bg-muted/30">
-                <p className="text-sm font-semibold" style={{color:"#1C2340"}}>Tarifario por DC — flete por pallet</p>
-                <p className="text-xs text-muted-foreground">+ No-Flete: BOL $19.50 + Loading $4/plt + Case Picking $0.35/caja</p>
+                <p className="text-sm font-semibold" style={{color:"#1C2340"}}>Rate card by DC — freight per pallet</p>
+                <p className="text-xs text-muted-foreground">+ Non-Freight: BOL $19.50 + Loading $4/plt + Case Picking $0.35/case</p>
               </div>
               <div className="overflow-y-auto" style={{maxHeight:400}}>
                 <table className="w-full text-xs">
@@ -1766,7 +1766,7 @@ function LogisticsTab({ orders }: { orders: Order[] }) {
                       <th className="px-3 py-2 text-right">2 plt</th>
                       <th className="px-3 py-2 text-right">3 plt</th>
                       <th className="px-3 py-2 text-right">4 plt</th>
-                      <th className="px-3 py-2 text-left">Flete</th>
+                      <th className="px-3 py-2 text-left">Freight</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1797,21 +1797,21 @@ function LogisticsTab({ orders }: { orders: Order[] }) {
       {logTab === "calculator" && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="rounded-2xl border border-border bg-card p-5 shadow-sm space-y-4">
-            <h3 className="text-sm font-bold" style={{color:"#1C2340"}}>Calculadora de costo logístico</h3>
+            <h3 className="text-sm font-bold" style={{color:"#1C2340"}}>Logistics cost calculator</h3>
             <div>
-              <label className="text-xs text-muted-foreground font-semibold uppercase tracking-wide">DC / Cliente destino</label>
+              <label className="text-xs text-muted-foreground font-semibold uppercase tracking-wide">DC / Destination customer</label>
               <select className={`${inp} mt-1 w-full`} value={calcDC} onChange={e => setCalcDC(e.target.value)}>
                 {TARIFFS.map(t => <option key={t.dc} value={t.dc}>{t.dc} ({t.state})</option>)}
               </select>
             </div>
             <div>
-              <label className="text-xs text-muted-foreground font-semibold uppercase tracking-wide">Cajas a enviar</label>
+              <label className="text-xs text-muted-foreground font-semibold uppercase tracking-wide">Cases to ship</label>
               <input type="number" min={1} className={`${inp} mt-1 w-full font-mono`}
                 value={calcCases} onChange={e => setCalcCases(Number(e.target.value))} />
             </div>
             <div className="rounded-xl bg-muted/30 p-4 space-y-2 mt-2">
-              <div className="flex justify-between text-xs"><span className="text-muted-foreground">Pallets (255 cajas/plt)</span><span className="font-mono font-semibold">{calcResult.pallets}</span></div>
-              <div className="flex justify-between text-xs"><span className="text-muted-foreground">Quien cobra flete</span>
+              <div className="flex justify-between text-xs"><span className="text-muted-foreground">Pallets (255 cases/plt)</span><span className="font-mono font-semibold">{calcResult.pallets}</span></div>
+              <div className="flex justify-between text-xs"><span className="text-muted-foreground">Who charges freight</span>
                 <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${calcResult.quien === "KeHE (FOB)" ? "bg-orange-100 text-orange-700" : "bg-blue-50 text-blue-700"}`}>{calcResult.quien}</span>
               </div>
             </div>
@@ -1819,21 +1819,21 @@ function LogisticsTab({ orders }: { orders: Order[] }) {
 
           <div className="space-y-4">
             <div className={`rounded-2xl border p-5 ${calcResult.total > 2000 ? "border-red-200 bg-red-50" : "border-emerald-200 bg-emerald-50"}`}>
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Costo logístico total</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Total logistics cost</p>
               <p className={`text-3xl font-bold font-mono ${calcResult.total > 2000 ? "text-red-600" : "text-emerald-600"}`}>
                 ${calcResult.total.toFixed(2)}
               </p>
               <p className="text-xs text-muted-foreground mt-1">
-                ${calcCases > 0 ? (calcResult.total/calcCases).toFixed(2) : "0"} por caja
+                ${calcCases > 0 ? (calcResult.total/calcCases).toFixed(2) : "0"} per case
               </p>
             </div>
 
             <div className="rounded-2xl border border-border bg-card p-4 shadow-sm divide-y divide-border/60">
               {[
-                { label: "Flete (por pallets)", v: calcResult.flete, color: "#1C2340" },
-                { label: `No-Flete: BOL ($${BOL})`, v: BOL, color: "#6B7280" },
-                { label: `No-Flete: Loading (${calcResult.pallets} plt × $${LOADING})`, v: calcResult.pallets * LOADING, color: "#6B7280" },
-                { label: `No-Flete: Case Picking (${calcCases} cajas × $${CASE_PICKING})`, v: calcCases * CASE_PICKING, color: "#6B7280" },
+                { label: "Freight (per pallets)", v: calcResult.flete, color: "#1C2340" },
+                { label: `Non-Freight: BOL ($${BOL})`, v: BOL, color: "#6B7280" },
+                { label: `Non-Freight: Loading (${calcResult.pallets} plt × $${LOADING})`, v: calcResult.pallets * LOADING, color: "#6B7280" },
+                { label: `Non-Freight: Case Picking (${calcCases} cases × $${CASE_PICKING})`, v: calcCases * CASE_PICKING, color: "#6B7280" },
                 { label: "TOTAL", v: calcResult.total, color: "#A3224A" },
               ].map((row,i) => (
                 <div key={i} className="flex justify-between py-2">
@@ -1919,7 +1919,7 @@ function Fulfillment() {
     { id: "pipeline", label: "Pipeline PO" },
     { id: "shipments", label: "Shipments" },
     { id: "collections", label: "Collections" },
-    { id: "logistics", label: "Logística" },
+    { id: "logistics", label: "Logistics" },
   ];
 
   return (

@@ -928,7 +928,7 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
             </select>
           </div>
           <div className="ml-auto flex gap-6 text-center">
-            <div><p className="text-[10px] text-muted-foreground uppercase tracking-wide">Total a fabricar</p>
+            <div><p className="text-[10px] text-muted-foreground uppercase tracking-wide">Total to produce</p>
               <p className="text-xl font-bold font-mono" style={{color:"#A3224A"}}>{totalProduce.toLocaleString()} cases</p></div>
             <div><p className="text-[10px] text-muted-foreground uppercase tracking-wide">COGS ponderado</p>
               <p className="text-xl font-bold font-mono" style={{color:"#1C2340"}}>${weightedCOGS.toFixed(2)}/case</p></div>
@@ -951,7 +951,7 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
       {procTab==="schedule" && (
         <div className="space-y-3">
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
-            🏭 Celdas amarillas = corridas planificadas · Frequency: {["","mensual","bimestral","trimestral","cuatrimestral","","semestral"][freqMonths]} · Safety {safetyWoh}w · Min {minRun.toLocaleString()} cases
+            🏭 Yellow cells = planned runs · Frequency: {["","monthly","bimonthly","quarterly","four-monthly","","semiannual"][freqMonths]} · Safety {safetyWoh}w · Min {minRun.toLocaleString()} cases
           </div>
           <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
             <table className="text-xs min-w-max w-full">
@@ -1038,7 +1038,7 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
             </table>
           </div>
           <div className="flex gap-3 text-xs flex-wrap">
-            {[["bg-red-100","🔴 Crítico (< 2w o negativo)"],["bg-yellow-100",`🟡 Bajo (< ${safetyWoh}w safety)`],["bg-green-100","🟢 Mes de producción"]].map(([cls,label])=>(
+            {[["bg-red-100","🔴 Critical (< 2w or negative)"],["bg-yellow-100",`🟡 Low (< ${safetyWoh}w safety)`],["bg-green-100","🟢 Production month"]].map(([cls,label])=>(
               <div key={label} className={`flex items-center gap-1.5 rounded px-3 py-1 ${cls}`}><span>{label}</span></div>
             ))}
           </div>
@@ -1066,7 +1066,7 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
           <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
             <div className="px-5 py-3 border-b border-border bg-muted/30">
               <p className="text-sm font-bold" style={{color:"#1C2340"}}>Formula (BOM) — % Receta · Source: Super BOM Consolidado</p>
-              <p className="text-xs text-muted-foreground">Precios $/lb editables</p>
+              <p className="text-xs text-muted-foreground">Editable $/lb prices</p>
             </div>
             <table className="text-xs min-w-max w-full">
               <thead>
@@ -1114,7 +1114,7 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
           <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
             <div className="px-5 py-3 border-b border-border bg-muted/30">
               <p className="text-sm font-bold" style={{color:"#1C2340"}}>COGS unitario calculado</p>
-              <p className="text-xs text-muted-foreground">Todos los inputs editables arriba</p>
+              <p className="text-xs text-muted-foreground">All inputs editable above</p>
             </div>
             <table className="w-full text-sm">
               <thead>
@@ -1162,7 +1162,7 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
       {procTab==="shopping" && (
         <div className="space-y-3">
           <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-700">
-            💡 Inventory = cargá el stock real en la tab "Raw Materials". To Acquire = Needed − Inventory redondeado al pack size.
+            💡 Inventory = load actual stock in the "Raw Materials" tab. To Acquire = Needed − Inventory rounded to pack size.
           </div>
           <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
             <table className="w-full text-sm">
@@ -1203,7 +1203,7 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
               </tbody>
               <tfoot>
                 <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
-                  <td className="px-4 py-2 font-semibold text-xs" colSpan={7}>TOTAL INGREDIENTES</td>
+                  <td className="px-4 py-2 font-semibold text-xs" colSpan={7}>TOTAL INGREDIENTS</td>
                   <td className="px-4 py-2 text-right font-mono font-bold text-emerald-400">
                     ${ALL_INGS.filter(ing=>(ingNeeded[ing]??0)>0).reduce((s,ing)=>{
                       const needed=Math.round(ingNeeded[ing]??0);
@@ -1224,7 +1224,7 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
       {procTab==="raw_materials" && (
         <div className="space-y-3">
           <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-700">
-            💡 Completá el inventario actual. Estos valores fluyen a la Shopping List. Actualizalos después de cada recepción.
+            💡 Enter current inventory. These values flow into the Shopping List. Update them after each receipt.
           </div>
           <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
             <table className="w-full text-sm">
@@ -1235,7 +1235,7 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
                   <th className="px-4 py-2.5 text-right">Precio/lb</th>
                   <th className="px-4 py-2.5 text-right">Stock actual (lbs)</th>
                   <th className="px-4 py-2.5 text-right">Valor ($)</th>
-                  <th className="px-4 py-2.5 text-left">Notas / Lote</th>
+                  <th className="px-4 py-2.5 text-left">Notes / Lot</th>
                 </tr>
               </thead>
               <tbody>
@@ -1258,7 +1258,7 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
                       </td>
                       <td className="px-4 py-2 text-right font-mono text-muted-foreground">{inv>0?`$${(inv*price).toLocaleString()}`:"—"}</td>
                       <td className="px-4 py-2">
-                        <input placeholder="Lote, fecha, proveedor..." className={`${inp} w-full`}/>
+                        <input placeholder="Lot, date, vendor..." className={`${inp} w-full`}/>
                       </td>
                     </tr>
                   );
@@ -1266,7 +1266,7 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
               </tbody>
               <tfoot>
                 <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
-                  <td className="px-4 py-2 font-semibold text-xs" colSpan={3}>TOTAL INVENTARIO</td>
+                  <td className="px-4 py-2 font-semibold text-xs" colSpan={3}>TOTAL INVENTORY</td>
                   <td className="px-4 py-2 text-right font-mono">{ALL_INGS.reduce((s,ing)=>s+(parseInt(ingInv[ing])||0),0).toLocaleString()} lbs</td>
                   <td className="px-4 py-2 text-right font-mono font-bold text-emerald-400">${ALL_INGS.reduce((s,ing)=>{const inv=parseInt(ingInv[ing])||0;return s+inv*(ingPrices[ing]??0);},0).toLocaleString()}</td>
                   <td/>
