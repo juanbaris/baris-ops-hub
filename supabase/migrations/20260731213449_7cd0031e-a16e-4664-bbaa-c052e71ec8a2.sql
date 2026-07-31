@@ -1,0 +1,1 @@
+ALTER TABLE public.customer_orders ALTER COLUMN fill_rate TYPE numeric(6,2);
