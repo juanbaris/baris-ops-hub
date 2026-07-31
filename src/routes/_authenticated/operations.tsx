@@ -1288,11 +1288,12 @@ function OperationsPage() {
   useEffect(() => { loadAll(); }, []);
 
   const tabs: { id: OpsTab; label: string }[] = [
-    { id:"stock",      label:"FP Stock" },
-    { id:"fp",         label:"FP Input" },
-    { id:"ip",         label:"I&P Input" },
-    { id:"production", label:"Production" },
-    { id:"cogs",       label:"COGS Simulator" },
+    { id:"stock",       label:"FP Stock" },
+    { id:"fp",          label:"FP Input" },
+    { id:"ip",          label:"I&P Input" },
+    { id:"production",  label:"Production" },
+    { id:"procurement", label:"Procurement Planning" },
+    { id:"cogs",        label:"COGS Simulator" },
   ];
 
   return (
