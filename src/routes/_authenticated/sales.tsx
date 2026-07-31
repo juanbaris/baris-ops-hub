@@ -93,7 +93,7 @@ function calcForecast(scenario: "Pesimista"|"Normal"|"Optimista", velOverride: b
 type SalesTab = "resumen"|"detalle"|"sku"|"distribuidor"|"simulador"|"estacionalidad"|"real";
 
 declare global { interface Window { Chart: any } }
-function useChart(ref: React.RefObject<HTMLCanvasElement>, builder: () => any, deps: any[]) {
+function useChart(ref: React.RefObject<HTMLCanvasElement | null>, builder: () => any, deps: any[]) {
   const chartRef = useRef<any>(null);
   useEffect(() => {
     if (!ref.current || !window.Chart) return;
