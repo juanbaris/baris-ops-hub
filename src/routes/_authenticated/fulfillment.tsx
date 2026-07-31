@@ -673,7 +673,10 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
         po_number_ref: order.po_number,
         notes: `BOL ${bolNumber || "—"} · PO ${order.po_number} · Fill ${fillRate}%`,
       }));
-    if (movements.length > 0) await supabase.from("fp_movements").insert(movements);
+    if (movements.length > 0) {
+      const { error: fpErr } = await supabase.from("fp_movements").insert(movements);
+      if (fpErr) toast.error(`FP error: ${fpErr.message}`);
+    }
 
     try {
       const { data: userData } = await supabase.auth.getUser();
