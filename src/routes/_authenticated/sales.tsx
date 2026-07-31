@@ -745,7 +745,7 @@ function SalesPage() {
   const tabs: {id:SalesTab;label:string}[] = [
     {id:"real",label:"Real Monthly"},
     {id:"resumen",label:"Summary"},
-    {id:"detalle",label:"Monthly detail"},
+    {id:"detalle",label:"Monthly Detail"},
     {id:"sku",label:"By SKU"},
     {id:"simulador",label:"Simulador"},
     {id:"estacionalidad",label:"Seasonality"},
