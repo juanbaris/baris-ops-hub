@@ -90,7 +90,7 @@ function calcForecast(scenario: "Pesimista"|"Normal"|"Optimista", velOverride: b
   });
 }
 
-type SalesTab = "resumen"|"detalle"|"sku"|"distribuidor"|"simulador"|"estacionalidad";
+type SalesTab = "resumen"|"detalle"|"sku"|"distribuidor"|"simulador"|"estacionalidad"|"real";
 
 declare global { interface Window { Chart: any } }
 function useChart(ref: React.RefObject<HTMLCanvasElement>, builder: () => any, deps: any[]) {
@@ -610,6 +610,152 @@ function EstacionalidadTab() {
   );
 }
 
+// ─── Real Mensual Tab ─────────────────────────────────────────────────────────
+const ALL_MONTHS = [
+  "Ene 2026","Feb 2026","Mar 2026","Abr 2026","May 2026","Jun 2026","Jul 2026",
+  "Ago 2026","Sep 2026","Oct 2026","Nov 2026","Dic 2026",
+  "Ene 2027","Feb 2027","Mar 2027","Abr 2027","May 2027","Jun 2027","Jul 2027",
+];
+
+// Pre-loaded from BARIS_Acc Real Mensual sheet (Jan–Jul 2026 actuals)
+const PRELOADED_REALS: Record<string, { net_sales: number; wm: number; wd: number; xd: number; pw: number; hm: number; matcha: number }> = {
+  "Ene 2026": { net_sales:135884, wm:0,   wd:0,   xd:1418, pw:1078, hm:1033, matcha:0    },
+  "Feb 2026": { net_sales:201332, wm:840, wd:550, xd:1018, pw:867,  hm:747,  matcha:0    },
+  "Mar 2026": { net_sales:195015, wm:645, wd:705, xd:1560, pw:900,  hm:810,  matcha:0    },
+  "Abr 2026": { net_sales:111511, wm:495, wd:300, xd:641,  pw:877,  hm:427,  matcha:0    },
+  "May 2026": { net_sales:294358, wm:690, wd:691, xd:2108, pw:2368, hm:1665, matcha:0    },
+  "Jun 2026": { net_sales:212494, wm:891, wd:542, xd:1939, pw:1149, hm:1060, matcha:0    },
+  "Jul 2026": { net_sales:277626, wm:585, wd:510, xd:2916, pw:1440, hm:1725, matcha:0    },
+};
+
+type MonthReal = { net_sales: string; wm: string; wd: string; xd: string; pw: string; hm: string; matcha: string };
+
+function RealMensualTab({ onRealUpdate }: { onRealUpdate: (label: string, cases: number) => void }) {
+  const [data, setData] = useState<Record<string, MonthReal>>(() => {
+    const init: Record<string, MonthReal> = {};
+    for (const m of ALL_MONTHS) {
+      const p = PRELOADED_REALS[m];
+      init[m] = p
+        ? { net_sales:String(p.net_sales), wm:String(p.wm||""), wd:String(p.wd||""), xd:String(p.xd||""), pw:String(p.pw||""), hm:String(p.hm||""), matcha:String(p.matcha||"") }
+        : { net_sales:"", wm:"", wd:"", xd:"", pw:"", hm:"", matcha:"" };
+    }
+    return init;
+  });
+  const [saved, setSaved] = useState<Set<string>>(new Set(Object.keys(PRELOADED_REALS)));
+
+  function set(month: string, field: keyof MonthReal, val: string) {
+    setData(d => ({ ...d, [month]: { ...d[month], [field]: val } }));
+  }
+
+  function saveMonth(month: string) {
+    const row = data[month];
+    const total = ["wm","wd","xd","pw","hm","matcha"].reduce((s, k) => s + (parseInt(row[k as keyof MonthReal]) || 0), 0);
+    setSaved(s => new Set([...s, month]));
+    onRealUpdate(month, total);
+    toast.success(`${month} saved: ${total.toLocaleString()} cases`);
+  }
+
+  const totals = ALL_MONTHS.map(m => {
+    const row = data[m];
+    const cases = ["wm","wd","xd","pw","hm","matcha"].reduce((s,k) => s + (parseInt(row?.[k as keyof MonthReal])||0), 0);
+    const rev = parseInt(row?.net_sales) || 0;
+    return { month: m, cases, rev, hasData: cases > 0 || rev > 0 };
+  });
+
+  const ytdCases = totals.slice(0,7).reduce((s,r) => s + r.cases, 0);
+  const ytdRev = totals.slice(0,7).reduce((s,r) => s + r.rev, 0);
+
+  const inp = "rounded border border-border bg-background px-1.5 py-0.5 text-xs font-mono w-full focus:outline-none focus:ring-1 focus:ring-primary/30";
+
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-3 gap-4">
+        <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">YTD 2026 Revenue (Ene–Jul)</p>
+          <p className="text-2xl font-bold font-mono" style={{color:"#A3224A"}}>${Math.round(ytdRev/1000)}K</p>
+        </div>
+        <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">YTD 2026 Cases (Ene–Jul)</p>
+          <p className="text-2xl font-bold font-mono" style={{color:"#1C2340"}}>{ytdCases.toLocaleString()}</p>
+        </div>
+        <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">$/case promedio YTD</p>
+          <p className="text-2xl font-bold font-mono" style={{color:"#1C2340"}}>${ytdCases > 0 ? (ytdRev/ytdCases).toFixed(2) : "—"}</p>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-700">
+        💡 Ene–Jul 2026 cargados desde BARIS_Acc. Completá el mes corriente al cierre con ventas netas ($) y cajas por SKU.
+      </div>
+
+      <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
+        <table className="w-full text-xs min-w-max">
+          <thead>
+            <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/40 border-b border-border">
+              <th className="px-3 py-2.5 text-left">Mes</th>
+              <th className="px-3 py-2.5 text-right">Ventas netas ($)</th>
+              <th className="px-3 py-2.5 text-right">XD cases</th>
+              <th className="px-3 py-2.5 text-right">PW cases</th>
+              <th className="px-3 py-2.5 text-right">HM cases</th>
+              <th className="px-3 py-2.5 text-right">WM cases</th>
+              <th className="px-3 py-2.5 text-right">WD cases</th>
+              <th className="px-3 py-2.5 text-right">Matcha cases</th>
+              <th className="px-3 py-2.5 text-right font-bold">TOTAL cases</th>
+              <th className="px-3 py-2.5 text-right">$/case</th>
+              <th className="px-3 py-2.5 text-center">Acción</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ALL_MONTHS.map(m => {
+              const row = data[m];
+              const isSaved = saved.has(m);
+              const isFuture = !PRELOADED_REALS[m] && !isSaved;
+              const total = ["wm","wd","xd","pw","hm","matcha"].reduce((s,k) => s + (parseInt(row?.[k as keyof MonthReal])||0), 0);
+              const rev = parseInt(row?.net_sales) || 0;
+              const pricePerCase = total > 0 && rev > 0 ? (rev/total).toFixed(2) : "—";
+
+              return (
+                <tr key={m} className={`border-t border-border/60 ${isSaved ? "bg-emerald-50/20" : isFuture ? "bg-muted/10" : ""}`}>
+                  <td className="px-3 py-1.5 font-semibold" style={{color:"#1C2340"}}>{m}</td>
+                  {(["net_sales","xd","pw","hm","wm","wd","matcha"] as (keyof MonthReal)[]).map(field => (
+                    <td key={field} className="px-3 py-1.5">
+                      <input type="number" className={inp} value={row?.[field] ?? ""}
+                        onChange={e => set(m, field, e.target.value)}
+                        placeholder={isFuture ? "—" : "0"}
+                        style={isSaved && !isFuture ? {backgroundColor:"#f0fdf4"} : {}} />
+                    </td>
+                  ))}
+                  <td className={`px-3 py-1.5 text-right font-mono font-bold ${total > 0 ? "" : "text-muted-foreground"}`} style={total > 0 ? {color:"#1C2340"} : {}}>
+                    {total > 0 ? total.toLocaleString() : "—"}
+                  </td>
+                  <td className="px-3 py-1.5 text-right font-mono text-muted-foreground">{pricePerCase}</td>
+                  <td className="px-3 py-1.5 text-center">
+                    <button onClick={() => saveMonth(m)}
+                      className={`rounded px-2 py-0.5 text-[10px] font-semibold ${isSaved ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200" : "text-white"}`}
+                      style={!isSaved ? {backgroundColor:"#A3224A"} : {}}>
+                      {isSaved ? "✓ Saved" : "Save"}
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+          <tfoot>
+            <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
+              <td className="px-3 py-2 font-semibold text-xs">TOTAL YTD</td>
+              <td className="px-3 py-2 text-right font-mono">${ytdRev.toLocaleString()}</td>
+              <td colSpan={6} />
+              <td className="px-3 py-2 text-right font-mono font-bold text-emerald-400">{ytdCases.toLocaleString()}</td>
+              <td className="px-3 py-2 text-right font-mono text-slate-300">{ytdCases > 0 ? `$${(ytdRev/ytdCases).toFixed(2)}` : "—"}</td>
+              <td />
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 function SalesPage() {
   const [tab, setTab] = useState<SalesTab>("resumen");
@@ -629,10 +775,11 @@ function SalesPage() {
   }, []);
 
   const tabs: { id: SalesTab; label: string }[] = [
-    { id:"resumen", label:"Resumen" },
-    { id:"detalle", label:"Detalle mensual" },
-    { id:"sku", label:"Por SKU" },
-    { id:"simulador", label:"Simulador" },
+    { id:"real",           label:"Real Mensual" },
+    { id:"resumen",        label:"Resumen" },
+    { id:"detalle",        label:"Detalle mensual" },
+    { id:"sku",            label:"Por SKU" },
+    { id:"simulador",      label:"Simulador" },
     { id:"estacionalidad", label:"Estacionalidad" },
   ];
 
@@ -670,6 +817,7 @@ function SalesPage() {
         ))}
       </div>
 
+      {tab === "real"          && <RealMensualTab onRealUpdate={(label, cases) => setReals(r => ({...r, [label]: cases}))} />}
       {tab === "resumen"       && <ResumenTab forecast={forecast} scenario={scenario} reals={reals} />}
       {tab === "detalle"       && <DetalleTab forecast={forecast} reals={reals} onRealUpdate={(label, val) => setReals(r => ({...r, [label]: val}))} />}
       {tab === "sku"           && <SKUTab forecast={forecast} />}
