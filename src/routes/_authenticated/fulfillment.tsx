@@ -10,7 +10,7 @@ type Distributor = Database["public"]["Enums"]["distributor"];
 type Status = Database["public"]["Enums"]["order_status"];
 
 const DISTRIBUTORS: Distributor[] = ["UNFI", "KeHe", "Rainforest", "RFD", "Direct", "Other"];
-const STATUSES: string[] = ["Open", "Accepted", "Sent to 3PL", "Shipment", "Invoiced"];
+const STATUSES: Status[] = ["Open", "Accepted", "Sent to 3PL", "Shipment", "Invoiced"];
 const SKU_ITEMS = [
   { key: "wd_cases" as const, label: "W&D", item: "23141" },
   { key: "pw_cases" as const, label: "P&W", item: "77670" },
