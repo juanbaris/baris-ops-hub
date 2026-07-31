@@ -1325,17 +1325,20 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
 function OperationsPage() {
   const [tab, setTab] = useState<OpsTab>("stock");
   const [fpMovements, setFpMovements] = useState<FPRow[]>([]);
+  const [fpMovementsAll, setFpMovementsAll] = useState<FPRow[]>([]);
   const [ipMovements, setIpMovements] = useState<IPRow[]>([]);
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   async function loadAll() {
-    const [fp, ip, ord] = await Promise.all([
+    const [fp, fpAll, ip, ord] = await Promise.all([
       supabase.from("fp_movements").select("*").neq("concept","Historical").order("movement_date", { ascending: false }),
+      supabase.from("fp_movements").select("*").order("movement_date", { ascending: false }),
       supabase.from("ip_movements").select("*").order("movement_date", { ascending: false }),
       supabase.from("customer_orders").select("*").neq("status", "Invoiced").order("po_date", { ascending: false }),
     ]);
     setFpMovements(fp.data ?? []);
+    setFpMovementsAll(fpAll.data ?? []);
     setIpMovements(ip.data ?? []);
     setOrders(ord.data ?? []);
     setLoading(false);
@@ -1367,7 +1370,7 @@ function OperationsPage() {
       </div>
 
       {tab === "stock"       && <FPStockTab movements={fpMovements} orders={orders} loading={loading} />}
-      {tab === "fp"          && <FPInputTab movements={fpMovements} loading={loading} onAdded={loadAll} />}
+      {tab === "fp"          && <FPInputTab movements={fpMovementsAll} loading={loading} onAdded={loadAll} />}
       {tab === "ip"          && <IPInputTab movements={ipMovements} loading={loading} onAdded={loadAll} />}
       {tab === "production"  && <ProductionTab onAdded={loadAll} />}
       {tab === "procurement" && <ProcurementTab movements={fpMovements} orders={orders} />}
