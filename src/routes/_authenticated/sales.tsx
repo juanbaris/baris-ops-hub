@@ -11,18 +11,18 @@ const SEASON_IDX: Record<number,number> = {
   1:0.21,2:1.40,3:1.39,4:1.64,5:0.72,6:1.47,
   7:0.68,8:0.65,9:1.48,10:0.76,11:0.26,12:1.33,
 };
-const GROWTH = { Pesimista:0.0, Normal:0.15, Optimista:0.25 };
+const GROWTH = { Pessimistic:0.0, Normal:0.15, Optimistic:0.25 };
 const SKU_MIX: Record<string,number> = {XD:0.30,PW:0.25,HM:0.18,WM:0.12,WD:0.08,Matcha:0.07};
 const FORECAST_MONTHS = [
-  {label:"Ago 2026",month:8,year:2026,yoy2025:1384},
+  {label:"Aug 2026",month:8,year:2026,yoy2025:1384},
   {label:"Sep 2026",month:9,year:2026,yoy2025:2728},
   {label:"Oct 2026",month:10,year:2026,yoy2025:1386},
   {label:"Nov 2026",month:11,year:2026,yoy2025:489},
-  {label:"Dic 2026",month:12,year:2026,yoy2025:2452},
-  {label:"Ene 2027",month:1,year:2027,yoy2025:388},
+  {label:"Dec 2026",month:12,year:2026,yoy2025:2452},
+  {label:"Jan 2027",month:1,year:2027,yoy2025:388},
   {label:"Feb 2027",month:2,year:2027,yoy2025:2582},
   {label:"Mar 2027",month:3,year:2027,yoy2025:2562},
-  {label:"Abr 2027",month:4,year:2027,yoy2025:3021},
+  {label:"Apr 2027",month:4,year:2027,yoy2025:3021},
   {label:"May 2027",month:5,year:2027,yoy2025:1314},
   {label:"Jun 2027",month:6,year:2027,yoy2025:2710},
   {label:"Jul 2027",month:7,year:2027,yoy2025:1242},
@@ -51,7 +51,7 @@ const VEL_CHAINS = [
 ];
 // New retailers Bloque 2
 const NEW_RETAILERS = [
-  {name:"Whole Foods expansión",stores:100,vel:8.09,entry:3,note:"Hoy 60 tiendas"},
+  {name:"Whole Foods expansion",stores:100,vel:8.09,entry:3,note:"Today 60 stores"},
   {name:"Raley's",stores:80,vel:1.50,entry:4,note:"Regional NoCal/Nevada"},
   {name:"Kroger",stores:300,vel:1.50,entry:6,note:"Mayor chain convencional"},
   {name:"Walmart",stores:500,vel:1.20,entry:8,note:"Nacional Frozen"},
@@ -66,23 +66,23 @@ const DIST_MIX = [
   {dist:"RFD/Other",pct:0.07,color:"#9CA3AF"},
 ];
 const PRELOADED_REALS: Record<string,{net_sales:number;wm:number;wd:number;xd:number;pw:number;hm:number;matcha:number}> = {
-  "Ene 2026":{net_sales:135884,wm:0,wd:0,xd:1418,pw:1078,hm:1033,matcha:0},
+  "Jan 2026":{net_sales:135884,wm:0,wd:0,xd:1418,pw:1078,hm:1033,matcha:0},
   "Feb 2026":{net_sales:201332,wm:840,wd:550,xd:1018,pw:867,hm:747,matcha:0},
   "Mar 2026":{net_sales:195015,wm:645,wd:705,xd:1560,pw:900,hm:810,matcha:0},
-  "Abr 2026":{net_sales:111511,wm:495,wd:300,xd:641,pw:877,hm:427,matcha:0},
+  "Apr 2026":{net_sales:111511,wm:495,wd:300,xd:641,pw:877,hm:427,matcha:0},
   "May 2026":{net_sales:294358,wm:690,wd:691,xd:2108,pw:2368,hm:1665,matcha:0},
   "Jun 2026":{net_sales:212494,wm:891,wd:542,xd:1939,pw:1149,hm:1060,matcha:0},
   "Jul 2026":{net_sales:277626,wm:585,wd:510,xd:2916,pw:1440,hm:1725,matcha:0},
 };
 const ALL_MONTHS_REAL = [
-  "Ene 2026","Feb 2026","Mar 2026","Abr 2026","May 2026","Jun 2026","Jul 2026",
-  "Ago 2026","Sep 2026","Oct 2026","Nov 2026","Dic 2026",
-  "Ene 2027","Feb 2027","Mar 2027","Abr 2027","May 2027","Jun 2027","Jul 2027",
+  "Jan 2026","Feb 2026","Mar 2026","Apr 2026","May 2026","Jun 2026","Jul 2026",
+  "Aug 2026","Sep 2026","Oct 2026","Nov 2026","Dec 2026",
+  "Jan 2027","Feb 2027","Mar 2027","Apr 2027","May 2027","Jun 2027","Jul 2027",
 ];
 
 // ─── Forecast calculation ─────────────────────────────────────────────────────
 function calcForecast(
-  scenario: "Pesimista"|"Normal"|"Optimista",
+  scenario: "Pessimistic"|"Normal"|"Optimistic",
   velActive: boolean[],
   velNew: number[],
   retailerActive: boolean[],
@@ -151,21 +151,21 @@ function RealMonthlyTab({onRealUpdate}:{onRealUpdate:(label:string,cases:number)
     const total=["wm","wd","xd","pw","hm","matcha"].reduce((s,k)=>s+(parseInt(row[k as keyof MonthReal])||0),0);
     setSaved(s=>new Set([...s,m]));
     onRealUpdate(m,total);
-    toast.success(`${m} guardado: ${total.toLocaleString()} cases`);
+    toast.success(`${m} saved: ${total.toLocaleString()} cases`);
   }
 
-  const ytdCases=["Ene 2026","Feb 2026","Mar 2026","Abr 2026","May 2026","Jun 2026","Jul 2026"].reduce((s,m)=>{
+  const ytdCases=["Jan 2026","Feb 2026","Mar 2026","Apr 2026","May 2026","Jun 2026","Jul 2026"].reduce((s,m)=>{
     return s+["wm","wd","xd","pw","hm","matcha"].reduce((a,k)=>a+(parseInt(data[m]?.[k as keyof MonthReal])||0),0);
   },0);
-  const ytdRev=["Ene 2026","Feb 2026","Mar 2026","Abr 2026","May 2026","Jun 2026","Jul 2026"].reduce((s,m)=>s+(parseInt(data[m]?.net_sales)||0),0);
+  const ytdRev=["Jan 2026","Feb 2026","Mar 2026","Apr 2026","May 2026","Jun 2026","Jul 2026"].reduce((s,m)=>s+(parseInt(data[m]?.net_sales)||0),0);
 
   const inp="rounded border border-border bg-background px-1.5 py-0.5 text-xs font-mono w-full focus:outline-none focus:ring-1 focus:ring-primary/30";
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-3 gap-4">
         {[
-          {label:"YTD 2026 Revenue (Ene–Jul)",value:`$${Math.round(ytdRev/1000)}K`,color:"#A3224A"},
-          {label:"YTD 2026 Cases (Ene–Jul)",value:ytdCases.toLocaleString(),color:"#1C2340"},
+          {label:"YTD 2026 Revenue (Jan–Jul)",value:`$${Math.round(ytdRev/1000)}K`,color:"#A3224A"},
+          {label:"YTD 2026 Cases (Jan–Jul)",value:ytdCases.toLocaleString(),color:"#1C2340"},
           {label:"$/case promedio YTD",value:`$${ytdCases>0?(ytdRev/ytdCases).toFixed(2):"—"}`,color:"#1C2340"},
         ].map((k,i)=>(
           <div key={i} className="rounded-2xl border border-border bg-card p-5 shadow-sm">
@@ -175,20 +175,20 @@ function RealMonthlyTab({onRealUpdate}:{onRealUpdate:(label:string,cases:number)
         ))}
       </div>
       <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-700">
-        💡 Ene–Jul 2026 pre-cargados desde BARIS_Acc. Completá el mes corriente al cierre con ventas netas ($) y cases por SKU.
+        💡 Jan–Jul 2026 pre-loaded from BARIS_Acc. Complete the current month at close with net sales ($) and cases by SKU.
       </div>
       <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
         <table className="w-full text-xs min-w-max">
           <thead>
             <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/40 border-b border-border">
-              <th className="px-3 py-2.5 text-left">Mes</th>
-              <th className="px-3 py-2.5 text-right">Ventas netas ($)</th>
+              <th className="px-3 py-2.5 text-left">Month</th>
+              <th className="px-3 py-2.5 text-right">Net sales ($)</th>
               <th className="px-3 py-2.5 text-right">XD</th><th className="px-3 py-2.5 text-right">PW</th>
               <th className="px-3 py-2.5 text-right">HM</th><th className="px-3 py-2.5 text-right">WM</th>
               <th className="px-3 py-2.5 text-right">WD</th><th className="px-3 py-2.5 text-right">Matcha</th>
               <th className="px-3 py-2.5 text-right font-bold">TOTAL</th>
               <th className="px-3 py-2.5 text-right">$/case</th>
-              <th className="px-3 py-2.5 text-center">Acción</th>
+              <th className="px-3 py-2.5 text-center">Action</th>
             </tr>
           </thead>
           <tbody>
@@ -270,7 +270,7 @@ function SummaryTab({forecast,scenario,reals}:{forecast:any[];scenario:string;re
     <div className="space-y-5">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
-          {label:"Forecast 12m (casos)",value:totalFcst.toLocaleString(),sub:`Scenario ${scenario}`,color:"#A3224A"},
+          {label:"Forecast 12m (cases)",value:totalFcst.toLocaleString(),sub:`Scenario ${scenario}`,color:"#A3224A"},
           {label:"Revenue forecast 12m",value:`$${Math.round(totalRev/1000)}K`,sub:`@$${PRICE_PER_CASE}/case`,color:"#1C2340"},
           {label:"vs Budget",value:`${((totalFcst/totalBudget-1)*100).toFixed(1)}%`,sub:"Normal baseline",color:totalFcst>=totalBudget?"#10B981":"#EF4444"},
           {label:"Months with actuals",value:`${coveredMonths}/12`,sub:"Update monthly",color:"#6B7280"},
@@ -283,11 +283,11 @@ function SummaryTab({forecast,scenario,reals}:{forecast:any[];scenario:string;re
         ))}
       </div>
       <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-        <h3 className="text-sm font-bold mb-3" style={{color:"#1C2340"}}>Forecast vs Budget vs Real · Ago 2026 → Jul 2027</h3>
+        <h3 className="text-sm font-bold mb-3" style={{color:"#1C2340"}}>Forecast vs Budget vs Real · Aug 2026 → Jul 2027</h3>
         <div style={{height:280}}><canvas ref={mainCanvas}/></div>
       </div>
       <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-        <h3 className="text-sm font-bold mb-4" style={{color:"#1C2340"}}>Revenue proyectado por distribuidor</h3>
+        <h3 className="text-sm font-bold mb-4" style={{color:"#1C2340"}}>Projected revenue by distributor</h3>
         <div className="space-y-3">
           {DIST_MIX.map(d=>{
             const rev=Math.round(totalRev*d.pct);
@@ -318,13 +318,13 @@ function DetalleTab({forecast,reals,onRealUpdate}:{forecast:any[];reals:Record<s
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-700">
-        💡 Click en <strong>Real casos</strong> para cargar el real al cierre del mes.
+        💡 Click <strong>Actual cases</strong> to enter actuals at month close.
       </div>
       <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
         <table className="w-full text-sm min-w-max">
           <thead>
             <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/40 border-b border-border">
-              <th className="px-4 py-2.5 text-left">Mes</th>
+              <th className="px-4 py-2.5 text-left">Month</th>
               <th className="px-4 py-2.5 text-right">Base</th>
               <th className="px-4 py-2.5 text-right">Δ Vel.</th>
               <th className="px-4 py-2.5 text-right">Δ Retailers</th>
@@ -332,8 +332,8 @@ function DetalleTab({forecast,reals,onRealUpdate}:{forecast:any[];reals:Record<s
               <th className="px-4 py-2.5 text-right">Revenue fcst</th>
               <th className="px-4 py-2.5 text-right">Budget</th>
               <th className="px-4 py-2.5 text-right">Δ vs Budget</th>
-              <th className="px-4 py-2.5 text-right">REAL casos</th>
-              <th className="px-4 py-2.5 text-right">Δ real vs fcst</th>
+              <th className="px-4 py-2.5 text-right">ACTUAL cases</th>
+              <th className="px-4 py-2.5 text-right">Δ actual vs fcst</th>
               <th className="px-4 py-2.5 text-right">YoY vs 2025</th>
             </tr>
           </thead>
@@ -392,7 +392,7 @@ function DetalleTab({forecast,reals,onRealUpdate}:{forecast:any[];reals:Record<s
           </tbody>
           <tfoot>
             <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
-              <td className="px-4 py-2 text-xs font-semibold" colSpan={4}>TOTAL 12 meses</td>
+              <td className="px-4 py-2 text-xs font-semibold" colSpan={4}>TOTAL 12 months</td>
               <td className="px-4 py-2 text-right font-mono font-bold">{totalFcst.toLocaleString()}</td>
               <td className="px-4 py-2 text-right font-mono">${Math.round(totalFcst*PRICE_PER_CASE/1000)}K</td>
               <td className="px-4 py-2 text-right font-mono text-slate-300">${Math.round(totalBudget*PRICE_PER_CASE/1000)}K</td>
@@ -470,7 +470,7 @@ function SKUTab({forecast}:{forecast:any[]}) {
         </table>
       </div>
       <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-        <h3 className="text-sm font-bold mb-3" style={{color:"#1C2340"}}>Mix histórico de SKUs</h3>
+        <h3 className="text-sm font-bold mb-3" style={{color:"#1C2340"}}>Historical SKU mix</h3>
         <table className="w-full text-sm">
           <thead>
             <tr className="text-[11px] uppercase tracking-wide text-muted-foreground border-b border-border">
@@ -519,7 +519,7 @@ function SimuladorTab({onConfigChange}:{onConfigChange:(cfg:any)=>void}) {
   },0);
 
   const inp="rounded-lg border border-border bg-background px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-primary/30";
-  const MONTH_LABELS=["Ago26","Sep26","Oct26","Nov26","Dic26","Ene27","Feb27","Mar27","Abr27","May27","Jun27","Jul27"];
+  const MONTH_LABELS=["Aug26","Sep26","Oct26","Nov26","Dec26","Jan27","Feb27","Mar27","Apr27","May27","Jun27","Jul27"];
 
   return (
     <div className="space-y-5">
@@ -528,21 +528,21 @@ function SimuladorTab({onConfigChange}:{onConfigChange:(cfg:any)=>void}) {
         <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
           <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Δ Velocity (Bloque 1)</p>
           <p className="text-xl font-bold font-mono" style={{color:velDeltaTotal>0?"#10B981":"#6B7280"}}>
-            {velDeltaTotal>0?"+":""}{velDeltaTotal.toLocaleString()} cases/mes
+            {velDeltaTotal>0?"+":""}{velDeltaTotal.toLocaleString()} cases/month
           </p>
           <p className="text-xs text-muted-foreground">${(velDeltaTotal*PRICE_PER_CASE*12/1000).toFixed(0)}K revenue anual</p>
         </div>
         <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-          <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Δ Nuevos Retailers (Bloque 2)</p>
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Δ New Retailers (Block 2)</p>
           <p className="text-xl font-bold font-mono" style={{color:retDeltaTotal>0?"#A3224A":"#6B7280"}}>
-            {retDeltaTotal>0?"+":""}{retDeltaTotal.toLocaleString()} cases/mes
+            {retDeltaTotal>0?"+":""}{retDeltaTotal.toLocaleString()} cases/month
           </p>
           <p className="text-xs text-muted-foreground">${(retDeltaTotal*PRICE_PER_CASE*12/1000).toFixed(0)}K revenue anual</p>
         </div>
         <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
           <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">TOTAL Δ incremental</p>
           <p className="text-xl font-bold font-mono" style={{color:"#1C2340"}}>
-            +{(velDeltaTotal+retDeltaTotal).toLocaleString()} cases/mes
+            +{(velDeltaTotal+retDeltaTotal).toLocaleString()} cases/month
           </p>
           <p className="text-xs text-muted-foreground">${((velDeltaTotal+retDeltaTotal)*PRICE_PER_CASE*12/1000).toFixed(0)}K revenue anual</p>
         </div>
@@ -558,10 +558,10 @@ function SimuladorTab({onConfigChange}:{onConfigChange:(cfg:any)=>void}) {
           <thead>
             <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
               <th className="px-4 py-2.5 text-left">Cadena</th>
-              <th className="px-4 py-2.5 text-right">Tiendas</th>
+              <th className="px-4 py-2.5 text-right">Stores</th>
               <th className="px-4 py-2.5 text-right">Vel. actual</th>
               <th className="px-4 py-2.5 text-right">Vel. nueva</th>
-              <th className="px-4 py-2.5 text-right">Δ cases/mes</th>
+              <th className="px-4 py-2.5 text-right">Δ cases/month</th>
               <th className="px-4 py-2.5 text-center">Activar</th>
             </tr>
           </thead>
@@ -598,16 +598,16 @@ function SimuladorTab({onConfigChange}:{onConfigChange:(cfg:any)=>void}) {
       {/* Bloque 2 — New retailers */}
       <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
         <div className="px-5 py-3 border-b border-border bg-muted/30">
-          <p className="text-sm font-bold" style={{color:"#1C2340"}}>Bloque 2 — Nuevos retailers</p>
-          <p className="text-xs text-muted-foreground">Ramp-up automático: mes 1 = 40% · mes 2 = 70% · mes 3+ = 100%</p>
+          <p className="text-sm font-bold" style={{color:"#1C2340"}}>Block 2 — New retailers</p>
+          <p className="text-xs text-muted-foreground">Automatic ramp-up: month 1 = 40% · month 2 = 70% · month 3+ = 100%</p>
         </div>
         <table className="w-full text-sm">
           <thead>
             <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
               <th className="px-4 py-2.5 text-left">Retailer</th>
-              <th className="px-4 py-2.5 text-right">Tiendas</th>
+              <th className="px-4 py-2.5 text-right">Stores</th>
               <th className="px-4 py-2.5 text-right">Vel. (u/s/w)</th>
-              <th className="px-4 py-2.5 text-right">Mes entrada</th>
+              <th className="px-4 py-2.5 text-right">Entry month</th>
               <th className="px-4 py-2.5 text-right">Δ estabilizado</th>
               <th className="px-4 py-2.5 text-left">Notas</th>
               <th className="px-4 py-2.5 text-center">Activar</th>
@@ -658,7 +658,7 @@ function SimuladorTab({onConfigChange}:{onConfigChange:(cfg:any)=>void}) {
 
 // ─── Seasonality Tab ───────────────────────────────────────────────────────
 function SeasonalityTab() {
-  const months=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+  const months=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   const indices=[0.21,1.40,1.39,1.64,0.72,1.47,0.68,0.65,1.48,0.76,0.26,1.33];
   const maxIdx=Math.max(...indices);
   const velData=[
@@ -671,8 +671,8 @@ function SeasonalityTab() {
   return (
     <div className="space-y-5">
       <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-        <h3 className="text-sm font-bold mb-1" style={{color:"#1C2340"}}>Índices de estacionalidad — fuente: 2025 real</h3>
-        <p className="text-xs text-muted-foreground mb-5">Ciclos de PO de distribuidores, no consumo del shopper. 1.0 = promedio</p>
+        <h3 className="text-sm font-bold mb-1" style={{color:"#1C2340"}}>Seasonality indices — source: 2025 actual</h3>
+        <p className="text-xs text-muted-foreground mb-5">Distributor PO cycles, not shopper consumption. 1.0 = average</p>
         <div className="flex items-end gap-2 h-32">
           {indices.map((v,i)=>(
             <div key={i} className="flex-1 flex flex-col items-center gap-1">
@@ -691,10 +691,10 @@ function SeasonalityTab() {
           <thead>
             <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
               <th className="px-4 py-2.5 text-left">Cadena</th>
-              <th className="px-4 py-2.5 text-right">Tiendas</th>
+              <th className="px-4 py-2.5 text-right">Stores</th>
               <th className="px-4 py-2.5 text-right">T4W</th>
               <th className="px-4 py-2.5 text-right">Last week</th>
-              <th className="px-4 py-2.5 text-right">Cases/mes est.</th>
+              <th className="px-4 py-2.5 text-right">Est. cases/month</th>
             </tr>
           </thead>
           <tbody>
@@ -717,7 +717,7 @@ function SeasonalityTab() {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 function SalesPage() {
   const [tab,setTab] = useState<SalesTab>("real");
-  const [scenario,setScenario] = useState<"Pesimista"|"Normal"|"Optimista">("Normal");
+  const [scenario,setScenario] = useState<"Pessimistic"|"Normal"|"Optimistic">("Normal");
   const [reals,setReals] = useState<Record<string,number>>({});
   const [simConfig,setSimConfig] = useState<any>({
     velActive:VEL_CHAINS.map(()=>false),
@@ -745,29 +745,29 @@ function SalesPage() {
   const tabs: {id:SalesTab;label:string}[] = [
     {id:"real",label:"Real Monthly"},
     {id:"resumen",label:"Summary"},
-    {id:"detalle",label:"Monthly detail"},
+    {id:"detalle",label:"Monthly Detail"},
     {id:"sku",label:"By SKU"},
     {id:"simulador",label:"Simulador"},
     {id:"estacionalidad",label:"Seasonality"},
   ];
   const SCENARIO_INFO = {
-    Pesimista:"0% YoY · mismo volumen · piso",
-    Normal:"+15% YoY · orgánico · base de trabajo",
-    Optimista:"+25% YoY · volumen orgánico fuerte",
+    Pessimistic:"0% YoY · same volume · floor",
+    Normal:"+15% YoY · organic · working base",
+    Optimistic:"+25% YoY · strong organic volume",
   };
 
   return (
     <div className="space-y-5 pb-10">
       <div>
         <h1 className="text-2xl font-bold" style={{color:"#1C2340"}}>Sales</h1>
-        <p className="text-sm text-muted-foreground">Demand forecast Ago 2026 → Jul 2027 · actualizar real mensualmente</p>
+        <p className="text-sm text-muted-foreground">Demand forecast Aug 2026 → Jul 2027 · update actuals monthly</p>
       </div>
       <div className="flex items-center gap-4 flex-wrap">
         <div className="flex gap-1 rounded-xl bg-muted p-1">
-          {(["Pesimista","Normal","Optimista"] as const).map(s=>(
+          {(["Pessimistic","Normal","Optimistic"] as const).map(s=>(
             <button key={s} onClick={()=>setScenario(s)}
               className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${scenario===s?"text-white shadow-sm":"text-muted-foreground"}`}
-              style={scenario===s?{backgroundColor:s==="Pesimista"?"#EF4444":s==="Normal"?"#1C2340":"#10B981"}:{}}>
+              style={scenario===s?{backgroundColor:s==="Pessimistic"?"#EF4444":s==="Normal"?"#1C2340":"#10B981"}:{}}>
               {s}
             </button>
           ))}
