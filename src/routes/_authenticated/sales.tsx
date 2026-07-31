@@ -93,7 +93,7 @@ function calcForecast(scenario: "Pesimista"|"Normal"|"Optimista", velOverride: b
 type SalesTab = "resumen"|"detalle"|"sku"|"distribuidor"|"simulador"|"estacionalidad"|"real";
 
 declare global { interface Window { Chart: any } }
-function useChart(ref: React.RefObject<HTMLCanvasElement>, builder: () => any, deps: any[]) {
+function useChart(ref: React.RefObject<HTMLCanvasElement | null>, builder: () => any, deps: any[]) {
   const chartRef = useRef<any>(null);
   useEffect(() => {
     if (!ref.current || !window.Chart) return;
@@ -105,8 +105,8 @@ function useChart(ref: React.RefObject<HTMLCanvasElement>, builder: () => any, d
 
 // ─── Resumen Tab ──────────────────────────────────────────────────────────────
 function ResumenTab({ forecast, scenario, reals }: { forecast: any[]; scenario: string; reals: Record<string, number> }) {
-  const mainCanvas = useRef<HTMLCanvasElement>(null);
-  const distCanvas = useRef<HTMLCanvasElement>(null);
+  const mainCanvas = useRef<HTMLCanvasElement | null>(null);
+  const distCanvas = useRef<HTMLCanvasElement | null>(null);
 
   const allMonths = [...HISTORICAL.map(h => h.label), ...forecast.map(f => f.label)];
   const realVals = [...HISTORICAL.map(h => h.cases), ...forecast.map(f => reals[f.label] ?? null)];

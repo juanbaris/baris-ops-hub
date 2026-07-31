@@ -796,6 +796,21 @@ const ING_PACK_SIZES: Record<string, number> = {
 };
 const ALL_INGS = Object.keys(DEFAULT_ING_PRICES);
 const SKU_MIX_PCT: Record<string,number> = {XD:0.30,PW:0.25,HM:0.18,WM:0.12,WD:0.08,Matcha:0.07};
+
+const FORECAST_MONTHS_OPS = Array.from({ length: 12 }, (_, i) => {
+  const d = new Date();
+  d.setMonth(d.getMonth() + i);
+  return d.toLocaleString("en-US", { month: "short", year: "2-digit" });
+});
+const FORECAST_SKU_OPS: Record<string, number[]> = {
+  XD: [4200,3800,4500,4100,4600,4800,4400,4200,5000,4700,5500,5200],
+  PW: [3500,3200,3800,3400,3900,4000,3600,3500,4100,3800,4500,4200],
+  HM: [2500,2300,2700,2400,2800,2900,2600,2500,3000,2700,3200,3000],
+  WM: [1700,1500,1900,1600,2000,2100,1800,1700,2100,1900,2200,2000],
+  WD: [1100,1000,1300,1100,1400,1500,1200,1100,1400,1300,1600,1400],
+  Matcha: [1000,900,1100,1000,1200,1300,1000,1000,1200,1100,1400,1300],
+};
+
 type ProcSubTab = "schedule"|"stock_proj"|"bom_cogs"|"shopping"|"raw_materials";
 
 function calcCOGSFull(prices: Record<string,number>, costs: typeof DEFAULT_PROD_COSTS, scrap: {raspberry:number;chocolate:number}) {
@@ -1270,26 +1285,30 @@ function OperationsPage() {
   const [tab, setTab] = useState<OpsTab>("stock");
   const [fpMovements, setFpMovements] = useState<FPRow[]>([]);
   const [ipMovements, setIpMovements] = useState<IPRow[]>([]);
+  const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   async function loadAll() {
-    const [fp, ip] = await Promise.all([
+    const [fp, ip, ord] = await Promise.all([
       supabase.from("fp_movements").select("*").order("movement_date", { ascending: false }),
       supabase.from("ip_movements").select("*").order("movement_date", { ascending: false }),
+      supabase.from("customer_orders").select("*").neq("status", "Invoiced").order("po_date", { ascending: false }),
     ]);
     setFpMovements(fp.data ?? []);
     setIpMovements(ip.data ?? []);
+    setOrders(ord.data ?? []);
     setLoading(false);
   }
 
   useEffect(() => { loadAll(); }, []);
 
   const tabs: { id: OpsTab; label: string }[] = [
-    { id:"stock",      label:"FP Stock" },
-    { id:"fp",         label:"FP Input" },
-    { id:"ip",         label:"I&P Input" },
-    { id:"production", label:"Production" },
-    { id:"cogs",       label:"COGS Simulator" },
+    { id:"stock",       label:"FP Stock" },
+    { id:"fp",          label:"FP Input" },
+    { id:"ip",          label:"I&P Input" },
+    { id:"production",  label:"Production" },
+    { id:"procurement", label:"Procurement Planning" },
+    { id:"cogs",        label:"COGS Simulator" },
   ];
 
   return (
@@ -1306,11 +1325,12 @@ function OperationsPage() {
         ))}
       </div>
 
-      {tab === "stock"      && <FPStockTab movements={fpMovements} loading={loading} />}
-      {tab === "fp"         && <FPInputTab movements={fpMovements} loading={loading} onAdded={loadAll} />}
-      {tab === "ip"         && <IPInputTab movements={ipMovements} loading={loading} onAdded={loadAll} />}
-      {tab === "production" && <ProductionTab onAdded={loadAll} />}
-      {tab === "cogs"       && <COGSSimulatorTab />}
+      {tab === "stock"       && <FPStockTab movements={fpMovements} loading={loading} />}
+      {tab === "fp"          && <FPInputTab movements={fpMovements} loading={loading} onAdded={loadAll} />}
+      {tab === "ip"          && <IPInputTab movements={ipMovements} loading={loading} onAdded={loadAll} />}
+      {tab === "production"  && <ProductionTab onAdded={loadAll} />}
+      {tab === "procurement" && <ProcurementTab movements={fpMovements} orders={orders} />}
+      {tab === "cogs"        && <COGSSimulatorTab />}
     </>
   );
 }

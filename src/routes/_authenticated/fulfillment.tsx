@@ -10,7 +10,7 @@ type Distributor = Database["public"]["Enums"]["distributor"];
 type Status = Database["public"]["Enums"]["order_status"];
 
 const DISTRIBUTORS: Distributor[] = ["UNFI", "KeHe", "Rainforest", "RFD", "Direct", "Other"];
-const STATUSES: string[] = ["Open", "Accepted", "Sent to 3PL", "Shipment", "Invoiced"];
+const STATUSES: Status[] = ["Open", "Accepted", "Sent to 3PL", "Shipment", "Invoiced"];
 const SKU_ITEMS = [
   { key: "wd_cases" as const, label: "W&D", item: "23141" },
   { key: "pw_cases" as const, label: "P&W", item: "77670" },
@@ -1570,7 +1570,7 @@ function LogisticsTab({ orders }: { orders: Order[] }) {
       .filter(o => o.status !== "Invoiced")
       .map(o => {
         const totalCases = [o.wd_cases,o.pw_cases,o.hm_cases,o.matcha_cases,o.xd_cases,o.wm_cases]
-          .reduce((s,v) => s + (Number(v)||0), 0);
+          .reduce<number>((s,v) => s + (Number(v)||0), 0);
         const log = calcLogistics(totalCases, o.customer);
         return { order: o, totalCases, ...log };
       })
