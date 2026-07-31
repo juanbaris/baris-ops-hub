@@ -233,6 +233,25 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
 
   const totalCases = SKU_ITEMS.reduce((s, sk) => s + (Number(order[sk.key]) || 0), 0);
 
+  async function markInvoiced() {
+    setShowInvoice(true);
+    const today = new Date().toISOString().slice(0, 10);
+    const { data, error } = await supabase.from("customer_orders")
+      .update({ status: "Invoiced" as Status, invoice_date: order.invoice_date ?? today })
+      .eq("id", order.id).select().single();
+    setShowInvoice(false);
+    if (error || !data) { toast.error(error?.message ?? "Failed to mark as invoiced"); return; }
+    const { data: userData } = await supabase.auth.getUser();
+    await supabase.from("audit_log").insert({
+      table_name: "customer_orders", record_id: order.id, action: "status_change",
+      user_id: userData.user?.id ?? null,
+      old_data: { field: "status", old_value: order.status },
+      new_data: { field: "status", new_value: "Invoiced" },
+    });
+    onUpdated(data);
+    toast.success(`PO #${order.po_number} marked as Invoiced`);
+  }
+
   // CHANGE 5: fill rate calculation
   const fillRate = order.fill_rate != null ? Number(order.fill_rate) : null;
   const fillRateColor = fillRate == null ? "" : fillRate >= 99 ? "text-emerald-600" : fillRate >= 90 ? "text-orange-500" : "text-red-600";
@@ -254,10 +273,10 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
                 📋 Packing Slip
               </button>
               {order.status === "BOL Confirmed" && (
-                <button onClick={() => setShowInvoice(true)}
+                <button onClick={markInvoiced} disabled={showInvoice}
                   className="rounded-lg px-3 py-1 text-xs font-semibold text-white"
                   style={{ backgroundColor: "#1C2340" }}>
-                  📄 Mark as Invoiced
+                  {showInvoice ? "Saving…" : "📄 Mark as Invoiced"}
                 </button>
               )}
               <button onClick={deletePO} disabled={deleting}
