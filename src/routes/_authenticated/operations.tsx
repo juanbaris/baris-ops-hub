@@ -900,9 +900,9 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
 
   const inp="rounded border border-border bg-background px-2 py-1 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-primary/30";
   const SUBTABS: {id:ProcSubTab;label:string}[] = [
-    {id:"schedule",label:"📅 Schedule"},{id:"stock_proj",label:"📊 Proyección Stock"},
+    {id:"schedule",label:"📅 Schedule"},{id:"stock_proj",label:"📊 Stock Projection"},
     {id:"bom_cogs",label:"🧪 BOM + COGS"},{id:"shopping",label:"🛒 Shopping List"},
-    {id:"raw_materials",label:"📦 Materias Primas"},
+    {id:"raw_materials",label:"📦 Raw Materials"},
   ];
 
   return (
@@ -911,20 +911,20 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
       <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
         <div className="flex flex-wrap items-center gap-6">
           <div className="flex items-center gap-2">
-            <label className="text-xs font-semibold text-muted-foreground">Safety stock mín.</label>
+            <label className="text-xs font-semibold text-muted-foreground">Min. safety stock</label>
             <input type="number" min={1} max={16} value={safetyWoh} onChange={e=>setSafetyWoh(Number(e.target.value))} className={`${inp} w-12 text-center`}/>
-            <span className="text-xs text-muted-foreground">semanas</span>
+            <span className="text-xs text-muted-foreground">weeks</span>
           </div>
           <div className="flex items-center gap-2">
-            <label className="text-xs font-semibold text-muted-foreground">Corrida mínima</label>
+            <label className="text-xs font-semibold text-muted-foreground">Minimum run</label>
             <input type="number" min={500} step={500} value={minRun} onChange={e=>setMinRun(Number(e.target.value))} className={`${inp} w-20 text-center`}/>
             <span className="text-xs text-muted-foreground">cases</span>
           </div>
           <div className="flex items-center gap-2">
-            <label className="text-xs font-semibold text-muted-foreground">Frecuencia</label>
+            <label className="text-xs font-semibold text-muted-foreground">Frequency</label>
             <select value={freqMonths} onChange={e=>setFreqMonths(Number(e.target.value))} className={`${inp} w-28`}>
-              <option value={1}>Mensual</option><option value={2}>Bimestral</option>
-              <option value={3}>Trimestral</option><option value={4}>Cuatrimestral</option><option value={6}>Semestral</option>
+              <option value={1}>Monthly</option><option value={2}>Bimonthly</option>
+              <option value={3}>Quarterly</option><option value={4}>Every 4 months</option><option value={6}>Biannual</option>
             </select>
           </div>
           <div className="ml-auto flex gap-6 text-center">
@@ -951,7 +951,7 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
       {procTab==="schedule" && (
         <div className="space-y-3">
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
-            🏭 Celdas amarillas = corridas planificadas · Frecuencia: {["","mensual","bimestral","trimestral","cuatrimestral","","semestral"][freqMonths]} · Safety {safetyWoh}w · Min {minRun.toLocaleString()} cases
+            🏭 Celdas amarillas = corridas planificadas · Frequency: {["","mensual","bimestral","trimestral","cuatrimestral","","semestral"][freqMonths]} · Safety {safetyWoh}w · Min {minRun.toLocaleString()} cases
           </div>
           <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
             <table className="text-xs min-w-max w-full">
@@ -986,7 +986,7 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
                   );
                 })}
                 <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
-                  <td className="px-4 py-2 font-semibold sticky left-0 text-xs" style={{backgroundColor:"#1C2340"}}>Total cajas</td>
+                  <td className="px-4 py-2 font-semibold sticky left-0 text-xs" style={{backgroundColor:"#1C2340"}}>Total cases</td>
                   <td className="px-3 py-2 text-right font-mono text-xs">{SKUS.reduce((s,sku)=>s+Math.max(0,(bySku[sku]??0)-orders.reduce((a,o)=>a+(Number(o[{XD:"xd_cases",PW:"pw_cases",HM:"hm_cases",WM:"wm_cases",WD:"wd_cases",Matcha:"matcha_cases"}[sku]])||0),0)),0).toLocaleString()}</td>
                   {totalByMonth.map((t,i)=>(
                     <td key={i} className="px-3 py-2 text-center font-mono font-bold text-amber-300"
@@ -1162,7 +1162,7 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
       {procTab==="shopping" && (
         <div className="space-y-3">
           <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-700">
-            💡 Inventory = cargá el stock real en la tab "Materias Primas". To Acquire = Needed − Inventory redondeado al pack size.
+            💡 Inventory = cargá el stock real en la tab "Raw Materials". To Acquire = Needed − Inventory redondeado al pack size.
           </div>
           <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
             <table className="w-full text-sm">
