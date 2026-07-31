@@ -10,7 +10,7 @@ type Distributor = Database["public"]["Enums"]["distributor"];
 type Status = Database["public"]["Enums"]["order_status"];
 
 const DISTRIBUTORS: Distributor[] = ["UNFI", "KeHe", "Rainforest", "RFD", "Direct", "Other"];
-const STATUSES: Status[] = ["Open", "Accepted", "Sent to 3PL", "Shipment", "Invoiced"];
+const STATUSES: Status[] = ["Open", "Accepted", "Sent to 3PL", "Shipment", "BOL Confirmed", "Invoiced"];
 const SKU_ITEMS = [
   { key: "wd_cases" as const, label: "W&D", item: "23141" },
   { key: "pw_cases" as const, label: "P&W", item: "77670" },
@@ -50,6 +50,7 @@ const STATUS_STYLES: Record<string, string> = {
   Acknowledged:   "bg-orange-50 text-orange-700 ring-1 ring-inset ring-orange-200",
   "Sent to 3PL":  "bg-yellow-50 text-yellow-700 ring-1 ring-inset ring-yellow-200",
   Shipment:       "bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200",
+  "BOL Confirmed":"bg-teal-50 text-teal-700 ring-1 ring-inset ring-teal-200",
   Invoiced:       "bg-purple-50 text-purple-700 ring-1 ring-inset ring-purple-200",
 };
 
@@ -93,7 +94,7 @@ function StatusCell({ order, onChanged }: { order: Order; onChanged: (o: Order) 
               <button key={s} type="button"
                 className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs font-medium hover:bg-muted ${s === order.status ? "opacity-40 cursor-default" : ""}`}
                 onClick={() => changeTo(s)}>
-                <span className={`inline-block w-2 h-2 rounded-full ${s === "Open" ? "bg-blue-400" : s === "Accepted" || s === "Acknowledged" ? "bg-orange-400" : s === "Sent to 3PL" ? "bg-yellow-400" : s === "Shipment" ? "bg-emerald-400" : "bg-purple-400"}`} />
+                <span className={`inline-block w-2 h-2 rounded-full ${s === "Open" ? "bg-blue-400" : s === "Accepted" || s === "Acknowledged" ? "bg-orange-400" : s === "Sent to 3PL" ? "bg-yellow-400" : s === "Shipment" ? "bg-emerald-400" : s === "BOL Confirmed" ? "bg-teal-400" : "bg-purple-400"}`} />
                 {s}{s === order.status ? " ✓" : ""}
               </button>
             ))}
@@ -113,8 +114,9 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
   const [files, setFiles] = useState<{ name: string; url: string; created_at: string }[]>([]);
   const [uploading, setUploading] = useState(false);
   const [showPS, setShowPS] = useState(false);
+  const [showInvoice, setShowInvoice] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
-  const steps: string[] = ["Open", "Accepted", "Sent to 3PL", "Shipment", "Invoiced"];
+  const steps: string[] = ["Open", "Accepted", "Sent to 3PL", "Shipment", "BOL Confirmed", "Invoiced"];
   const currentIdx = steps.indexOf(order.status);
 
   // Edit mode
@@ -251,6 +253,13 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
                 className="rounded-lg px-3 py-1 text-xs font-semibold border border-border hover:bg-muted">
                 📋 Packing Slip
               </button>
+              {order.status === "BOL Confirmed" && (
+                <button onClick={() => setShowInvoice(true)}
+                  className="rounded-lg px-3 py-1 text-xs font-semibold text-white"
+                  style={{ backgroundColor: "#1C2340" }}>
+                  📄 Mark as Invoiced
+                </button>
+              )}
               <button onClick={deletePO} disabled={deleting}
                 className="rounded-lg px-3 py-1 text-xs font-semibold text-white bg-red-500 hover:bg-red-600 disabled:opacity-50">
                 {deleting ? "Deleting…" : "Delete PO"}
@@ -1458,7 +1467,7 @@ function renderBodyCell(r: Order, c: (typeof COLUMNS)[number], onChanged: (o: Or
   // CHANGE 5: fill rate colored
   if (c.key === "fill_rate") {
     const v = r.fill_rate;
-    if (v == null || r.status !== "Invoiced") return <span className="text-muted-foreground">—</span>;
+    if (v == null || r.status !== "Invoiced" && r.status !== "BOL Confirmed") return <span className="text-muted-foreground">—</span>;
     const n = Number(v);
     const color = n >= 99 ? "text-emerald-600" : n >= 90 ? "text-orange-500 font-semibold" : "text-red-600 font-bold";
     return <span className={color}>{n.toFixed(1)}%</span>;
@@ -2090,7 +2099,7 @@ function MultiSelect({ label, options, selected, onChange }: {
 function ShipDateCell({ date, status }: { date: string | null; status: Status }) {
   if (!date) return <span className="text-muted-foreground">—</span>;
   // Don't flag ship date if already invoiced — it's done
-  if (status === "Invoiced") {
+  if (status === "Invoiced" || status === "BOL Confirmed") {
     return <span className="font-mono text-xs text-muted-foreground">{date}</span>;
   }
   const today = new Date(); today.setHours(0,0,0,0);
