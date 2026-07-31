@@ -727,7 +727,7 @@ function HomePage() {
       </div>
 
       {/* AI Search */}
-      <AISearch stock={currentStock} orders={rows} />
+      <AISearch stock={currentStock} orders={orders} />
 
       {/* DC Inventory Alerts */}
       <DCAlerts />
