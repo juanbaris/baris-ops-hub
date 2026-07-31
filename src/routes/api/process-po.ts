@@ -49,7 +49,61 @@ export const Route = createFileRoute("/api/process-po")({
           return Response.json({ answer: "Could not get an answer." });
         }
 
-        if (!parsed.success) {
+        // Handle BOL extraction mode — extracts cases, lot numbers, ship date, BOL number
+        if (parsed.success && parsed.data.mode === "bol") {
+          const { fileBase64: bolBase64, mediaType: bolMediaType } = parsed.data;
+          const bolRes = await fetch(ANTHROPIC_API_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+            body: JSON.stringify({
+              model: "claude-sonnet-4-6",
+              max_tokens: 1000,
+              messages: [{
+                role: "user",
+                content: [
+                  { type: bolMediaType === "application/pdf" ? "document" : "image",
+                    source: { type: "base64", media_type: bolMediaType, data: bolBase64 } },
+                  { type: "text", text: `Extract data from this Bill of Lading. Return ONLY valid JSON, no markdown:
+{
+  "bol_number": "string (BOL or PRO number, e.g. A6-247427)",
+  "ship_date": "YYYY-MM-DD",
+  "wd_cases": 0,
+  "pw_cases": 0,
+  "hm_cases": 0,
+  "matcha_cases": 0,
+  "xd_cases": 0,
+  "wm_cases": 0,
+  "lot_numbers": {
+    "wd": "lot number for W&D if present",
+    "pw": "lot number for P&W if present",
+    "hm": "lot number for H&M if present",
+    "matcha": "lot number for Matcha if present",
+    "xd": "lot number for XD if present",
+    "wm": "lot number for W&M if present"
+  }
+}
+SKU item numbers: WD=23141, PW=77670, HM=77671, Matcha=77672, XD=88021, WM=93562.
+Lot numbers are alphanumeric codes like A6155178 or C109980 — look for them near each product line.
+If a BOL has only one lot number, apply it to all SKUs present.
+Use 0 for cases not found. Use empty string for lot numbers not found.` }
+                ]
+              }]
+            }),
+          });
+          if (bolRes.ok) {
+            const bolData = await bolRes.json();
+            const bolText = bolData.content?.[0]?.text ?? "{}";
+            try {
+              const extracted = JSON.parse(bolText.replace(/```json|```/g, "").trim());
+              return Response.json(extracted);
+            } catch {
+              return Response.json({ wd_cases:0, pw_cases:0, hm_cases:0, matcha_cases:0, xd_cases:0, wm_cases:0 });
+            }
+          }
+          return Response.json({ wd_cases:0, pw_cases:0, hm_cases:0, matcha_cases:0, xd_cases:0, wm_cases:0 });
+        }
+
+
           return Response.json(
             { error: "Invalid body: expected fileBase64 and a supported mediaType" },
             { status: 400 },
