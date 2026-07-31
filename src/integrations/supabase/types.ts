@@ -161,6 +161,48 @@ export type Database = {
         }
         Relationships: []
       }
+      dc_inventory: {
+        Row: {
+          at_risk: boolean | null
+          cases_on_hand: number
+          cases_on_po: number
+          cases_on_so: number
+          created_at: string | null
+          dc: string
+          distributor: string
+          id: string
+          sku: string
+          snapshot_date: string
+          weeks_on_hand: number | null
+        }
+        Insert: {
+          at_risk?: boolean | null
+          cases_on_hand?: number
+          cases_on_po?: number
+          cases_on_so?: number
+          created_at?: string | null
+          dc: string
+          distributor: string
+          id?: string
+          sku: string
+          snapshot_date?: string
+          weeks_on_hand?: number | null
+        }
+        Update: {
+          at_risk?: boolean | null
+          cases_on_hand?: number
+          cases_on_po?: number
+          cases_on_so?: number
+          created_at?: string | null
+          dc?: string
+          distributor?: string
+          id?: string
+          sku?: string
+          snapshot_date?: string
+          weeks_on_hand?: number | null
+        }
+        Relationships: []
+      }
       distributor_terms: {
         Row: {
           distributor: Database["public"]["Enums"]["distributor"]
@@ -402,7 +444,13 @@ export type Database = {
         | "Free"
       ip_concept: "Procurement" | "Consumption" | "Damage" | "Transfer"
       movement_type: "In" | "Out"
-      order_status: "Open" | "Acknowledged" | "Shipment" | "Invoiced"
+      order_status:
+        | "Open"
+        | "Acknowledged"
+        | "Shipment"
+        | "Invoiced"
+        | "Accepted"
+        | "Sent to 3PL"
       sku: "XD" | "PW" | "HM" | "WM" | "WD" | "Matcha"
       warehouse: "Lineage Newark" | "Cold Chain" | "Empire" | "Heinlein" | "OOE"
     }
@@ -545,7 +593,14 @@ export const Constants = {
       ],
       ip_concept: ["Procurement", "Consumption", "Damage", "Transfer"],
       movement_type: ["In", "Out"],
-      order_status: ["Open", "Acknowledged", "Shipment", "Invoiced"],
+      order_status: [
+        "Open",
+        "Acknowledged",
+        "Shipment",
+        "Invoiced",
+        "Accepted",
+        "Sent to 3PL",
+      ],
       sku: ["XD", "PW", "HM", "WM", "WD", "Matcha"],
       warehouse: ["Lineage Newark", "Cold Chain", "Empire", "Heinlein", "OOE"],
     },
