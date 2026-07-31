@@ -796,6 +796,21 @@ const ING_PACK_SIZES: Record<string, number> = {
 };
 const ALL_INGS = Object.keys(DEFAULT_ING_PRICES);
 const SKU_MIX_PCT: Record<string,number> = {XD:0.30,PW:0.25,HM:0.18,WM:0.12,WD:0.08,Matcha:0.07};
+
+const FORECAST_MONTHS_OPS = Array.from({ length: 12 }, (_, i) => {
+  const d = new Date();
+  d.setMonth(d.getMonth() + i);
+  return d.toLocaleString("en-US", { month: "short", year: "2-digit" });
+});
+const FORECAST_SKU_OPS: Record<string, number[]> = {
+  XD: [4200,3800,4500,4100,4600,4800,4400,4200,5000,4700,5500,5200],
+  PW: [3500,3200,3800,3400,3900,4000,3600,3500,4100,3800,4500,4200],
+  HM: [2500,2300,2700,2400,2800,2900,2600,2500,3000,2700,3200,3000],
+  WM: [1700,1500,1900,1600,2000,2100,1800,1700,2100,1900,2200,2000],
+  WD: [1100,1000,1300,1100,1400,1500,1200,1100,1400,1300,1600,1400],
+  Matcha: [1000,900,1100,1000,1200,1300,1000,1000,1200,1100,1400,1300],
+};
+
 type ProcSubTab = "schedule"|"stock_proj"|"bom_cogs"|"shopping"|"raw_materials";
 
 function calcCOGSFull(prices: Record<string,number>, costs: typeof DEFAULT_PROD_COSTS, scrap: {raspberry:number;chocolate:number}) {
