@@ -1270,15 +1270,18 @@ function OperationsPage() {
   const [tab, setTab] = useState<OpsTab>("stock");
   const [fpMovements, setFpMovements] = useState<FPRow[]>([]);
   const [ipMovements, setIpMovements] = useState<IPRow[]>([]);
+  const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   async function loadAll() {
-    const [fp, ip] = await Promise.all([
+    const [fp, ip, ord] = await Promise.all([
       supabase.from("fp_movements").select("*").order("movement_date", { ascending: false }),
       supabase.from("ip_movements").select("*").order("movement_date", { ascending: false }),
+      supabase.from("customer_orders").select("*").neq("status", "Invoiced").order("po_date", { ascending: false }),
     ]);
     setFpMovements(fp.data ?? []);
     setIpMovements(ip.data ?? []);
+    setOrders(ord.data ?? []);
     setLoading(false);
   }
 
