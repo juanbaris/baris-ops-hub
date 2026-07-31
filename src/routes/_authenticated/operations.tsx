@@ -26,7 +26,23 @@ type OpsTab = "stock" | "fp" | "ip" | "production" | "cogs" | "procurement";
 function ymd(d = new Date()) { return d.toISOString().slice(0,10); }
 
 // ─── FP Stock Tab ─────────────────────────────────────────────────────────────
-function FPStockTab({ movements, loading }: { movements: FPRow[]; loading: boolean }) {
+const SKU_KEYS: Record<SKU, string> = { XD:"xd_cases", PW:"pw_cases", HM:"hm_cases", WM:"wm_cases", WD:"wd_cases", Matcha:"matcha_cases" };
+const FORECAST_NEXT_MONTH: Record<SKU, number> = { XD:1161, PW:967, HM:696, WM:464, WD:310, Matcha:271 };
+
+function stockStatus(available: number, woh: number) {
+  if (available <= 0) return "OOS";
+  if (woh < 2) return "CRITICAL";
+  if (woh < 4) return "LOW";
+  return "OK";
+}
+const STATUS_PILL: Record<string, string> = {
+  OOS: "bg-red-600 text-white",
+  CRITICAL: "bg-red-100 text-red-700",
+  LOW: "bg-orange-100 text-orange-700",
+  OK: "bg-emerald-100 text-emerald-700",
+};
+
+function FPStockTab({ movements, orders, loading }: { movements: FPRow[]; orders: any[]; loading: boolean }) {
   const stock = useMemo(() => {
     const map: Record<string, { sku: SKU; warehouse: Warehouse; cases: number }> = {};
     for (const r of movements) {
@@ -44,24 +60,36 @@ function FPStockTab({ movements, loading }: { movements: FPRow[]; loading: boole
     return m;
   }, [movements]);
 
+  const committed = useMemo(() => {
+    const m: Record<string, number> = {};
+    const open = (orders ?? []).filter(o => o.status !== "Invoiced");
+    for (const sku of SKUS) m[sku] = open.reduce((s,o) => s + (Number(o[SKU_KEYS[sku]]) || 0), 0);
+    return m;
+  }, [orders]);
+
   return (
     <div className="space-y-5">
       {/* SKU summary cards */}
       <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
         {SKUS.map(sku => {
           const qty = Math.round(bySku[sku] ?? 0);
-          const isCrit = qty < 200;
-          const isLow = qty < 500;
+          const comm = Math.round(committed[sku] ?? 0);
+          const available = qty - comm;
+          const fc = FORECAST_NEXT_MONTH[sku];
+          const woh = fc > 0 ? (available / fc) * 4 : 0;
+          const st = stockStatus(available, woh);
+          const isCrit = st === "CRITICAL" || st === "OOS";
+          const isLow = st === "LOW";
           return (
             <div key={sku} className={`rounded-2xl border p-4 text-center shadow-sm ${isCrit ? "border-red-200 bg-red-50" : isLow ? "border-orange-200 bg-orange-50" : "border-border bg-card"}`}>
               <p className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground">{sku}</p>
               <p className="text-[10px] text-muted-foreground">{SKU_ITEMS[sku]}</p>
               <p className={`text-xl font-bold font-mono mt-1 ${isCrit ? "text-red-600" : isLow ? "text-orange-500" : ""}`} style={!isCrit && !isLow ? {color:"#1C2340"} : {}}>
-                {qty.toLocaleString()}
+                {available.toLocaleString()}
               </p>
-              <p className="text-[10px] text-muted-foreground">cases</p>
-              {isCrit && <p className="text-[9px] font-bold text-red-600 mt-0.5">CRITICAL</p>}
-              {!isCrit && isLow && <p className="text-[9px] font-bold text-orange-500 mt-0.5">LOW</p>}
+              <p className="text-[10px] text-muted-foreground">available cases</p>
+              <p className="text-[11px] font-mono font-semibold mt-0.5" style={{color:"#1C2340"}}>{woh.toFixed(1)} wks</p>
+              <span className={`inline-block mt-1 rounded-full px-2 py-0.5 text-[9px] font-bold ${STATUS_PILL[st]}`}>{st}</span>
             </div>
           );
         })}
@@ -79,28 +107,41 @@ function FPStockTab({ movements, loading }: { movements: FPRow[]; loading: boole
               <th className="px-4 py-2.5 text-left">SKU</th>
               <th className="px-4 py-2.5 text-left">Item #</th>
               <th className="px-4 py-2.5 text-left">Warehouse</th>
-              <th className="px-4 py-2.5 text-right">Cases on hand</th>
+              <th className="px-4 py-2.5 text-right">Stock</th>
+              <th className="px-4 py-2.5 text-right">Committed</th>
+              <th className="px-4 py-2.5 text-right">Available</th>
+              <th className="px-4 py-2.5 text-right">Forecast</th>
+              <th className="px-4 py-2.5 text-right">WoH</th>
               <th className="px-4 py-2.5 text-center">Status</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={5} className="p-8 text-center text-muted-foreground">Loading…</td></tr>
+              <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">Loading…</td></tr>
             ) : stock.filter(s => s.cases > 0).length === 0 ? (
-              <tr><td colSpan={5} className="p-8 text-center text-muted-foreground">No stock data yet</td></tr>
+              <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">No stock data yet</td></tr>
             ) : stock.filter(s => s.cases > 0).map(s => {
-              const isCrit = s.cases < 200;
-              const isLow = s.cases < 500;
+              const skuStock = Math.round(bySku[s.sku] ?? 0);
+              const comm = Math.round(committed[s.sku] ?? 0);
+              // allocate committed proportionally to this warehouse's share of SKU stock
+              const share = skuStock > 0 ? s.cases / skuStock : 0;
+              const rowComm = Math.round(comm * share);
+              const available = Math.round(s.cases) - rowComm;
+              const fc = FORECAST_NEXT_MONTH[s.sku] ?? 0;
+              const woh = fc > 0 ? (available / (fc * share || fc)) * 4 : 0;
+              const st = stockStatus(available, woh);
               return (
                 <tr key={`${s.sku}|${s.warehouse}`} className="border-t border-border/60 hover:bg-muted/20">
                   <td className="px-4 py-2 font-semibold" style={{color:"#1C2340"}}>{s.sku}</td>
                   <td className="px-4 py-2 font-mono text-xs text-muted-foreground">{SKU_ITEMS[s.sku]}</td>
                   <td className="px-4 py-2">{s.warehouse}</td>
                   <td className="px-4 py-2 text-right font-mono font-semibold">{Math.round(s.cases).toLocaleString()}</td>
+                  <td className="px-4 py-2 text-right font-mono text-xs">{rowComm ? rowComm.toLocaleString() : "—"}</td>
+                  <td className="px-4 py-2 text-right font-mono font-semibold">{available.toLocaleString()}</td>
+                  <td className="px-4 py-2 text-right font-mono text-xs text-muted-foreground">{Math.round(fc * share).toLocaleString()}</td>
+                  <td className="px-4 py-2 text-right font-mono text-xs">{woh.toFixed(1)}</td>
                   <td className="px-4 py-2 text-center">
-                    {isCrit ? <span className="rounded-full px-2 py-0.5 text-[10px] font-bold bg-red-100 text-red-700">CRITICAL</span>
-                     : isLow ? <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold bg-orange-100 text-orange-700">LOW</span>
-                     : <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold bg-emerald-100 text-emerald-700">OK</span>}
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${STATUS_PILL[st]}`}>{st}</span>
                   </td>
                 </tr>
               );
