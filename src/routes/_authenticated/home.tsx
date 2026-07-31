@@ -121,6 +121,141 @@ function KPICard({ icon, label, value, sub, subColor }: {
   );
 }
 
+// ─── AI Search ────────────────────────────────────────────────────────────────
+function AISearch({ stock, orders }: { stock: Record<string, number>; orders: Order[] }) {
+  const [query, setQuery] = useState("");
+  const [answer, setAnswer] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function ask() {
+    if (!query.trim()) return;
+    setLoading(true);
+    setAnswer(null);
+
+    // Build context from live data
+    const stockSummary = Object.entries(stock)
+      .map(([sku, cases]) => `${sku}: ${Math.round(cases)} cases`)
+      .join(", ");
+
+    const openOrders = orders.filter(o => o.status !== "Invoiced");
+    const invoicedThisMonth = orders.filter(o => {
+      if (o.status !== "Invoiced" || !o.invoice_date) return false;
+      const d = new Date(o.invoice_date);
+      const now = new Date();
+      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+    });
+    const revenueThisMonth = invoicedThisMonth.reduce((s, o) => s + (Number(o.net_sales) || 0), 0);
+
+    const ordersContext = orders.slice(0, 50).map(o =>
+      `PO ${o.po_number}: ${o.distributor} ${o.customer} ${o.status} net_sales=$${o.net_sales || 0} po_date=${o.po_date}`
+    ).join("\n");
+
+    const context = `
+BARIS Ops Hub — Live data as of today:
+
+STOCK (Lineage Newark, cases on hand):
+${stockSummary}
+
+OPEN ORDERS (${openOrders.length} total):
+${openOrders.slice(0, 20).map(o => `PO ${o.po_number}: ${o.distributor} ${o.customer} status=${o.status} net_sales=$${o.net_sales || 0}`).join("\n")}
+
+REVENUE THIS MONTH (invoiced): $${Math.round(revenueThisMonth).toLocaleString()}
+
+RECENT ORDERS (last 50):
+${ordersContext}
+
+FORECAST (Normal scenario, cases):
+Aug 2026: 3869, Sep: 8810, Oct: 4524, Nov: 1548, Dec: 7917
+Jan 2027: 1250, Feb: 8334, Mar: 8274, Apr: 9762, May: 4286, Jun: 8750, Jul: 4048
+`;
+
+    try {
+      const response = await fetch("/api/process-po", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "search",
+          query,
+          context,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setAnswer(data.answer || "No answer found.");
+      } else {
+        setAnswer("Could not get an answer. Try again.");
+      }
+    } catch {
+      setAnswer("Error connecting to AI.");
+    }
+    setLoading(false);
+  }
+
+  return (
+    <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+      <div className="px-5 py-3 border-b border-border" style={{ backgroundColor: "#1C2340" }}>
+        <p className="text-sm font-bold text-white">✨ Ask AI about your data</p>
+        <p className="text-xs mt-0.5" style={{ color: "#9CA3AF" }}>
+          Ask anything — stock levels, revenue, forecasts, open orders…
+        </p>
+      </div>
+      <div className="p-4">
+        <div className="flex gap-2">
+          <input
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && ask()}
+            placeholder='e.g. "How much XD stock do we have?" or "What was June revenue?"'
+            className="flex-1 rounded-xl border border-border bg-background px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+          />
+          <button onClick={ask} disabled={loading || !query.trim()}
+            className="rounded-xl px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 flex items-center gap-2"
+            style={{ backgroundColor: "#A3224A" }}>
+            {loading ? (
+              <><span className="animate-spin text-base">⟳</span> Thinking…</>
+            ) : (
+              <>Ask →</>
+            )}
+          </button>
+        </div>
+
+        {/* Quick suggestions */}
+        {!answer && !loading && (
+          <div className="flex flex-wrap gap-2 mt-3">
+            {[
+              "How much XD stock do we have?",
+              "What is the forecast for August?",
+              "How many open orders are there?",
+              "What was this month's revenue?",
+              "Which SKU has the lowest stock?",
+            ].map(s => (
+              <button key={s} onClick={() => { setQuery(s); }}
+                className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Answer */}
+        {answer && (
+          <div className="mt-4 rounded-xl border border-border bg-muted/30 px-4 py-3">
+            <div className="flex items-start gap-2">
+              <span className="text-lg flex-shrink-0">💬</span>
+              <p className="text-sm leading-relaxed whitespace-pre-wrap">{answer}</p>
+            </div>
+            <button onClick={() => { setAnswer(null); setQuery(""); }}
+              className="mt-2 text-xs text-muted-foreground hover:text-foreground">
+              Clear ✕
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── DC Inventory Alerts ──────────────────────────────────────────────────────
 function DCAlerts() {
   const [alerts, setAlerts] = useState<any[]>([]);
@@ -590,6 +725,9 @@ function HomePage() {
           })}
         </div>
       </div>
+
+      {/* AI Search */}
+      <AISearch stock={currentStock} orders={rows} />
 
       {/* DC Inventory Alerts */}
       <DCAlerts />
