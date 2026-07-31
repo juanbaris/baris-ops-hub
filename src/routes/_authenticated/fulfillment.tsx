@@ -1691,7 +1691,7 @@ function LogisticsTab({ orders }: { orders: Order[] }) {
               </thead>
               <tbody>
                 {pipelineOrders.length === 0 ? (
-                  <tr><td colSpan={10} className="p-8 text-center text-muted-foreground">No hay POs pendientes</td></tr>
+                  <tr><td colSpan={10} className="p-8 text-center text-muted-foreground">No pending POs</td></tr>
                 ) : pipelineOrders.map(({ order: o, totalCases, pallets, flete, noFlete, total, quien }) => (
                   <tr key={o.id} className="border-t border-border/60 hover:bg-muted/20">
                     <td className="px-4 py-1.5 font-mono text-xs font-semibold" style={{color:"#A3224A"}}>{o.po_number}</td>
