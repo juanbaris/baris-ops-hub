@@ -1417,15 +1417,49 @@ function NewOrderModal({ onClose, onCreated, existingPONumbers }: {
   );
 }
 
-// ─── Shipments Tab ─────────────────────────────────────────────────────────────
-function ShipmentsTab({ orders, onUpdated }: { orders: Order[]; onUpdated: (o: Order) => void }) {
+// ─── Task Queue Tab ────────────────────────────────────────────────────────────
+function TaskQueueTab({ orders, onUpdated }: { orders: Order[]; onUpdated: (o: Order) => void }) {
   const [lineageOrder, setLineageOrder] = useState<Order | null>(null);
   const [bolOrder, setBolOrder] = useState<Order | null>(null);
+  const [detailOrder, setDetailOrder] = useState<Order | null>(null);
   const readyToShip = orders.filter(o => o.status === "Accepted" || o.status === "Acknowledged");
   const inTransit = orders.filter(o => o.status === "Shipment");
+  const readyToInvoice = orders.filter(o => o.status === "BOL Confirmed");
 
   return (
     <div className="space-y-6">
+      <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+        <div className="px-5 py-3 border-b border-border bg-muted/30 flex items-center gap-3">
+          <span className="text-sm font-semibold" style={{ color: "#1C2340" }}>Ready to Invoice</span>
+          <span className="rounded-full bg-purple-100 text-purple-700 text-xs font-semibold px-2 py-0.5">{readyToInvoice.length} orders</span>
+        </div>
+        {readyToInvoice.length === 0 ? <p className="px-5 py-6 text-sm text-muted-foreground">No orders with BOL Confirmed status.</p> : (
+          <table className="w-full text-sm">
+            <thead><tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20">
+              <th className="px-4 py-2 text-left">PO #</th><th className="px-4 py-2 text-left">Customer</th>
+              <th className="px-4 py-2 text-left">Distributor</th><th className="px-4 py-2 text-left">BOL Date</th>
+              <th className="px-4 py-2 text-right">Cases</th><th className="px-4 py-2 text-right">Net</th>
+              <th className="px-4 py-2" />
+            </tr></thead>
+            <tbody>{readyToInvoice.map(o => {
+              const total = SKU_ITEMS.reduce((s, sk) => s + (Number(o[sk.key]) || 0), 0);
+              return <tr key={o.id} className="border-t border-border/60 hover:bg-muted/30">
+                <td className="px-4 py-2 font-mono text-xs font-semibold">{o.po_number}</td>
+                <td className="px-4 py-2">{o.customer}</td><td className="px-4 py-2">{o.distributor}</td>
+                <td className="px-4 py-2 text-muted-foreground">{o.bol_date ?? "—"}</td>
+                <td className="px-4 py-2 text-right font-mono font-semibold">{total.toLocaleString()}</td>
+                <td className="px-4 py-2 text-right font-mono text-emerald-600">${Math.round(Number(o.net_sales) || 0).toLocaleString()}</td>
+                <td className="px-4 py-2 text-right">
+                  <button onClick={() => setDetailOrder(o)} className="rounded-lg px-3 py-1 text-xs font-semibold text-white" style={{ backgroundColor: "#1C2340" }}>
+                    Invoice →
+                  </button>
+                </td>
+              </tr>;
+            })}</tbody>
+          </table>
+        )}
+      </div>
+
       <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
         <div className="px-5 py-3 border-b border-border bg-muted/30 flex items-center gap-3">
           <span className="text-sm font-semibold" style={{ color: "#1C2340" }}>Ready to Ship</span>
@@ -1489,6 +1523,7 @@ function ShipmentsTab({ orders, onUpdated }: { orders: Order[]; onUpdated: (o: O
 
       {lineageOrder && <LineageModal order={lineageOrder} onClose={() => setLineageOrder(null)} onSent={o => { onUpdated(o); setLineageOrder(null); }} />}
       {bolOrder && <BOLModal order={bolOrder} onClose={() => setBolOrder(null)} onConfirmed={o => { onUpdated(o); setBolOrder(null); }} />}
+      {detailOrder && <PODetailModal order={detailOrder} onClose={() => setDetailOrder(null)} onUpdated={o => { onUpdated(o); setDetailOrder(null); }} onDelete={() => {}} />}
     </div>
   );
 }
