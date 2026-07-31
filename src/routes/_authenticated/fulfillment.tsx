@@ -1570,7 +1570,7 @@ function LogisticsTab({ orders }: { orders: Order[] }) {
       .filter(o => o.status !== "Invoiced")
       .map(o => {
         const totalCases = [o.wd_cases,o.pw_cases,o.hm_cases,o.matcha_cases,o.xd_cases,o.wm_cases]
-          .reduce((s,v) => s + (Number(v)||0), 0);
+          .reduce<number>((s,v) => s + (Number(v)||0), 0);
         const log = calcLogistics(totalCases, o.customer);
         return { order: o, totalCases, ...log };
       })
