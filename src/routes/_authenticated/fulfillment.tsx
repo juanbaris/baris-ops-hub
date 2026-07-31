@@ -638,6 +638,7 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
 
   async function confirm() {
     setStep("saving");
+    try {
     const today = new Date().toISOString().slice(0, 10);
     const fillRate = computeFillRate();
     const shipped = shipDate || today;
@@ -672,18 +673,28 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
         po_number_ref: order.po_number,
         notes: `BOL ${bolNumber || "—"} · PO ${order.po_number} · Fill ${fillRate}%`,
       }));
-    if (movements.length > 0) await supabase.from("fp_movements").insert(movements);
+    if (movements.length > 0) {
+      const { error: fpErr } = await supabase.from("fp_movements").insert(movements);
+      if (fpErr) toast.error(`FP error: ${fpErr.message}`);
+    }
 
-    const { data: userData } = await supabase.auth.getUser();
-    await supabase.from("audit_log").insert({
-      table_name: "customer_orders", record_id: order.id, action: "bol_confirmed",
-      user_id: userData.user?.id ?? null,
-      old_data: { status: order.status },
-      new_data: { status: "BOL Confirmed", fill_rate: fillRate, bol_cases: bolCases, bol_number: bolNumber, bol_date: shipped },
-    });
+    try {
+      const { data: userData } = await supabase.auth.getUser();
+      await supabase.from("audit_log").insert({
+        table_name: "customer_orders", record_id: order.id, action: "bol_confirmed",
+        user_id: userData.user?.id ?? null,
+        old_data: { status: order.status },
+        new_data: { status: "BOL Confirmed", fill_rate: fillRate, bol_cases: bolCases, bol_number: bolNumber, bol_date: shipped },
+      });
+    } catch { /* audit log is best-effort */ }
+
     onConfirmed(data);
-    toast.success(`BOL confirmed — Fill rate: ${fillRate}%${fillRate < 100 ? " ⚠️" : ""}`);
+    toast.success(`BOL confirmed ✓ Fill rate: ${fillRate}%${fillRate < 100 ? " ⚠️" : ""}`);
     onClose();
+    } catch (e) {
+      toast.error(`Error: ${e instanceof Error ? e.message : "Unknown error"}`);
+      setStep("review");
+    }
   }
 
   const skuMap: [string, keyof typeof bolCases, keyof Order][] = [
