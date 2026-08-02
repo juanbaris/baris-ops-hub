@@ -94,18 +94,20 @@ function calcForecast(
   retailerStores: number[],
   retailerVel: number[],
   retailerEntry: number[],
+  velChains: VelChain[] = DEFAULT_VEL_CHAINS,
+  seasonIdx: Record<number,number> = DEFAULT_SEASON_IDX,
 ) {
   const growth = GROWTH[scenario];
   const base = IMPLIED_ANNUAL_2026 * (1 + growth);
 
   // Velocity delta (constant across all months)
-  const velDelta = VEL_CHAINS.reduce((s,chain,i) => {
+  const velDelta = velChains.reduce((s,chain,i) => {
     if (!velActive[i]) return s;
     return s + Math.round((velNew[i] - chain.velCurrent) * chain.stores * WEEKS_PER_MONTH / UNITS_PER_CASE);
   }, 0);
 
   return FORECAST_MONTHS.map((m,idx) => {
-    const baseCases = Math.round((base/12) * SEASON_IDX[m.month]);
+    const baseCases = Math.round((base/12) * (seasonIdx[m.month] ?? 1));
 
     // Retailer ramp-up deltas
     const acctDelta = NEW_RETAILERS.reduce((s,retailer,ri) => {
@@ -117,7 +119,7 @@ function calcForecast(
     }, 0);
 
     const totalCases = baseCases + velDelta + acctDelta;
-    const budgetCases = Math.round((IMPLIED_ANNUAL_2026 * (1 + GROWTH.Normal) / 12) * SEASON_IDX[m.month]);
+    const budgetCases = Math.round((IMPLIED_ANNUAL_2026 * (1 + GROWTH.Normal) / 12) * (seasonIdx[m.month] ?? 1));
 
     return {
       ...m,
