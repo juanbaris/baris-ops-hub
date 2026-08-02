@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import { generateWeeklyDeck } from "@/lib/weekly-deck";
 import { toast } from "sonner";
+import { useSalesForecast } from "@/hooks/use-sales-forecast";
 
 type Order = Database["public"]["Tables"]["customer_orders"]["Row"];
 type FPMovement = Database["public"]["Tables"]["fp_movements"]["Row"];
@@ -334,6 +335,16 @@ function HomePage() {
   const [period, setPeriod] = useState<"month" | "quarter" | "year" | "ytd">("month");
   const [exporting, setExporting] = useState(false);
 
+  // Budget for forecast months comes live from the Sales module forecast
+  const { forecast: salesForecast } = useSalesForecast();
+  const forecastBudget2026 = useMemo(() => {
+    const map: Record<number, number> = {};
+    for (const f of salesForecast) {
+      if (f.year === 2026) map[f.month] = Math.round(f.revenue);
+    }
+    return map;
+  }, [salesForecast]);
+
   const today = new Date();
   const y = today.getFullYear();
   const m = today.getMonth(); // 0-based
@@ -448,6 +459,13 @@ function HomePage() {
   }, [stock]);
 
   // ── Monthly actual + budget chart ───────────────────────────────────────────
+  // Budget = Sales forecast where available, otherwise budget_lines / fallback
+  const effBudget = useMemo(() => {
+    const b: Record<number, number> = { ...budget };
+    for (const [mn, v] of Object.entries(forecastBudget2026)) b[Number(mn)] = v;
+    return b;
+  }, [budget, forecastBudget2026]);
+
   const monthlySales = useMemo(() => {
     const byMonth: Record<number, number> = {};
     for (const o of invoiced) {
@@ -467,10 +485,10 @@ function HomePage() {
     return MONTHS.map((label, i) => ({
       label,
       actual: Math.round(byMonth[i + 1] ?? 0),
-      budget: Math.round(budget[i + 1] ?? 0),
+      budget: Math.round(effBudget[i + 1] ?? 0),
       open: Math.round(openByMonth[i + 1] ?? 0),
     }));
-  }, [invoiced, orders, budget]);
+  }, [invoiced, orders, effBudget]);
 
   // ── Sales by Quarter ─────────────────────────────────────────────────────────
   const quarterSales = useMemo(() => {
@@ -483,14 +501,14 @@ function HomePage() {
     }
     for (let qn = 1; qn <= 4; qn++) {
       const months = [qn * 3 - 2, qn * 3 - 1, qn * 3];
-      byQ[qn].budget = months.reduce((s, mn) => s + (budget[mn] ?? 0), 0);
+      byQ[qn].budget = months.reduce((s, mn) => s + (effBudget[mn] ?? 0), 0);
     }
     return [1, 2, 3, 4].map(qn => ({
       label: `Q${qn}`,
       actual: Math.round(byQ[qn].actual),
       budget: Math.round(byQ[qn].budget),
     }));
-  }, [invoiced, budget]);
+  }, [invoiced, effBudget]);
 
   // ── YTD by distributor ───────────────────────────────────────────────────────
   const ytdByDist = useMemo(() => {
@@ -716,7 +734,8 @@ function HomePage() {
         <div className="px-5 pb-5 pt-2 border-t border-border">
           <p className="text-xs text-muted-foreground mb-3">
             CSV format: <code className="bg-muted px-1 rounded text-xs">year, month_num, month, budget_gross, budget_net</code>.
-            Replaces all budget rows for the uploaded year. Current budget: 2026 Best Estimate.
+            Replaces all budget rows for the uploaded year. Months covered by the Sales forecast
+            (Aug 2026 onward) always use the live forecast from the Sales module.
           </p>
           <BudgetUploader onUploaded={() => window.location.reload()} />
         </div>
