@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { PageHeader } from "@/components/app-shell";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
+import { useSalesForecast } from "@/hooks/use-sales-forecast";
 
 type FPRow = Database["public"]["Tables"]["fp_movements"]["Row"];
 type IPRow = Database["public"]["Tables"]["ip_movements"]["Row"];
@@ -27,7 +28,8 @@ function ymd(d = new Date()) { return d.toISOString().slice(0,10); }
 
 // ─── FP Stock Tab ─────────────────────────────────────────────────────────────
 const SKU_KEYS: Record<SKU, string> = { XD:"xd_cases", PW:"pw_cases", HM:"hm_cases", WM:"wm_cases", WD:"wd_cases", Matcha:"matcha_cases" };
-const FORECAST_NEXT_MONTH: Record<SKU, number> = { XD:1161, PW:967, HM:696, WM:464, WD:310, Matcha:271 };
+/** Fallback used only until the shared sales forecast is available. */
+const FORECAST_FALLBACK: Record<SKU, number> = { XD:1161, PW:967, HM:696, WM:464, WD:310, Matcha:271 };
 
 function stockStatus(available: number, woh: number) {
   if (available <= 0) return "OOS";
@@ -75,7 +77,7 @@ function FPStockTab({ movements, orders, loading }: { movements: FPRow[]; orders
           const qty = Math.round(bySku[sku] ?? 0);
           const comm = Math.round(committed[sku] ?? 0);
           const available = qty - comm;
-          const fc = FORECAST_NEXT_MONTH[sku];
+          const fc = forecastNextMonth[sku] ?? 0;
           const woh = fc > 0 ? (available / fc) * 4 : 0;
           const st = stockStatus(available, woh);
           const isCrit = st === "CRITICAL" || st === "OOS";
@@ -127,7 +129,7 @@ function FPStockTab({ movements, orders, loading }: { movements: FPRow[]; orders
               const share = skuStock > 0 ? s.cases / skuStock : 0;
               const rowComm = Math.round(comm * share);
               const available = Math.round(s.cases) - rowComm;
-              const fc = FORECAST_NEXT_MONTH[s.sku] ?? 0;
+              const fc = forecastNextMonth[s.sku] ?? 0;
               const woh = fc > 0 ? (available / (fc * share || fc)) * 4 : 0;
               const st = stockStatus(available, woh);
               return (
@@ -843,14 +845,20 @@ const FORECAST_MONTHS_OPS = Array.from({ length: 12 }, (_, i) => {
   d.setMonth(d.getMonth() + i);
   return d.toLocaleString("en-US", { month: "short", year: "2-digit" });
 });
-const FORECAST_SKU_OPS: Record<string, number[]> = {
-  XD: [4200,3800,4500,4100,4600,4800,4400,4200,5000,4700,5500,5200],
-  PW: [3500,3200,3800,3400,3900,4000,3600,3500,4100,3800,4500,4200],
-  HM: [2500,2300,2700,2400,2800,2900,2600,2500,3000,2700,3200,3000],
-  WM: [1700,1500,1900,1600,2000,2100,1800,1700,2100,1900,2200,2000],
-  WD: [1100,1000,1300,1100,1400,1500,1200,1100,1400,1300,1600,1400],
-  Matcha: [1000,900,1100,1000,1200,1300,1000,1000,1200,1100,1400,1300],
-};
+/** Month keys ("YYYY-M") aligned with FORECAST_MONTHS_OPS labels. */
+const FORECAST_KEYS_OPS = Array.from({ length: 12 }, (_, i) => {
+  const d = new Date();
+  d.setDate(1);
+  d.setMonth(d.getMonth() + i);
+  return `${d.getFullYear()}-${d.getMonth() + 1}`;
+});
+/** Builds the 12-month per-SKU demand from the Sales module forecast. */
+function buildOpsForecast(bySkuMonthKey: Record<string, Record<string, number>>): Record<string, number[]> {
+  return Object.fromEntries(SKUS.map(sku => [
+    sku,
+    FORECAST_KEYS_OPS.map(k => bySkuMonthKey[sku]?.[k] ?? 0),
+  ]));
+}
 
 type ProcSubTab = "schedule"|"stock_proj"|"bom_cogs"|"shopping"|"raw_materials";
 
@@ -874,7 +882,7 @@ function calcCOGSFull(prices: Record<string,number>, costs: typeof DEFAULT_PROD_
   }));
 }
 
-function calcProdSchedule(stockBySku:Record<string,number>, orders:any[], safetyWoh:number, minRun:number, freqMonths:number) {
+function calcProdSchedule(stockBySku:Record<string,number>, orders:any[], safetyWoh:number, minRun:number, freqMonths:number, FORECAST_SKU_OPS:Record<string,number[]>) {
   const SK: Record<string,string>={XD:"xd_cases",PW:"pw_cases",HM:"hm_cases",WM:"wm_cases",WD:"wd_cases",Matcha:"matcha_cases"};
   const committed: Record<string,number>={};
   for(const sku of SKUS) committed[sku]=orders.reduce((s,o)=>s+(Number(o[SK[sku]])||0),0);
@@ -932,7 +940,7 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
     return m;
   },[movements]);
 
-  const {plan,stockProj,ingNeeded} = useMemo(()=>calcProdSchedule(bySku,orders,safetyWoh,minRun,freqMonths),[bySku,orders,safetyWoh,minRun,freqMonths]);
+  const {plan,stockProj,ingNeeded} = useMemo(()=>calcProdSchedule(bySku,orders,safetyWoh,minRun,freqMonths,fcstOps),[bySku,orders,safetyWoh,minRun,freqMonths,fcstOps]);
   const cogs = useMemo(()=>calcCOGSFull(ingPrices,prodCosts,scrap),[ingPrices,prodCosts,scrap]);
 
   const totalByMonth = FORECAST_MONTHS_OPS.map((_,i)=>SKUS.reduce((s,sku)=>s+(plan[sku]?.[i]??0),0));
