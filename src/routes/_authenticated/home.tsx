@@ -29,37 +29,55 @@ const QUOTES = [
 function fmt$(n: number) { return n >= 1000000 ? `$${(n/1000000).toFixed(1)}M` : n >= 1000 ? `$${Math.round(n/1000)}k` : `$${Math.round(n)}`; }
 function fmtFull$(n: number) { return `$${Math.round(n).toLocaleString()}`; }
 
-// ─── Dual bar chart: actual vs budget ────────────────────────────────────────
-function DualBarChart({ data, height = 150 }: {
-  data: { label: string; actual: number; budget: number }[]; height?: number;
+// ─── Series colors ───────────────────────────────────────────────────────────
+const C_ACTUAL = "#7EB53F";  // invoiced sales — green
+const C_BUDGET = "#94A3B8";  // budget (uploaded forecast) — gray
+const C_OPEN   = "#F5A623";  // open orders (not yet invoiced) — yellow
+
+// ─── Grouped bar chart: actual / budget / open ───────────────────────────────
+function GroupedBarChart({ data, height = 150 }: {
+  data: { label: string; actual: number; budget: number; open?: number }[]; height?: number;
 }) {
-  const max = Math.max(...data.flatMap(d => [d.actual, d.budget]), 1);
-  const colW = 52;
-  const barW = 18;
-  const gap = 4;
+  const hasOpen = data.some(d => (d.open ?? 0) > 0);
+  const max = Math.max(...data.flatMap(d => [d.actual, d.budget, d.open ?? 0]), 1);
+  const barW = 11;
+  const gap = 2;
+  const series = hasOpen ? 3 : 2;
+  const colW = series * barW + (series - 1) * gap + 14;
   const totalW = data.length * colW;
+  const top = 14; // room for value labels
   return (
     <div className="space-y-2">
-      <svg viewBox={`0 0 ${totalW} ${height + 28}`} className="w-full" style={{ height: height + 28 }}>
+      <svg viewBox={`0 0 ${totalW} ${height + top + 20}`} className="w-full" style={{ height: height + top + 20 }}>
+        {/* gridlines */}
+        {[0, 0.25, 0.5, 0.75, 1].map(f => (
+          <line key={f} x1={0} x2={totalW} y1={top + height - f * height} y2={top + height - f * height}
+            stroke="#E5E7EB" strokeWidth={0.5} />
+        ))}
         {data.map((d, i) => {
-          const x = i * colW + 4;
-          const actualH = (d.actual / max) * height;
-          const budgetH = (d.budget / max) * height;
+          const x0 = i * colW + 7;
           const isCurrentMonth = i === new Date().getMonth();
+          const bars = [
+            { v: d.actual, c: C_ACTUAL },
+            { v: d.budget, c: C_BUDGET },
+            ...(hasOpen ? [{ v: d.open ?? 0, c: C_OPEN }] : []),
+          ];
           return (
             <g key={d.label}>
-              {/* Budget bar (light gray) */}
-              {d.budget > 0 && <rect x={x + barW + gap} y={height - budgetH} width={barW} height={budgetH} rx={2}
-                fill="#CBD5E1" opacity={0.8} />}
-              {/* Actual bar (burgundy) */}
-              {d.actual > 0 && <rect x={x} y={height - actualH} width={barW} height={actualH} rx={2}
-                fill={isCurrentMonth ? "#A3224A" : "#C4526A"} opacity={0.9} />}
-              {/* Variance dot — red if actual < budget by >10% */}
-              {d.actual > 0 && d.budget > 0 && d.actual < d.budget * 0.9 && (
-                <circle cx={x + barW / 2} cy={height - actualH - 6} r={3} fill="#EF4444" />
-              )}
-              <text x={x + barW + 2} y={height + 14} textAnchor="middle" fontSize={8} fill={isCurrentMonth ? "#A3224A" : "#9CA3AF"}
-                fontWeight={isCurrentMonth ? "bold" : "normal"}>
+              {bars.map((b, bi) => {
+                if (b.v <= 0) return null;
+                const h = (b.v / max) * height;
+                const x = x0 + bi * (barW + gap);
+                return (
+                  <g key={bi}>
+                    <rect x={x} y={top + height - h} width={barW} height={h} rx={1.5} fill={b.c} />
+                    <text x={x + barW / 2} y={top + height - h - 3} textAnchor="middle" fontSize={5.5}
+                      fill="#475569" fontFamily="monospace">{fmt$(b.v)}</text>
+                  </g>
+                );
+              })}
+              <text x={x0 + (series * barW + (series - 1) * gap) / 2} y={top + height + 12} textAnchor="middle"
+                fontSize={7.5} fill={isCurrentMonth ? "#1C2340" : "#9CA3AF"} fontWeight={isCurrentMonth ? "bold" : "normal"}>
                 {d.label}
               </text>
             </g>
@@ -67,9 +85,51 @@ function DualBarChart({ data, height = 150 }: {
         })}
       </svg>
       <div className="flex items-center gap-4 text-xs text-muted-foreground">
-        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: "#A3224A" }} />Actual</span>
-        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-slate-300" />Budget</span>
-        <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-500" />Below target</span>
+        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: C_ACTUAL }} />Invoiced sales</span>
+        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: C_BUDGET }} />Budget</span>
+        {hasOpen && <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: C_OPEN }} />Open orders</span>}
+      </div>
+    </div>
+  );
+}
+
+// ─── Quarter comparison: horizontal actual vs budget with attainment ─────────
+function QuarterCompare({ data }: { data: { label: string; actual: number; budget: number }[] }) {
+  const max = Math.max(...data.flatMap(d => [d.actual, d.budget]), 1);
+  return (
+    <div className="space-y-4">
+      {data.map(d => {
+        const pct = d.budget > 0 ? (d.actual / d.budget) * 100 : null;
+        const tone = pct == null ? "#94A3B8" : pct >= 100 ? "#15803D" : pct >= 90 ? "#B45309" : "#B91C1C";
+        return (
+          <div key={d.label}>
+            <div className="flex items-baseline justify-between mb-1.5">
+              <span className="text-xs font-semibold" style={{ color: "#1C2340" }}>{d.label}</span>
+              <span className="text-[11px] font-mono" style={{ color: tone }}>
+                {pct == null ? "—" : `${Math.round(pct)}% of budget`}
+                {pct != null && <span className="text-muted-foreground"> · {d.actual >= d.budget ? "+" : ""}{fmt$(d.actual - d.budget)}</span>}
+              </span>
+            </div>
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <div className="flex-1 h-3.5 rounded-sm bg-muted/50 overflow-hidden">
+                  <div className="h-full rounded-sm" style={{ width: `${(d.actual / max) * 100}%`, backgroundColor: C_ACTUAL }} />
+                </div>
+                <span className="w-16 text-right text-[11px] font-mono text-foreground">{fmt$(d.actual)}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="flex-1 h-3.5 rounded-sm bg-muted/50 overflow-hidden">
+                  <div className="h-full rounded-sm" style={{ width: `${(d.budget / max) * 100}%`, backgroundColor: C_BUDGET }} />
+                </div>
+                <span className="w-16 text-right text-[11px] font-mono text-muted-foreground">{fmt$(d.budget)}</span>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+      <div className="flex items-center gap-4 text-xs text-muted-foreground pt-1">
+        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: C_ACTUAL }} />Actual</span>
+        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: C_BUDGET }} />Budget</span>
       </div>
     </div>
   );
