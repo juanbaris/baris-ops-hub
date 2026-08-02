@@ -248,26 +248,96 @@ function ActivityTab() {
   const [loading, setLoading] = useState(true);
   const [filterUser, setFilterUser] = useState("all");
   const [filterAction, setFilterAction] = useState("all");
+  const [undoing, setUndoing] = useState<string | null>(null);
 
-  useEffect(() => {
-    (async () => {
-      const { data } = await supabase
-        .from("audit_log")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(100);
-      setLogs(data ?? []);
-      setLoading(false);
-    })();
-  }, []);
+  async function loadLogs() {
+    const { data } = await supabase
+      .from("audit_log")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(100);
+    setLogs(data ?? []);
+    setLoading(false);
+  }
+
+  useEffect(() => { loadLogs(); }, []);
 
   const filtered = useMemo(() => logs.filter(l =>
     (filterUser === "all" || l.user_id === filterUser) &&
     (filterAction === "all" || l.action === filterAction)
   ), [logs, filterUser, filterAction]);
 
-  const userMap: Record<string, typeof TEAM[0]> = {};
-  // We can't map user_id to name easily without profiles join — show initials from action
+  // Determine if a log entry can be undone
+  function canUndo(log: any): boolean {
+    return ["bol_confirmed", "status_change"].includes(log.action) &&
+      log.old_data && log.record_id;
+  }
+
+  async function handleUndo(log: any) {
+    if (!confirm(`Undo "${log.action}" on PO ${log.record_id?.slice(0,8)}…? This will revert the status and delete associated FP movements.`)) return;
+    setUndoing(log.id);
+    try {
+      const old = log.old_data as any;
+      const newD = log.new_data as any;
+
+      if (log.action === "bol_confirmed") {
+        // 1. Revert order status to previous
+        const { error: updErr } = await supabase
+          .from("customer_orders")
+          .update({
+            status: old.status ?? "Shipment",
+            invoice_date: null,
+            fill_rate: null,
+          })
+          .eq("id", log.record_id);
+        if (updErr) throw new Error(updErr.message);
+
+        // 2. Delete fp_movements Out created by this BOL
+        // Find the PO number from the order
+        const { data: orderData } = await supabase
+          .from("customer_orders")
+          .select("po_number")
+          .eq("id", log.record_id)
+          .single();
+
+        if (orderData?.po_number) {
+          const { error: delErr } = await supabase
+            .from("fp_movements")
+            .delete()
+            .eq("po_number_ref", orderData.po_number)
+            .eq("type", "Out")
+            .eq("concept", "Sale");
+          if (delErr) throw new Error(delErr.message);
+        }
+
+        toast.success(`Undone: BOL reverted to ${old.status ?? "Shipment"}, FP movements deleted`);
+
+      } else if (log.action === "status_change") {
+        // Revert just the status
+        const { error: updErr } = await supabase
+          .from("customer_orders")
+          .update({ status: old.status })
+          .eq("id", log.record_id);
+        if (updErr) throw new Error(updErr.message);
+        toast.success(`Undone: status reverted to ${old.status}`);
+      }
+
+      // Log the undo action
+      await supabase.from("audit_log").insert({
+        table_name: log.table_name,
+        record_id: log.record_id,
+        action: "undo",
+        old_data: newD,
+        new_data: old,
+      }).catch(() => {});
+
+      loadLogs();
+    } catch (e: any) {
+      toast.error(`Undo failed: ${e.message}`);
+    }
+    setUndoing(null);
+  }
+
   const actionColor: Record<string, string> = {
     status_change: "bg-purple-100 text-purple-700",
     bol_confirmed: "bg-emerald-100 text-emerald-700",
@@ -275,6 +345,7 @@ function ActivityTab() {
     created: "bg-emerald-100 text-emerald-700",
     updated: "bg-blue-100 text-blue-700",
     deleted: "bg-red-100 text-red-700",
+    undo: "bg-orange-100 text-orange-700",
   };
 
   function exportCSV() {
@@ -292,7 +363,7 @@ function ActivityTab() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-bold" style={{color:"#1C2340"}}>Audit log</h2>
-          <p className="text-sm text-muted-foreground">Immutable action log · 90-day retention</p>
+          <p className="text-sm text-muted-foreground">Action history · ↩ Undo available for BOL and status changes</p>
         </div>
         <button onClick={exportCSV} className="rounded-lg px-4 py-1.5 text-sm font-semibold border border-border hover:bg-muted">
           ↓ Export CSV
@@ -307,6 +378,7 @@ function ActivityTab() {
           <option value="status_change">Status change</option>
           <option value="bol_confirmed">BOL confirmed</option>
           <option value="bol_uploaded">BOL uploaded</option>
+          <option value="undo">Undo</option>
           <option value="created">Created</option>
           <option value="updated">Updated</option>
         </select>
@@ -327,6 +399,7 @@ function ActivityTab() {
             const dt = new Date(log.created_at);
             const timeStr = dt.toLocaleDateString("en-US", { month:"short", day:"numeric" }) + " · " +
               dt.toLocaleTimeString("en-US", { hour:"2-digit", minute:"2-digit" });
+            const undoable = canUndo(log);
             return (
               <div key={i} className="flex items-start gap-3 px-5 py-3 hover:bg-muted/20">
                 <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
@@ -344,6 +417,15 @@ function ActivityTab() {
                       <span className="text-xs text-muted-foreground">
                         {log.new_data.old_value} → <strong>{log.new_data.new_value}</strong>
                       </span>
+                    )}
+                    {undoable && log.action !== "undo" && (
+                      <button
+                        onClick={() => handleUndo(log)}
+                        disabled={undoing === log.id}
+                        className="ml-auto rounded-lg px-2 py-0.5 text-[10px] font-semibold border border-orange-300 text-orange-600 hover:bg-orange-50 disabled:opacity-50 flex items-center gap-1"
+                      >
+                        {undoing === log.id ? "↩ Undoing…" : "↩ Undo"}
+                      </button>
                     )}
                   </div>
                   <div className="text-xs text-muted-foreground mt-0.5 font-mono">{timeStr} · {user?.username ?? log.user_id?.slice(0,8) ?? "system"}</div>
@@ -517,7 +599,7 @@ function SistemaPage() {
   );
 }
 
-export const Route = createFileRoute("/_authenticated/system")({
+export const Route = createFileRoute("/_authenticated/sistema")({
   component: SistemaPage,
   head: () => ({ meta: [{ title: "System · BARIS" }] }),
 });
