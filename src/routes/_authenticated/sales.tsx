@@ -7,7 +7,7 @@ const PRICE_PER_CASE = 37;
 const UNITS_PER_CASE = 8;
 const WEEKS_PER_MONTH = 4.33;
 const IMPLIED_ANNUAL_2026 = 62113;
-const SEASON_IDX: Record<number,number> = {
+const DEFAULT_SEASON_IDX: Record<number,number> = {
   1:0.21,2:1.40,3:1.39,4:1.64,5:0.72,6:1.47,
   7:0.68,8:0.65,9:1.48,10:0.76,11:0.26,12:1.33,
 };
@@ -37,17 +37,22 @@ const FORECAST_SKU_EXACT: Record<string,number[]> = {
   WD:    [310,705,362,124,633,100,667,662,781,343,700,324],
   Matcha:[271,617,317,108,554,88,583,579,683,300,613,283],
 };
-const HISTORICAL = [
-  {label:"May 2026",cases:7522,revenue:294358},
-  {label:"Jun 2026",cases:5581,revenue:212494},
-  {label:"Jul 2026",cases:7176,revenue:277626},
+const HISTORICAL_FULL = [
+  {label:"Jan 2026", cases: 3529, revenue: 135884},
+  {label:"Feb 2026", cases: 4022, revenue: 201332},
+  {label:"Mar 2026", cases: 4620, revenue: 195015},
+  {label:"Apr 2026", cases: 2740, revenue: 111511},
+  {label:"May 2026", cases: 7522, revenue: 294358},
+  {label:"Jun 2026", cases: 5581, revenue: 212494},
+  {label:"Jul 2026", cases: 7176, revenue: 277626},
 ];
 // Velocity Bloque 1
-const VEL_CHAINS = [
-  {name:"Sprouts",stores:404,velCurrent:1.39},
-  {name:"Whole Foods",stores:60,velCurrent:8.09},
-  {name:"GoPuff",stores:80,velCurrent:2.84},
-  {name:"INFRA/Independientes",stores:41,velCurrent:2.15},
+type VelChain = {name:string;stores:number;velCurrent:number;lastWeek:number};
+const DEFAULT_VEL_CHAINS: VelChain[] = [
+  {name:"Sprouts",stores:404,velCurrent:1.39,lastWeek:1.20},
+  {name:"Whole Foods",stores:60,velCurrent:8.09,lastWeek:9.40},
+  {name:"GoPuff",stores:80,velCurrent:2.84,lastWeek:2.10},
+  {name:"INFRA/Independientes",stores:41,velCurrent:2.15,lastWeek:2.00},
 ];
 // New retailers Bloque 2
 const NEW_RETAILERS = [
