@@ -789,6 +789,18 @@ function SalesPage() {
     velChains,seasonIdx,
   ),[scenario,simConfig,velChains,seasonIdx]);
 
+  // Publish the forecast state so other modules (Operations → Procurement
+  // Planning) plan production against the same numbers.
+  useEffect(()=>{
+    const state: ForecastState = {
+      scenario, seasonIdx, velChains,
+      velActive:simConfig.velActive, velNew:simConfig.velNew,
+      retActive:simConfig.retActive, retStores:simConfig.retStores,
+      retVel:simConfig.retVel, retEntry:simConfig.retEntry,
+    };
+    saveForecastState(state);
+  },[scenario,seasonIdx,velChains,simConfig]);
+
   useEffect(()=>{
     if(window.Chart) return;
     const s=document.createElement("script");
