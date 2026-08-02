@@ -330,12 +330,13 @@ function SummaryTab({forecast,scenario,reals}:{forecast:any[];scenario:string;re
 }
 
 // ─── Detalle Tab ──────────────────────────────────────────────────────────────
-type DetalleRange = "all"|"ytd"|"next3"|"rest2026"|"y2027";
+type DetalleRange = "all"|"ytd"|"next3"|"rest2026"|"y2026"|"y2027";
 const RANGE_OPTIONS: {id:DetalleRange;label:string;sub:string}[] = [
   {id:"all",label:"All",sub:"Jan 2026 – Jul 2027"},
   {id:"ytd",label:"Actuals (YTD)",sub:"Jan–Jul 2026"},
   {id:"next3",label:"Next 3 months",sub:"Aug–Oct 2026"},
   {id:"rest2026",label:"Rest of 2026",sub:"Aug–Dec 2026"},
+  {id:"y2026",label:"Full 2026",sub:"Jan–Dec 2026"},
   {id:"y2027",label:"Full 2027",sub:"Jan–Jul 2027"},
 ];
 const NEXT3_LABELS = ["Aug 2026","Sep 2026","Oct 2026"];
@@ -346,13 +347,14 @@ function DetalleTab({forecast,reals,onRealUpdate}:{forecast:any[];reals:Record<s
   const [editVal,setEditVal]=useState("");
   const [range,setRange]=useState<DetalleRange>("all");
 
-  const showHist = range==="all"||range==="ytd";
+  const showHist = range==="all"||range==="ytd"||range==="y2026";
   const histRows = showHist?HISTORICAL_FULL:[];
   const fcstRows = forecast.filter(f=>{
     if(range==="all") return true;
     if(range==="ytd") return false;
     if(range==="next3") return NEXT3_LABELS.includes(f.label);
     if(range==="rest2026") return REST2026_LABELS.includes(f.label);
+    if(range==="y2026") return f.year===2026;
     return f.year===2027;
   });
 
