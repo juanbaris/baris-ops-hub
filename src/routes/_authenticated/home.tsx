@@ -437,12 +437,22 @@ function HomePage() {
       const m = parseInt(o.invoice_date.slice(5, 7));
       byMonth[m] = (byMonth[m] ?? 0) + (Number(o.net_sales) || 0);
     }
+    // Open orders = everything not yet invoiced, bucketed by expected ship date (fallback PO date)
+    const openByMonth: Record<number, number> = {};
+    for (const o of orders) {
+      if (o.status === "Invoiced") continue;
+      const d = o.ship_est_date || o.po_date;
+      if (!d || !d.startsWith("2026")) continue;
+      const mn = parseInt(d.slice(5, 7));
+      openByMonth[mn] = (openByMonth[mn] ?? 0) + (Number(o.net_sales) || 0);
+    }
     return MONTHS.map((label, i) => ({
       label,
       actual: Math.round(byMonth[i + 1] ?? 0),
       budget: Math.round(budget[i + 1] ?? 0),
+      open: Math.round(openByMonth[i + 1] ?? 0),
     }));
-  }, [invoiced, budget]);
+  }, [invoiced, orders, budget]);
 
   // ── Sales by Quarter ─────────────────────────────────────────────────────────
   const quarterSales = useMemo(() => {
@@ -585,10 +595,10 @@ function HomePage() {
           {/* Monthly sales chart actual vs budget */}
           <div className="rounded-xl border border-border p-4">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold" style={{ color: "#1C2340" }}>Monthly Sales · Actual vs Budget 2026</h3>
+              <h3 className="text-sm font-semibold" style={{ color: "#1C2340" }}>Monthly Sales · Invoiced vs Budget vs Open 2026</h3>
               <span className="text-xs text-muted-foreground">$ USD · net sales</span>
             </div>
-            <DualBarChart data={monthlySales} height={140} />
+            <GroupedBarChart data={monthlySales} height={150} />
           </div>
 
           {/* Sales by Quarter */}
@@ -597,7 +607,7 @@ function HomePage() {
               <h3 className="text-sm font-semibold" style={{ color: "#1C2340" }}>Sales by Quarter · 2026</h3>
               <span className="text-xs text-muted-foreground">Actual vs Budget</span>
             </div>
-            <DualBarChart data={quarterSales} height={140} />
+            <QuarterCompare data={quarterSales} />
           </div>
 
           {/* YTD by distributor */}

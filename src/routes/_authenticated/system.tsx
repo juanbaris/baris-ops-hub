@@ -329,7 +329,7 @@ function ActivityTab() {
         action: "undo",
         old_data: newD,
         new_data: old,
-      }).catch(() => {});
+      });
 
       loadLogs();
     } catch (e: any) {
