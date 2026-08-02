@@ -2,6 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
+import { generateWeeklyDeck } from "@/lib/weekly-deck";
+import { toast } from "sonner";
 
 type Order = Database["public"]["Tables"]["customer_orders"]["Row"];
 type FPMovement = Database["public"]["Tables"]["fp_movements"]["Row"];
@@ -35,28 +37,49 @@ const C_BUDGET = "#94A3B8";  // budget (uploaded forecast) — gray
 const C_OPEN   = "#F5A623";  // open orders (not yet invoiced) — yellow
 
 // ─── Grouped bar chart: actual / budget / open ───────────────────────────────
-function GroupedBarChart({ data, height = 150 }: {
-  data: { label: string; actual: number; budget: number; open?: number }[]; height?: number;
+// Drawn in a large coordinate space (1000 wide) so labels stay crisp when scaled.
+function GroupedBarChart({ data, height = 300, highlightIndex, actualLabel = "Invoiced sales" }: {
+  data: { label: string; actual: number; budget: number; open?: number }[];
+  height?: number;
+  highlightIndex?: number;
+  actualLabel?: string;
 }) {
   const hasOpen = data.some(d => (d.open ?? 0) > 0);
-  const max = Math.max(...data.flatMap(d => [d.actual, d.budget, d.open ?? 0]), 1);
-  const barW = 11;
-  const gap = 2;
+  const rawMax = Math.max(...data.flatMap(d => [d.actual, d.budget, d.open ?? 0]), 1);
+  // round axis max up to a nice number
+  const step = Math.pow(10, Math.floor(Math.log10(rawMax))) / 2;
+  const max = Math.ceil(rawMax / step) * step;
+
+  const W = 1000;
+  const axisW = 78;
+  const top = 26;
+  const bottom = 30;
+  const plotW = W - axisW - 12;
+  const colW = plotW / data.length;
   const series = hasOpen ? 3 : 2;
-  const colW = series * barW + (series - 1) * gap + 14;
-  const totalW = data.length * colW;
-  const top = 14; // room for value labels
+  const gap = colW * 0.05;
+  const groupW = colW * 0.72;
+  const barW = (groupW - gap * (series - 1)) / series;
+  const H = height + top + bottom;
+  const ticks = [0, 0.25, 0.5, 0.75, 1];
+
   return (
-    <div className="space-y-2">
-      <svg viewBox={`0 0 ${totalW} ${height + top + 20}`} className="w-full" style={{ height: height + top + 20 }}>
-        {/* gridlines */}
-        {[0, 0.25, 0.5, 0.75, 1].map(f => (
-          <line key={f} x1={0} x2={totalW} y1={top + height - f * height} y2={top + height - f * height}
-            stroke="#E5E7EB" strokeWidth={0.5} />
-        ))}
+    <div className="space-y-3">
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" preserveAspectRatio="xMidYMid meet" style={{ maxHeight: H }}>
+        {ticks.map(f => {
+          const y = top + height - f * height;
+          return (
+            <g key={f}>
+              <line x1={axisW} x2={W - 12} y1={y} y2={y} stroke="#E5E7EB" strokeWidth={1} />
+              <text x={axisW - 10} y={y + 4} textAnchor="end" fontSize={13} fill="#94A3B8" fontFamily="ui-monospace, monospace">
+                {fmt$(max * f)}
+              </text>
+            </g>
+          );
+        })}
         {data.map((d, i) => {
-          const x0 = i * colW + 7;
-          const isCurrentMonth = i === new Date().getMonth();
+          const gx = axisW + i * colW + (colW - groupW) / 2;
+          const isHi = highlightIndex === i;
           const bars = [
             { v: d.actual, c: C_ACTUAL },
             { v: d.budget, c: C_BUDGET },
@@ -67,25 +90,26 @@ function GroupedBarChart({ data, height = 150 }: {
               {bars.map((b, bi) => {
                 if (b.v <= 0) return null;
                 const h = (b.v / max) * height;
-                const x = x0 + bi * (barW + gap);
+                const x = gx + bi * (barW + gap);
                 return (
                   <g key={bi}>
-                    <rect x={x} y={top + height - h} width={barW} height={h} rx={1.5} fill={b.c} />
-                    <text x={x + barW / 2} y={top + height - h - 3} textAnchor="middle" fontSize={5.5}
-                      fill="#475569" fontFamily="monospace">{fmt$(b.v)}</text>
+                    <rect x={x} y={top + height - h} width={barW} height={h} rx={2} fill={b.c} />
+                    <text x={x + barW / 2} y={top + height - h - 7} textAnchor="middle" fontSize={12}
+                      fill="#475569" fontFamily="ui-monospace, monospace">{fmt$(b.v)}</text>
                   </g>
                 );
               })}
-              <text x={x0 + (series * barW + (series - 1) * gap) / 2} y={top + height + 12} textAnchor="middle"
-                fontSize={7.5} fill={isCurrentMonth ? "#1C2340" : "#9CA3AF"} fontWeight={isCurrentMonth ? "bold" : "normal"}>
+              <text x={gx + groupW / 2} y={top + height + 21} textAnchor="middle"
+                fontSize={14} fill={isHi ? "#1C2340" : "#64748B"} fontWeight={isHi ? 700 : 400}>
                 {d.label}
               </text>
             </g>
           );
         })}
+        <line x1={axisW} x2={W - 12} y1={top + height} y2={top + height} stroke="#CBD5E1" strokeWidth={1.5} />
       </svg>
-      <div className="flex items-center gap-4 text-xs text-muted-foreground">
-        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: C_ACTUAL }} />Invoiced sales</span>
+      <div className="flex items-center gap-5 text-xs text-muted-foreground">
+        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: C_ACTUAL }} />{actualLabel}</span>
         <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: C_BUDGET }} />Budget</span>
         {hasOpen && <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: C_OPEN }} />Open orders</span>}
       </div>
@@ -93,43 +117,27 @@ function GroupedBarChart({ data, height = 150 }: {
   );
 }
 
-// ─── Quarter comparison: horizontal actual vs budget with attainment ─────────
+// ─── Quarter comparison: grouped bars + attainment strip ─────────────────────
 function QuarterCompare({ data }: { data: { label: string; actual: number; budget: number }[] }) {
-  const max = Math.max(...data.flatMap(d => [d.actual, d.budget]), 1);
   return (
     <div className="space-y-4">
-      {data.map(d => {
-        const pct = d.budget > 0 ? (d.actual / d.budget) * 100 : null;
-        const tone = pct == null ? "#94A3B8" : pct >= 100 ? "#15803D" : pct >= 90 ? "#B45309" : "#B91C1C";
-        return (
-          <div key={d.label}>
-            <div className="flex items-baseline justify-between mb-1.5">
-              <span className="text-xs font-semibold" style={{ color: "#1C2340" }}>{d.label}</span>
-              <span className="text-[11px] font-mono" style={{ color: tone }}>
-                {pct == null ? "—" : `${Math.round(pct)}% of budget`}
-                {pct != null && <span className="text-muted-foreground"> · {d.actual >= d.budget ? "+" : ""}{fmt$(d.actual - d.budget)}</span>}
-              </span>
-            </div>
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <div className="flex-1 h-3.5 rounded-sm bg-muted/50 overflow-hidden">
-                  <div className="h-full rounded-sm" style={{ width: `${(d.actual / max) * 100}%`, backgroundColor: C_ACTUAL }} />
-                </div>
-                <span className="w-16 text-right text-[11px] font-mono text-foreground">{fmt$(d.actual)}</span>
+      <GroupedBarChart data={data} height={260} actualLabel="Actual sales" />
+      <div className="grid grid-cols-4 gap-3">
+        {data.map(d => {
+          const pct = d.budget > 0 ? (d.actual / d.budget) * 100 : null;
+          const tone = pct == null ? "#94A3B8" : pct >= 100 ? "#15803D" : pct >= 90 ? "#B45309" : "#B91C1C";
+          return (
+            <div key={d.label} className="rounded-xl border border-border px-3 py-2 text-center">
+              <div className="text-[11px] font-semibold" style={{ color: "#1C2340" }}>{d.label}</div>
+              <div className="text-sm font-mono font-bold" style={{ color: tone }}>
+                {pct == null ? "—" : `${Math.round(pct)}%`}
               </div>
-              <div className="flex items-center gap-2">
-                <div className="flex-1 h-3.5 rounded-sm bg-muted/50 overflow-hidden">
-                  <div className="h-full rounded-sm" style={{ width: `${(d.budget / max) * 100}%`, backgroundColor: C_BUDGET }} />
-                </div>
-                <span className="w-16 text-right text-[11px] font-mono text-muted-foreground">{fmt$(d.budget)}</span>
+              <div className="text-[10px] font-mono text-muted-foreground">
+                {pct == null ? "no budget" : `${d.actual >= d.budget ? "+" : ""}${fmt$(d.actual - d.budget)}`}
               </div>
             </div>
-          </div>
-        );
-      })}
-      <div className="flex items-center gap-4 text-xs text-muted-foreground pt-1">
-        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: C_ACTUAL }} />Actual</span>
-        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: C_BUDGET }} />Budget</span>
+          );
+        })}
       </div>
     </div>
   );
@@ -324,6 +332,7 @@ function HomePage() {
   const [quoteIdx] = useState(() => Math.floor(Math.random() * QUOTES.length));
   const [revUnit, setRevUnit] = useState<"usd" | "cases">("usd");
   const [period, setPeriod] = useState<"month" | "quarter" | "year" | "ytd">("month");
+  const [exporting, setExporting] = useState(false);
 
   const today = new Date();
   const y = today.getFullYear();
@@ -410,9 +419,18 @@ function HomePage() {
   }, [invoiced, today]);
 
   const avgFillRate = useMemo(() => {
-    const withFR = invoiced.filter(o => o.fill_rate != null);
-    if (withFR.length === 0) return null;
-    return withFR.reduce((s, o) => s + Number(o.fill_rate), 0) / withFR.length;
+    // Historical baseline: Jan–Jun 2026 orders averaged 96% fill rate.
+    // Orders in that window without a recorded fill rate inherit the 96% baseline,
+    // and the overall average blends that history with recent BOL-confirmed orders.
+    const HISTORICAL_FR = 96;
+    const values: number[] = [];
+    for (const o of invoiced) {
+      if (o.fill_rate != null) { values.push(Number(o.fill_rate)); continue; }
+      const d = o.invoice_date ?? o.po_date;
+      if (d && d >= "2026-01-01" && d <= "2026-06-30") values.push(HISTORICAL_FR);
+    }
+    if (values.length === 0) return null;
+    return values.reduce((s, v) => s + v, 0) / values.length;
   }, [invoiced]);
 
   const openOrders = useMemo(() =>
@@ -588,21 +606,44 @@ function HomePage() {
             <h2 className="text-base font-bold text-white">Weekly Meeting · {MONTHS[today.getMonth()]} {today.getFullYear()}</h2>
             <p className="text-xs mt-0.5" style={{ color: "#9CA3AF" }}>Actual sales · updated to today</p>
           </div>
+          <button
+            onClick={async () => {
+              try {
+                setExporting(true);
+                await generateWeeklyDeck({
+                  monthly: monthlySales,
+                  quarters: quarterSales,
+                  ytdByDist,
+                  year: today.getFullYear(),
+                  asOf: today.toISOString().slice(0, 10),
+                });
+                toast.success("PowerPoint generated");
+              } catch (e) {
+                toast.error(`Could not generate deck: ${(e as Error).message}`);
+              } finally {
+                setExporting(false);
+              }
+            }}
+            disabled={exporting}
+            className="rounded-lg px-4 py-2 text-xs font-semibold text-white shadow-sm disabled:opacity-60"
+            style={{ backgroundColor: "#A3224A" }}>
+            {exporting ? "Generating…" : "⬇ Generate PowerPoint"}
+          </button>
         </div>
 
         <div className="bg-card p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
 
           {/* Monthly sales chart actual vs budget */}
-          <div className="rounded-xl border border-border p-4">
+          <div className="rounded-xl border border-border p-4 md:col-span-2">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold" style={{ color: "#1C2340" }}>Monthly Sales · Invoiced vs Budget vs Open 2026</h3>
               <span className="text-xs text-muted-foreground">$ USD · net sales</span>
             </div>
-            <GroupedBarChart data={monthlySales} height={150} />
+            <GroupedBarChart data={monthlySales} height={320} highlightIndex={today.getMonth()} />
           </div>
 
           {/* Sales by Quarter */}
-          <div className="rounded-xl border border-border p-4">
+          <div className="rounded-xl border border-border p-4 md:col-span-2">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold" style={{ color: "#1C2340" }}>Sales by Quarter · 2026</h3>
               <span className="text-xs text-muted-foreground">Actual vs Budget</span>
