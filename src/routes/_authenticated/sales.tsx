@@ -606,6 +606,10 @@ function SimuladorTab({onConfigChange,velChains}:{onConfigChange:(cfg:any)=>void
   const [retEntry,setRetEntry] = useState(NEW_RETAILERS.map(r=>r.entry));
 
   useEffect(()=>{
+    setVelNew(prev=>velChains.map((c,i)=>prev[i]??c.velCurrent));
+  },[velChains]);
+
+  useEffect(()=>{
     onConfigChange({velActive,velNew,retActive,retStores,retVel,retEntry});
   },[velActive,velNew,retActive,retStores,retVel,retEntry]);
 
