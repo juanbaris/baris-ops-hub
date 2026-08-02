@@ -858,9 +858,11 @@ function SalesPage() {
   const [tab,setTab] = useState<SalesTab>("real");
   const [scenario,setScenario] = useState<"Pessimistic"|"Normal"|"Optimistic">("Normal");
   const [reals,setReals] = useState<Record<string,number>>({});
+  const [seasonIdx,setSeasonIdx] = useState<Record<number,number>>(DEFAULT_SEASON_IDX);
+  const [velChains,setVelChains] = useState<VelChain[]>(DEFAULT_VEL_CHAINS);
   const [simConfig,setSimConfig] = useState<any>({
-    velActive:VEL_CHAINS.map(()=>false),
-    velNew:VEL_CHAINS.map(c=>c.velCurrent),
+    velActive:DEFAULT_VEL_CHAINS.map(()=>false),
+    velNew:DEFAULT_VEL_CHAINS.map(c=>c.velCurrent),
     retActive:NEW_RETAILERS.map(()=>false),
     retStores:NEW_RETAILERS.map(r=>r.stores),
     retVel:NEW_RETAILERS.map(r=>r.vel),
@@ -871,7 +873,8 @@ function SalesPage() {
     scenario,
     simConfig.velActive,simConfig.velNew,
     simConfig.retActive,simConfig.retStores,simConfig.retVel,simConfig.retEntry,
-  ),[scenario,simConfig]);
+    velChains,seasonIdx,
+  ),[scenario,simConfig,velChains,seasonIdx]);
 
   useEffect(()=>{
     if(window.Chart) return;
@@ -926,8 +929,9 @@ function SalesPage() {
       {tab==="resumen"       && <SummaryTab forecast={forecast} scenario={scenario} reals={reals}/>}
       {tab==="detalle"       && <DetalleTab forecast={forecast} reals={reals} onRealUpdate={(l,v)=>setReals(r=>({...r,[l]:v}))}/>}
       {tab==="sku"           && <SKUTab forecast={forecast}/>}
-      {tab==="simulador"     && <SimuladorTab onConfigChange={setSimConfig}/>}
-      {tab==="estacionalidad"&& <SeasonalityTab/>}
+      {tab==="simulador"     && <SimuladorTab onConfigChange={setSimConfig} velChains={velChains}/>}
+      {tab==="estacionalidad"&& <SeasonalityTab seasonIdx={seasonIdx} onSeasonIdxChange={setSeasonIdx}
+                                  velChains={velChains} onVelChainsChange={setVelChains}/>}
     </div>
   );
 }
