@@ -330,16 +330,78 @@ function SummaryTab({forecast,scenario,reals}:{forecast:any[];scenario:string;re
 }
 
 // ─── Detalle Tab ──────────────────────────────────────────────────────────────
+type DetalleRange = "all"|"ytd"|"next3"|"rest2026"|"y2027";
+const RANGE_OPTIONS: {id:DetalleRange;label:string;sub:string}[] = [
+  {id:"all",label:"All",sub:"Jan 2026 – Jul 2027"},
+  {id:"ytd",label:"Actuals (YTD)",sub:"Jan–Jul 2026"},
+  {id:"next3",label:"Next 3 months",sub:"Aug–Oct 2026"},
+  {id:"rest2026",label:"Rest of 2026",sub:"Aug–Dec 2026"},
+  {id:"y2027",label:"Full 2027",sub:"Jan–Jul 2027"},
+];
+const NEXT3_LABELS = ["Aug 2026","Sep 2026","Oct 2026"];
+const REST2026_LABELS = ["Aug 2026","Sep 2026","Oct 2026","Nov 2026","Dec 2026"];
+
 function DetalleTab({forecast,reals,onRealUpdate}:{forecast:any[];reals:Record<string,number>;onRealUpdate:(l:string,v:number)=>void}) {
   const [editing,setEditing]=useState<string|null>(null);
   const [editVal,setEditVal]=useState("");
-  const totalFcst=forecast.reduce((s,f)=>s+f.totalCases,0);
-  const totalBudget=forecast.reduce((s,f)=>s+f.budgetCases,0);
+  const [range,setRange]=useState<DetalleRange>("all");
+
+  const showHist = range==="all"||range==="ytd";
+  const histRows = showHist?HISTORICAL_FULL:[];
+  const fcstRows = forecast.filter(f=>{
+    if(range==="all") return true;
+    if(range==="ytd") return false;
+    if(range==="next3") return NEXT3_LABELS.includes(f.label);
+    if(range==="rest2026") return REST2026_LABELS.includes(f.label);
+    return f.year===2027;
+  });
+
+  const histCases = histRows.reduce((s,h)=>s+h.cases,0);
+  const histRev = histRows.reduce((s,h)=>s+h.revenue,0);
+  const fcstCases = fcstRows.reduce((s,f)=>s+(reals[f.label]??f.totalCases),0);
+  const fcstRev = fcstRows.reduce((s,f)=>s+(reals[f.label]??f.totalCases)*PRICE_PER_CASE,0);
+  const visCases = histCases+fcstCases;
+  const visRev = histRev+fcstRev;
+  const monthCount = histRows.length+fcstRows.length;
+  const totalBudget = fcstRows.reduce((s,f)=>s+f.budgetCases,0);
+  const activeOpt = RANGE_OPTIONS.find(o=>o.id===range)!;
+
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-700">
         💡 Click <strong>Actual cases</strong> to enter actuals at month close.
       </div>
+
+      <div className="flex flex-wrap gap-2">
+        {RANGE_OPTIONS.map(o=>(
+          <button key={o.id} onClick={()=>setRange(o.id)}
+            className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${range===o.id?"text-white":"border border-border text-muted-foreground hover:text-foreground"}`}
+            style={range===o.id?{backgroundColor:"#1C2340"}:{}}>
+            {o.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+        <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2">
+          Selected range: {activeOpt.label} · {activeOpt.sub}
+        </p>
+        <div className="flex flex-wrap items-baseline gap-x-8 gap-y-2">
+          <div>
+            <p className="text-[10px] uppercase text-muted-foreground">Cases forecasted</p>
+            <p className="text-xl font-bold font-mono" style={{color:"#A3224A"}}>{visCases.toLocaleString()}</p>
+          </div>
+          <div>
+            <p className="text-[10px] uppercase text-muted-foreground">Revenue</p>
+            <p className="text-xl font-bold font-mono" style={{color:"#1C2340"}}>${Math.round(visRev/1000).toLocaleString()}K</p>
+          </div>
+          <div>
+            <p className="text-[10px] uppercase text-muted-foreground">Avg $/month</p>
+            <p className="text-xl font-bold font-mono" style={{color:"#1C2340"}}>${monthCount>0?Math.round(visRev/monthCount/1000).toLocaleString():"0"}K</p>
+          </div>
+        </div>
+      </div>
+
       <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
         <table className="w-full text-sm min-w-max">
           <thead>
@@ -358,16 +420,34 @@ function DetalleTab({forecast,reals,onRealUpdate}:{forecast:any[];reals:Record<s
             </tr>
           </thead>
           <tbody>
-            {HISTORICAL.map((h,i)=>(
-              <tr key={i} className="border-t border-border/60 bg-muted/10">
-                <td className="px-4 py-1.5 font-semibold text-muted-foreground">{h.label}</td>
-                <td colSpan={3}/>
-                <td className="px-4 py-1.5 text-right font-mono font-semibold">{h.cases.toLocaleString()}</td>
+            {histRows.map((h,i)=>(
+              <tr key={h.label} className={`border-t border-border/60 bg-muted/10 ${i===histRows.length-1?"border-b-2":""}`}>
+                <td className="px-4 py-1.5 font-semibold" style={{color:"#1C2340"}}>{h.label}</td>
+                <td className="px-4 py-1.5 text-right text-muted-foreground">—</td>
+                <td className="px-4 py-1.5 text-right text-muted-foreground">—</td>
+                <td className="px-4 py-1.5 text-right text-muted-foreground">—</td>
+                <td className="px-4 py-1.5 text-right font-mono font-bold" style={{color:"#1C2340"}}>{h.cases.toLocaleString()}</td>
                 <td className="px-4 py-1.5 text-right font-mono">${Math.round(h.revenue/1000)}K</td>
-                <td colSpan={5} className="text-center text-muted-foreground text-xs">—</td>
+                <td className="px-4 py-1.5 text-right text-muted-foreground">—</td>
+                <td className="px-4 py-1.5 text-right text-muted-foreground">—</td>
+                <td className="px-4 py-1.5 text-right">
+                  <div className="inline-block rounded px-2 py-0.5" style={{backgroundColor:"#ecfdf5"}}>
+                    <span className="block font-mono text-xs font-semibold text-emerald-700">{h.cases.toLocaleString()}</span>
+                    <span className="block text-muted-foreground" style={{fontSize:9}}>actual</span>
+                  </div>
+                </td>
+                <td className="px-4 py-1.5 text-right text-muted-foreground">—</td>
+                <td className="px-4 py-1.5 text-right text-muted-foreground">—</td>
               </tr>
             ))}
-            {forecast.map((f,i)=>{
+            {histRows.length>0&&fcstRows.length>0&&(
+              <tr style={{backgroundColor:"#F5F0E8"}}>
+                <td colSpan={11} className="px-4 py-1 text-[10px] font-bold uppercase tracking-wider border-y-2" style={{color:"#A3224A",borderColor:"#A3224A"}}>
+                  Forecast →
+                </td>
+              </tr>
+            )}
+            {fcstRows.map((f,i)=>{
               const real=reals[f.label];
               const deltaVsBudget=f.totalCases-f.budgetCases;
               const deltaReal=real!=null?real-f.totalCases:null;
@@ -396,7 +476,7 @@ function DetalleTab({forecast,reals,onRealUpdate}:{forecast:any[];reals:Record<s
                     ):(
                       <button onClick={()=>{setEditing(f.label);setEditVal(String(real??""));}}
                         className={`rounded px-2 py-0.5 text-xs font-mono ${real!=null?"font-semibold text-emerald-600 hover:bg-emerald-50":"text-muted-foreground hover:bg-muted border border-dashed border-border"}`}>
-                        {real!=null?real!.toLocaleString():"cargar"}
+                        {real!=null?real!.toLocaleString():"load"}
                       </button>
                     )}
                   </td>
@@ -412,12 +492,12 @@ function DetalleTab({forecast,reals,onRealUpdate}:{forecast:any[];reals:Record<s
           </tbody>
           <tfoot>
             <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
-              <td className="px-4 py-2 text-xs font-semibold" colSpan={4}>TOTAL 12 months</td>
-              <td className="px-4 py-2 text-right font-mono font-bold">{totalFcst.toLocaleString()}</td>
-              <td className="px-4 py-2 text-right font-mono">${Math.round(totalFcst*PRICE_PER_CASE/1000)}K</td>
-              <td className="px-4 py-2 text-right font-mono text-slate-300">${Math.round(totalBudget*PRICE_PER_CASE/1000)}K</td>
-              <td className={`px-4 py-2 text-right font-mono text-xs ${totalFcst>=totalBudget?"text-emerald-400":"text-red-400"}`}>
-                {totalFcst>=totalBudget?"+":""}{(totalFcst-totalBudget).toLocaleString()}
+              <td className="px-4 py-2 text-xs font-semibold" colSpan={4}>TOTAL · {activeOpt.label} ({monthCount} months)</td>
+              <td className="px-4 py-2 text-right font-mono font-bold">{visCases.toLocaleString()}</td>
+              <td className="px-4 py-2 text-right font-mono">${Math.round(visRev/1000).toLocaleString()}K</td>
+              <td className="px-4 py-2 text-right font-mono text-slate-300">{totalBudget>0?`$${Math.round(totalBudget*PRICE_PER_CASE/1000).toLocaleString()}K`:"—"}</td>
+              <td className={`px-4 py-2 text-right font-mono text-xs ${fcstCases>=totalBudget?"text-emerald-400":"text-red-400"}`}>
+                {totalBudget>0?`${fcstCases>=totalBudget?"+":""}${(fcstCases-totalBudget).toLocaleString()}`:"—"}
               </td>
               <td colSpan={3}/>
             </tr>
