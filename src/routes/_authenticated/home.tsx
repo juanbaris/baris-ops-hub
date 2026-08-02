@@ -332,6 +332,7 @@ function HomePage() {
   const [quoteIdx] = useState(() => Math.floor(Math.random() * QUOTES.length));
   const [revUnit, setRevUnit] = useState<"usd" | "cases">("usd");
   const [period, setPeriod] = useState<"month" | "quarter" | "year" | "ytd">("month");
+  const [exporting, setExporting] = useState(false);
 
   const today = new Date();
   const y = today.getFullYear();
