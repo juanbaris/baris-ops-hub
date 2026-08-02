@@ -459,6 +459,13 @@ function HomePage() {
   }, [stock]);
 
   // ── Monthly actual + budget chart ───────────────────────────────────────────
+  // Budget = Sales forecast where available, otherwise budget_lines / fallback
+  const effBudget = useMemo(() => {
+    const b: Record<number, number> = { ...budget };
+    for (const [mn, v] of Object.entries(forecastBudget2026)) b[Number(mn)] = v;
+    return b;
+  }, [budget, forecastBudget2026]);
+
   const monthlySales = useMemo(() => {
     const byMonth: Record<number, number> = {};
     for (const o of invoiced) {
@@ -478,10 +485,10 @@ function HomePage() {
     return MONTHS.map((label, i) => ({
       label,
       actual: Math.round(byMonth[i + 1] ?? 0),
-      budget: Math.round(budget[i + 1] ?? 0),
+      budget: Math.round(effBudget[i + 1] ?? 0),
       open: Math.round(openByMonth[i + 1] ?? 0),
     }));
-  }, [invoiced, orders, budget]);
+  }, [invoiced, orders, effBudget]);
 
   // ── Sales by Quarter ─────────────────────────────────────────────────────────
   const quarterSales = useMemo(() => {
@@ -494,14 +501,14 @@ function HomePage() {
     }
     for (let qn = 1; qn <= 4; qn++) {
       const months = [qn * 3 - 2, qn * 3 - 1, qn * 3];
-      byQ[qn].budget = months.reduce((s, mn) => s + (budget[mn] ?? 0), 0);
+      byQ[qn].budget = months.reduce((s, mn) => s + (effBudget[mn] ?? 0), 0);
     }
     return [1, 2, 3, 4].map(qn => ({
       label: `Q${qn}`,
       actual: Math.round(byQ[qn].actual),
       budget: Math.round(byQ[qn].budget),
     }));
-  }, [invoiced, budget]);
+  }, [invoiced, effBudget]);
 
   // ── YTD by distributor ───────────────────────────────────────────────────────
   const ytdByDist = useMemo(() => {
