@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import { generateWeeklyDeck } from "@/lib/weekly-deck";
 import { toast } from "sonner";
+import { useSalesForecast } from "@/hooks/use-sales-forecast";
 
 type Order = Database["public"]["Tables"]["customer_orders"]["Row"];
 type FPMovement = Database["public"]["Tables"]["fp_movements"]["Row"];
@@ -333,6 +334,16 @@ function HomePage() {
   const [revUnit, setRevUnit] = useState<"usd" | "cases">("usd");
   const [period, setPeriod] = useState<"month" | "quarter" | "year" | "ytd">("month");
   const [exporting, setExporting] = useState(false);
+
+  // Budget for forecast months comes live from the Sales module forecast
+  const { forecast: salesForecast } = useSalesForecast();
+  const forecastBudget2026 = useMemo(() => {
+    const map: Record<number, number> = {};
+    for (const f of salesForecast) {
+      if (f.year === 2026) map[f.month] = Math.round(f.revenue);
+    }
+    return map;
+  }, [salesForecast]);
 
   const today = new Date();
   const y = today.getFullYear();
