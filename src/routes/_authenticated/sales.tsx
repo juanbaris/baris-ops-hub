@@ -597,9 +597,9 @@ function SKUTab({forecast}:{forecast:any[]}) {
 }
 
 // ─── Simulador Tab ────────────────────────────────────────────────────────────
-function SimuladorTab({onConfigChange}:{onConfigChange:(cfg:any)=>void}) {
-  const [velActive,setVelActive] = useState(VEL_CHAINS.map(()=>false));
-  const [velNew,setVelNew] = useState(VEL_CHAINS.map(c=>c.velCurrent));
+function SimuladorTab({onConfigChange,velChains}:{onConfigChange:(cfg:any)=>void;velChains:VelChain[]}) {
+  const [velActive,setVelActive] = useState(velChains.map(()=>false));
+  const [velNew,setVelNew] = useState(velChains.map(c=>c.velCurrent));
   const [retActive,setRetActive] = useState(NEW_RETAILERS.map(()=>false));
   const [retStores,setRetStores] = useState(NEW_RETAILERS.map(r=>r.stores));
   const [retVel,setRetVel] = useState(NEW_RETAILERS.map(r=>r.vel));
@@ -609,7 +609,7 @@ function SimuladorTab({onConfigChange}:{onConfigChange:(cfg:any)=>void}) {
     onConfigChange({velActive,velNew,retActive,retStores,retVel,retEntry});
   },[velActive,velNew,retActive,retStores,retVel,retEntry]);
 
-  const velDeltaTotal = VEL_CHAINS.reduce((s,c,i)=>{
+  const velDeltaTotal = velChains.reduce((s,c,i)=>{
     if(!velActive[i]) return s;
     return s+Math.round((velNew[i]-c.velCurrent)*c.stores*WEEKS_PER_MONTH/UNITS_PER_CASE);
   },0);
@@ -666,7 +666,7 @@ function SimuladorTab({onConfigChange}:{onConfigChange:(cfg:any)=>void}) {
             </tr>
           </thead>
           <tbody>
-            {VEL_CHAINS.map((c,i)=>{
+            {velChains.map((c,i)=>{
               const delta=velActive[i]?Math.round((velNew[i]-c.velCurrent)*c.stores*WEEKS_PER_MONTH/UNITS_PER_CASE):0;
               return (
                 <tr key={i} className={`border-t border-border/60 ${velActive[i]?"bg-emerald-50/20":""}`}>
