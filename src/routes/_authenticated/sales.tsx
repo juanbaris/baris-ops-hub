@@ -757,26 +757,44 @@ function SimuladorTab({onConfigChange,velChains}:{onConfigChange:(cfg:any)=>void
 }
 
 // ─── Seasonality Tab ───────────────────────────────────────────────────────
-function SeasonalityTab() {
+function SeasonalityTab({seasonIdx,onSeasonIdxChange,velChains,onVelChainsChange}:{
+  seasonIdx:Record<number,number>;
+  onSeasonIdxChange:(idx:Record<number,number>)=>void;
+  velChains:VelChain[];
+  onVelChainsChange:(chains:VelChain[])=>void;
+}) {
   const months=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-  const indices=[0.21,1.40,1.39,1.64,0.72,1.47,0.68,0.65,1.48,0.76,0.26,1.33];
-  const maxIdx=Math.max(...indices);
-  const velData=[
-    {chain:"Sprouts",stores:404,t4w:1.39,lw:1.20,monthly:Math.round(404*1.39*WEEKS_PER_MONTH/UNITS_PER_CASE)},
-    {chain:"Whole Foods",stores:60,t4w:8.09,lw:9.40,monthly:Math.round(60*8.09*WEEKS_PER_MONTH/UNITS_PER_CASE)},
-    {chain:"GoPuff",stores:80,t4w:2.84,lw:2.10,monthly:Math.round(80*2.84*WEEKS_PER_MONTH/UNITS_PER_CASE)},
-    {chain:"Kowalski",stores:10,t4w:6.58,lw:6.30,monthly:Math.round(10*6.58*WEEKS_PER_MONTH/UNITS_PER_CASE)},
-    {chain:"INFRA",stores:41,t4w:2.15,lw:2.00,monthly:Math.round(41*2.15*WEEKS_PER_MONTH/UNITS_PER_CASE)},
-  ];
+  const indices=months.map((_,i)=>seasonIdx[i+1]??0);
+  const maxIdx=Math.max(...indices,0.01);
+  const inp="rounded border border-border bg-background px-1.5 py-0.5 text-xs font-mono text-center focus:outline-none focus:ring-1 focus:ring-primary/30";
+
+  function setIdx(month:number,v:number){onSeasonIdxChange({...seasonIdx,[month]:v});}
+  function setChain(i:number,patch:Partial<VelChain>){
+    onVelChainsChange(velChains.map((c,j)=>j===i?{...c,...patch}:c));
+  }
+  function resetChain(i:number){
+    onVelChainsChange(velChains.map((c,j)=>j===i?{...DEFAULT_VEL_CHAINS[i]}:c));
+  }
+
   return (
     <div className="space-y-5">
       <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-        <h3 className="text-sm font-bold mb-1" style={{color:"#1C2340"}}>Seasonality indices — source: 2025 actual</h3>
-        <p className="text-xs text-muted-foreground mb-5">Distributor PO cycles, not shopper consumption. 1.0 = average</p>
-        <div className="flex items-end gap-2 h-32">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h3 className="text-sm font-bold mb-1" style={{color:"#1C2340"}}>Seasonality indices — source: 2025 actual</h3>
+            <p className="text-xs text-muted-foreground mb-5">Distributor PO cycles, not shopper consumption. 1.0 = average · editable</p>
+          </div>
+          <button onClick={()=>onSeasonIdxChange({...DEFAULT_SEASON_IDX})}
+            className="rounded-full border border-border px-3 py-1 text-xs font-semibold text-muted-foreground hover:text-foreground">
+            Reset to default
+          </button>
+        </div>
+        <div className="flex items-end gap-2 h-40">
           {indices.map((v,i)=>(
             <div key={i} className="flex-1 flex flex-col items-center gap-1">
-              <span className="text-[10px] font-mono font-semibold" style={{color:v>=1.3?"#A3224A":v<=0.4?"#9CA3AF":"#1C2340"}}>{v}</span>
+              <input type="number" step="0.01" min={0} value={v}
+                onChange={e=>setIdx(i+1,parseFloat(e.target.value)||0)}
+                className={inp} style={{width:60}}/>
               <div className="w-full rounded-t" style={{height:`${(v/maxIdx)*80}px`,backgroundColor:v>=1.3?"#A3224A":v<=0.4?"#E5E7EB":"#1C2340",minHeight:4}}/>
               <span className="text-[9px] text-muted-foreground">{months[i]}</span>
             </div>
@@ -785,26 +803,47 @@ function SeasonalityTab() {
       </div>
       <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
         <div className="px-5 py-3 border-b border-border bg-muted/30">
-          <p className="text-sm font-semibold" style={{color:"#1C2340"}}>Velocidad por cadena — Jul 2026 (Orda/Fron)</p>
+          <p className="text-sm font-semibold" style={{color:"#1C2340"}}>Velocity by chain — editable</p>
         </div>
         <table className="w-full text-sm">
           <thead>
             <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
-              <th className="px-4 py-2.5 text-left">Cadena</th>
+              <th className="px-4 py-2.5 text-left">Chain</th>
               <th className="px-4 py-2.5 text-right">Stores</th>
               <th className="px-4 py-2.5 text-right">T4W</th>
               <th className="px-4 py-2.5 text-right">Last week</th>
               <th className="px-4 py-2.5 text-right">Est. cases/month</th>
+              <th className="px-4 py-2.5 text-center">Reset</th>
             </tr>
           </thead>
           <tbody>
-            {velData.map((v,i)=>(
+            {velChains.map((c,i)=>(
               <tr key={i} className="border-t border-border/60 hover:bg-muted/20">
-                <td className="px-4 py-2 font-semibold" style={{color:"#1C2340"}}>{v.chain}</td>
-                <td className="px-4 py-2 text-right font-mono">{v.stores}</td>
-                <td className="px-4 py-2 text-right font-mono font-semibold">{v.t4w}</td>
-                <td className="px-4 py-2 text-right font-mono text-muted-foreground">{v.lw}</td>
-                <td className="px-4 py-2 text-right font-mono text-emerald-600 font-semibold">{v.monthly.toLocaleString()}</td>
+                <td className="px-4 py-2 font-semibold" style={{color:"#1C2340"}}>{c.name}</td>
+                <td className="px-4 py-2 text-right">
+                  <input type="number" min={0} value={c.stores}
+                    onChange={e=>setChain(i,{stores:parseInt(e.target.value)||0})}
+                    className={`${inp} w-20 text-right`}/>
+                </td>
+                <td className="px-4 py-2 text-right">
+                  <input type="number" step="0.01" min={0} value={c.velCurrent}
+                    onChange={e=>setChain(i,{velCurrent:parseFloat(e.target.value)||0})}
+                    className={`${inp} w-20 text-right`}/>
+                </td>
+                <td className="px-4 py-2 text-right">
+                  <input type="number" step="0.01" min={0} value={c.lastWeek}
+                    onChange={e=>setChain(i,{lastWeek:parseFloat(e.target.value)||0})}
+                    className={`${inp} w-20 text-right`}/>
+                </td>
+                <td className="px-4 py-2 text-right font-mono text-emerald-600 font-semibold">
+                  {Math.round(c.stores*c.velCurrent*WEEKS_PER_MONTH/UNITS_PER_CASE).toLocaleString()}
+                </td>
+                <td className="px-4 py-2 text-center">
+                  <button onClick={()=>resetChain(i)}
+                    className="rounded-full border border-border px-2.5 py-0.5 text-[11px] font-semibold text-muted-foreground hover:text-foreground">
+                    Reset
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
