@@ -329,7 +329,7 @@ function ActivityTab() {
         action: "undo",
         old_data: newD,
         new_data: old,
-      }).catch(() => {});
+      });
 
       loadLogs();
     } catch (e: any) {
@@ -599,7 +599,7 @@ function SistemaPage() {
   );
 }
 
-export const Route = createFileRoute("/_authenticated/sistema")({
+export const Route = createFileRoute("/_authenticated/system")({
   component: SistemaPage,
   head: () => ({ meta: [{ title: "System · BARIS" }] }),
 });
