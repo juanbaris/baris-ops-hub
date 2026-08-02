@@ -40,55 +40,6 @@ const ALL_MONTHS_REAL = [
   "Jan 2027","Feb 2027","Mar 2027","Apr 2027","May 2027","Jun 2027","Jul 2027",
 ];
 
-// ─── Forecast calculation ─────────────────────────────────────────────────────
-function calcForecast(
-  scenario: "Pessimistic"|"Normal"|"Optimistic",
-  velActive: boolean[],
-  velNew: number[],
-  retailerActive: boolean[],
-  retailerStores: number[],
-  retailerVel: number[],
-  retailerEntry: number[],
-  velChains: VelChain[] = DEFAULT_VEL_CHAINS,
-  seasonIdx: Record<number,number> = DEFAULT_SEASON_IDX,
-) {
-  const growth = GROWTH[scenario];
-  const base = IMPLIED_ANNUAL_2026 * (1 + growth);
-
-  // Velocity delta (constant across all months)
-  const velDelta = velChains.reduce((s,chain,i) => {
-    if (!velActive[i]) return s;
-    return s + Math.round((velNew[i] - chain.velCurrent) * chain.stores * WEEKS_PER_MONTH / UNITS_PER_CASE);
-  }, 0);
-
-  return FORECAST_MONTHS.map((m,idx) => {
-    const baseCases = Math.round((base/12) * (seasonIdx[m.month] ?? 1));
-
-    // Retailer ramp-up deltas
-    const acctDelta = NEW_RETAILERS.reduce((s,retailer,ri) => {
-      if (!retailerActive[ri]) return s;
-      const monthsIn = idx - (retailerEntry[ri] - 1);
-      if (monthsIn < 0) return s;
-      const ramp = monthsIn === 0 ? 0.4 : monthsIn === 1 ? 0.7 : 1.0;
-      return s + Math.round(retailerStores[ri] * retailerVel[ri] * WEEKS_PER_MONTH / UNITS_PER_CASE * ramp);
-    }, 0);
-
-    const totalCases = baseCases + velDelta + acctDelta;
-    const budgetCases = Math.round((IMPLIED_ANNUAL_2026 * (1 + GROWTH.Normal) / 12) * (seasonIdx[m.month] ?? 1));
-
-    return {
-      ...m,
-      baseCases,
-      velDelta,
-      acctDelta,
-      totalCases,
-      revenue: Math.round(totalCases * PRICE_PER_CASE),
-      budget: Math.round(budgetCases * PRICE_PER_CASE),
-      budgetCases,
-    };
-  });
-}
-
 type SalesTab = "real"|"resumen"|"detalle"|"sku"|"simulador"|"estacionalidad";
 declare global { interface Window { Chart: any } }
 
@@ -469,11 +420,12 @@ function DetalleTab({forecast,reals,onRealUpdate}:{forecast:any[];reals:Record<s
 function SKUTab({forecast}:{forecast:any[]}) {
   const SKU_COLORS: Record<string,string> = {XD:"#1C2340",PW:"#A3224A",HM:"#3B82F6",WM:"#10B981",WD:"#F59E0B",Matcha:"#8B5CF6"};
   const SKUS = ["XD","PW","HM","WM","WD","Matcha"];
+  const skuMonths = useMemo(()=>skuForecast(forecast as any),[forecast]);
   const skuData = useMemo(()=>SKUS.map(sku=>({
     sku,pct:SKU_MIX[sku],
-    months:forecast.map((_,i)=>FORECAST_SKU_EXACT[sku]?.[i]??0),
-    total:FORECAST_SKU_EXACT[sku]?.reduce((a,b)=>a+b,0)??0,
-  })),[forecast]);
+    months:skuMonths[sku]??[],
+    total:(skuMonths[sku]??[]).reduce((a:number,b:number)=>a+b,0),
+  })),[forecast,skuMonths]);
   return (
     <div className="space-y-5">
       <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
