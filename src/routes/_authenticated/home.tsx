@@ -605,21 +605,44 @@ function HomePage() {
             <h2 className="text-base font-bold text-white">Weekly Meeting · {MONTHS[today.getMonth()]} {today.getFullYear()}</h2>
             <p className="text-xs mt-0.5" style={{ color: "#9CA3AF" }}>Actual sales · updated to today</p>
           </div>
+          <button
+            onClick={async () => {
+              try {
+                setExporting(true);
+                await generateWeeklyDeck({
+                  monthly: monthlySales,
+                  quarters: quarterSales,
+                  ytdByDist,
+                  year: today.getFullYear(),
+                  asOf: today.toISOString().slice(0, 10),
+                });
+                toast.success("PowerPoint generated");
+              } catch (e) {
+                toast.error(`Could not generate deck: ${(e as Error).message}`);
+              } finally {
+                setExporting(false);
+              }
+            }}
+            disabled={exporting}
+            className="rounded-lg px-4 py-2 text-xs font-semibold text-white shadow-sm disabled:opacity-60"
+            style={{ backgroundColor: "#A3224A" }}>
+            {exporting ? "Generating…" : "⬇ Generate PowerPoint"}
+          </button>
         </div>
 
         <div className="bg-card p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
 
           {/* Monthly sales chart actual vs budget */}
-          <div className="rounded-xl border border-border p-4">
+          <div className="rounded-xl border border-border p-4 md:col-span-2">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold" style={{ color: "#1C2340" }}>Monthly Sales · Invoiced vs Budget vs Open 2026</h3>
               <span className="text-xs text-muted-foreground">$ USD · net sales</span>
             </div>
-            <GroupedBarChart data={monthlySales} height={150} />
+            <GroupedBarChart data={monthlySales} height={320} highlightIndex={today.getMonth()} />
           </div>
 
           {/* Sales by Quarter */}
-          <div className="rounded-xl border border-border p-4">
+          <div className="rounded-xl border border-border p-4 md:col-span-2">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold" style={{ color: "#1C2340" }}>Sales by Quarter · 2026</h3>
               <span className="text-xs text-muted-foreground">Actual vs Budget</span>
