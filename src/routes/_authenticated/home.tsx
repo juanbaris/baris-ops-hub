@@ -734,7 +734,8 @@ function HomePage() {
         <div className="px-5 pb-5 pt-2 border-t border-border">
           <p className="text-xs text-muted-foreground mb-3">
             CSV format: <code className="bg-muted px-1 rounded text-xs">year, month_num, month, budget_gross, budget_net</code>.
-            Replaces all budget rows for the uploaded year. Current budget: 2026 Best Estimate.
+            Replaces all budget rows for the uploaded year. Months covered by the Sales forecast
+            (Aug 2026 onward) always use the live forecast from the Sales module.
           </p>
           <BudgetUploader onUploaded={() => window.location.reload()} />
         </div>
