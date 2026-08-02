@@ -166,6 +166,13 @@ function RealMonthlyTab({onRealUpdate}:{onRealUpdate:(label:string,cases:number)
   },0);
   const ytdRev=["Jan 2026","Feb 2026","Mar 2026","Apr 2026","May 2026","Jun 2026","Jul 2026"].reduce((s,m)=>s+(parseInt(data[m]?.net_sales)||0),0);
 
+  const YTD_MONTHS=["Jan 2026","Feb 2026","Mar 2026","Apr 2026","May 2026","Jun 2026","Jul 2026"];
+  const SKU_FIELDS:(keyof MonthReal)[]=["xd","pw","hm","wm","wd","matcha"];
+  const ytdBySku:Record<string,number>={};
+  for(const f of SKU_FIELDS){
+    ytdBySku[f]=YTD_MONTHS.reduce((s,m)=>(saved.has(m)?s+(parseInt(data[m]?.[f] as string)||0):s),0);
+  }
+
   const inp="rounded border border-border bg-background px-1.5 py-0.5 text-xs font-mono w-full focus:outline-none focus:ring-1 focus:ring-primary/30";
   return (
     <div className="space-y-5">
@@ -232,7 +239,9 @@ function RealMonthlyTab({onRealUpdate}:{onRealUpdate:(label:string,cases:number)
             <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
               <td className="px-3 py-2 font-semibold text-xs">TOTAL YTD</td>
               <td className="px-3 py-2 text-right font-mono">${ytdRev.toLocaleString()}</td>
-              <td colSpan={6}/>
+              {SKU_FIELDS.map(f=>(
+                <td key={f} className="px-3 py-2 text-right font-mono font-bold text-emerald-400">{ytdBySku[f]?ytdBySku[f].toLocaleString():"—"}</td>
+              ))}
               <td className="px-3 py-2 text-right font-mono font-bold text-emerald-400">{ytdCases.toLocaleString()}</td>
               <td className="px-3 py-2 text-right font-mono text-slate-300">{ytdCases>0?`$${(ytdRev/ytdCases).toFixed(2)}`:"—"}</td>
               <td/>
