@@ -3,40 +3,13 @@ import { useEffect, useRef, useState, useMemo } from "react";
 import { toast } from "sonner";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const PRICE_PER_CASE = 37;
-const UNITS_PER_CASE = 8;
-const WEEKS_PER_MONTH = 4.33;
-const IMPLIED_ANNUAL_2026 = 62113;
-const DEFAULT_SEASON_IDX: Record<number,number> = {
-  1:0.21,2:1.40,3:1.39,4:1.64,5:0.72,6:1.47,
-  7:0.68,8:0.65,9:1.48,10:0.76,11:0.26,12:1.33,
-};
-const GROWTH = { Pessimistic:0.0, Normal:0.15, Optimistic:0.25 };
-const SKU_MIX: Record<string,number> = {XD:0.30,PW:0.25,HM:0.18,WM:0.12,WD:0.08,Matcha:0.07};
-const FORECAST_MONTHS = [
-  {label:"Aug 2026",month:8,year:2026,yoy2025:1384},
-  {label:"Sep 2026",month:9,year:2026,yoy2025:2728},
-  {label:"Oct 2026",month:10,year:2026,yoy2025:1386},
-  {label:"Nov 2026",month:11,year:2026,yoy2025:489},
-  {label:"Dec 2026",month:12,year:2026,yoy2025:2452},
-  {label:"Jan 2027",month:1,year:2027,yoy2025:388},
-  {label:"Feb 2027",month:2,year:2027,yoy2025:2582},
-  {label:"Mar 2027",month:3,year:2027,yoy2025:2562},
-  {label:"Apr 2027",month:4,year:2027,yoy2025:3021},
-  {label:"May 2027",month:5,year:2027,yoy2025:1314},
-  {label:"Jun 2027",month:6,year:2027,yoy2025:2710},
-  {label:"Jul 2027",month:7,year:2027,yoy2025:1242},
-];
+import {
+  PRICE_PER_CASE, UNITS_PER_CASE, WEEKS_PER_MONTH, IMPLIED_ANNUAL_2026,
+  DEFAULT_SEASON_IDX, GROWTH, SKU_MIX, FORECAST_MONTHS,
+  DEFAULT_VEL_CHAINS, NEW_RETAILERS, calcForecast, skuForecast,
+  saveForecastState, type VelChain, type ForecastState,
+} from "@/lib/sales-forecast";
 
-// Exact forecast from Excel Forecast por SKU sheet
-const FORECAST_SKU_EXACT: Record<string,number[]> = {
-  XD:    [1161,2643,1357,464,2375,375,2500,2482,2929,1286,2625,1214],
-  PW:    [967,2203,1131,387,1979,313,2084,2069,2441,1072,2188,1012],
-  HM:    [696,1586,814,279,1425,225,1500,1489,1757,771,1575,729],
-  WM:    [464,1057,543,186,950,150,1000,993,1171,514,1050,486],
-  WD:    [310,705,362,124,633,100,667,662,781,343,700,324],
-  Matcha:[271,617,317,108,554,88,583,579,683,300,613,283],
-};
 const HISTORICAL_FULL = [
   {label:"Jan 2026", cases: 3529, revenue: 135884},
   {label:"Feb 2026", cases: 4022, revenue: 201332},
@@ -45,24 +18,6 @@ const HISTORICAL_FULL = [
   {label:"May 2026", cases: 7522, revenue: 294358},
   {label:"Jun 2026", cases: 5581, revenue: 212494},
   {label:"Jul 2026", cases: 7176, revenue: 277626},
-];
-// Velocity Bloque 1
-type VelChain = {name:string;stores:number;velCurrent:number;lastWeek:number};
-const DEFAULT_VEL_CHAINS: VelChain[] = [
-  {name:"Sprouts",stores:404,velCurrent:1.39,lastWeek:1.20},
-  {name:"Whole Foods",stores:60,velCurrent:8.09,lastWeek:9.40},
-  {name:"GoPuff",stores:80,velCurrent:2.84,lastWeek:2.10},
-  {name:"INFRA/Independientes",stores:41,velCurrent:2.15,lastWeek:2.00},
-];
-// New retailers Bloque 2
-const NEW_RETAILERS = [
-  {name:"Whole Foods expansion",stores:100,vel:8.09,entry:3,note:"Today 60 stores"},
-  {name:"Raley's",stores:80,vel:1.50,entry:4,note:"Regional NoCal/Nevada"},
-  {name:"Kroger",stores:300,vel:1.50,entry:6,note:"Mayor chain convencional"},
-  {name:"Walmart",stores:500,vel:1.20,entry:8,note:"Nacional Frozen"},
-  {name:"Costco",stores:50,vel:3.00,entry:6,note:"Club — alta velocidad"},
-  {name:"Publix",stores:150,vel:1.50,entry:9,note:"South East"},
-  {name:"Target",stores:400,vel:1.20,entry:10,note:"Nacional convencional"},
 ];
 const DIST_MIX = [
   {dist:"KeHE",pct:0.55,color:"#A3224A"},
