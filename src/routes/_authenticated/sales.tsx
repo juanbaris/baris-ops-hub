@@ -260,18 +260,17 @@ function SummaryTab({forecast,scenario,reals}:{forecast:any[];scenario:string;re
     if(!mainCanvas.current||!window.Chart) return;
     const existing = (mainCanvas.current as any)._chart;
     if(existing) existing.destroy();
-    const allMonths=[...HISTORICAL.map(h=>h.label),...forecast.map(f=>f.label)];
-    const realVals=[...HISTORICAL.map(h=>h.cases),...forecast.map(f=>reals[f.label]??null)];
-    const fcstVals=[...HISTORICAL.map(()=>null),...forecast.map(f=>reals[f.label]??f.totalCases)];
-    const budgetVals=[...HISTORICAL.map(()=>null),...forecast.map(f=>f.budgetCases)];
+    const allMonths=[...HISTORICAL_FULL.map(h=>h.label),...forecast.map(f=>f.label)];
+    const caseVals=[...HISTORICAL_FULL.map(h=>h.cases),...forecast.map(f=>reals[f.label]??f.totalCases)];
+    const colors=[...HISTORICAL_FULL.map(()=>"#A3224A"),...forecast.map(()=>"rgba(163,34,74,0.45)")];
+    const budgetVals=[...HISTORICAL_FULL.map(()=>null),...forecast.map(f=>f.budgetCases)];
     const chart = new window.Chart(mainCanvas.current,{
       type:"bar",
       data:{labels:allMonths,datasets:[
-        {label:"Real",data:realVals,backgroundColor:"#A3224A",borderRadius:3},
-        {label:"Forecast",data:fcstVals,backgroundColor:"rgba(163,34,74,0.35)",borderRadius:3},
+        {label:"Cases",data:caseVals,backgroundColor:colors,borderRadius:3},
         {type:"line",label:"Budget",data:budgetVals,borderColor:"#9CA3AF",borderDash:[4,3],pointRadius:3,fill:false,tension:0.3},
       ]},
-      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:"bottom",labels:{boxWidth:12,font:{size:11}}}},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
         scales:{y:{ticks:{callback:(v:number)=>v.toLocaleString()}}}}
     });
     (mainCanvas.current as any)._chart = chart;
@@ -299,7 +298,12 @@ function SummaryTab({forecast,scenario,reals}:{forecast:any[];scenario:string;re
         ))}
       </div>
       <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-        <h3 className="text-sm font-bold mb-3" style={{color:"#1C2340"}}>Forecast vs Budget vs Real · Aug 2026 → Jul 2027</h3>
+        <h3 className="text-sm font-bold mb-1" style={{color:"#1C2340"}}>Real · Forecast · Budget — Jan 2026 → Jul 2027</h3>
+        <div className="flex items-center gap-4 mb-3 text-[11px] text-muted-foreground">
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{backgroundColor:"#A3224A"}}/>Real</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{backgroundColor:"rgba(163,34,74,0.45)"}}/>Forecast</span>
+          <span className="flex items-center gap-1.5"><span className="w-4 h-0 border-t-2 border-dashed" style={{borderColor:"#9CA3AF"}}/>Budget</span>
+        </div>
         <div style={{height:280}}><canvas ref={mainCanvas}/></div>
       </div>
       <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
