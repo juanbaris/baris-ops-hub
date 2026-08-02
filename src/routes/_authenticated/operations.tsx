@@ -45,6 +45,13 @@ const STATUS_PILL: Record<string, string> = {
 };
 
 function FPStockTab({ movements, orders, loading }: { movements: FPRow[]; orders: any[]; loading: boolean }) {
+  const { bySkuMonthKey } = useSalesForecast();
+  // Next month's demand comes straight from the Sales "Forecast by SKU" tab.
+  const forecastNextMonth = useMemo(() => {
+    const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() + 1);
+    const key = `${d.getFullYear()}-${d.getMonth() + 1}`;
+    return Object.fromEntries(SKUS.map(sku => [sku, bySkuMonthKey[sku]?.[key] ?? FORECAST_FALLBACK[sku]])) as Record<SKU, number>;
+  }, [bySkuMonthKey]);
   const stock = useMemo(() => {
     const map: Record<string, { sku: SKU; warehouse: Warehouse; cases: number }> = {};
     for (const r of movements) {
@@ -933,6 +940,8 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
   const [prodCosts,  setProdCosts]  = useState({...DEFAULT_PROD_COSTS});
   const [scrap,      setScrap]      = useState({raspberry:0.10,chocolate:0.08});
   const [ingInv,     setIngInv]     = useState<Record<string,string>>(Object.fromEntries(ALL_INGS.map(k=>[k,""])));
+  const { bySkuMonthKey } = useSalesForecast();
+  const fcstOps = useMemo(()=>buildOpsForecast(bySkuMonthKey),[bySkuMonthKey]);
 
   const bySku = useMemo(()=>{
     const m:Record<string,number>={};
@@ -1067,7 +1076,7 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
                   <tr key={sku} className="border-t border-border/60">
                     <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{sku}</td>
                     {(stockProj[sku]??[]).map((stock,i)=>{
-                      const fcst=FORECAST_SKU_OPS[sku]?.[i]??0;
+                      const fcst=fcstOps[sku]?.[i]??0;
                       const woh=fcst>0?(stock/fcst)*4:99;
                       const isCrit=stock<0||woh<2;
                       const isLow=!isCrit&&woh<safetyWoh;
