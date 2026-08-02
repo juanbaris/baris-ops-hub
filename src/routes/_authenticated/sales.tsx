@@ -7,7 +7,7 @@ const PRICE_PER_CASE = 37;
 const UNITS_PER_CASE = 8;
 const WEEKS_PER_MONTH = 4.33;
 const IMPLIED_ANNUAL_2026 = 62113;
-const SEASON_IDX: Record<number,number> = {
+const DEFAULT_SEASON_IDX: Record<number,number> = {
   1:0.21,2:1.40,3:1.39,4:1.64,5:0.72,6:1.47,
   7:0.68,8:0.65,9:1.48,10:0.76,11:0.26,12:1.33,
 };
@@ -37,17 +37,22 @@ const FORECAST_SKU_EXACT: Record<string,number[]> = {
   WD:    [310,705,362,124,633,100,667,662,781,343,700,324],
   Matcha:[271,617,317,108,554,88,583,579,683,300,613,283],
 };
-const HISTORICAL = [
-  {label:"May 2026",cases:7522,revenue:294358},
-  {label:"Jun 2026",cases:5581,revenue:212494},
-  {label:"Jul 2026",cases:7176,revenue:277626},
+const HISTORICAL_FULL = [
+  {label:"Jan 2026", cases: 3529, revenue: 135884},
+  {label:"Feb 2026", cases: 4022, revenue: 201332},
+  {label:"Mar 2026", cases: 4620, revenue: 195015},
+  {label:"Apr 2026", cases: 2740, revenue: 111511},
+  {label:"May 2026", cases: 7522, revenue: 294358},
+  {label:"Jun 2026", cases: 5581, revenue: 212494},
+  {label:"Jul 2026", cases: 7176, revenue: 277626},
 ];
 // Velocity Bloque 1
-const VEL_CHAINS = [
-  {name:"Sprouts",stores:404,velCurrent:1.39},
-  {name:"Whole Foods",stores:60,velCurrent:8.09},
-  {name:"GoPuff",stores:80,velCurrent:2.84},
-  {name:"INFRA/Independientes",stores:41,velCurrent:2.15},
+type VelChain = {name:string;stores:number;velCurrent:number;lastWeek:number};
+const DEFAULT_VEL_CHAINS: VelChain[] = [
+  {name:"Sprouts",stores:404,velCurrent:1.39,lastWeek:1.20},
+  {name:"Whole Foods",stores:60,velCurrent:8.09,lastWeek:9.40},
+  {name:"GoPuff",stores:80,velCurrent:2.84,lastWeek:2.10},
+  {name:"INFRA/Independientes",stores:41,velCurrent:2.15,lastWeek:2.00},
 ];
 // New retailers Bloque 2
 const NEW_RETAILERS = [
@@ -89,18 +94,20 @@ function calcForecast(
   retailerStores: number[],
   retailerVel: number[],
   retailerEntry: number[],
+  velChains: VelChain[] = DEFAULT_VEL_CHAINS,
+  seasonIdx: Record<number,number> = DEFAULT_SEASON_IDX,
 ) {
   const growth = GROWTH[scenario];
   const base = IMPLIED_ANNUAL_2026 * (1 + growth);
 
   // Velocity delta (constant across all months)
-  const velDelta = VEL_CHAINS.reduce((s,chain,i) => {
+  const velDelta = velChains.reduce((s,chain,i) => {
     if (!velActive[i]) return s;
     return s + Math.round((velNew[i] - chain.velCurrent) * chain.stores * WEEKS_PER_MONTH / UNITS_PER_CASE);
   }, 0);
 
   return FORECAST_MONTHS.map((m,idx) => {
-    const baseCases = Math.round((base/12) * SEASON_IDX[m.month]);
+    const baseCases = Math.round((base/12) * (seasonIdx[m.month] ?? 1));
 
     // Retailer ramp-up deltas
     const acctDelta = NEW_RETAILERS.reduce((s,retailer,ri) => {
@@ -112,7 +119,7 @@ function calcForecast(
     }, 0);
 
     const totalCases = baseCases + velDelta + acctDelta;
-    const budgetCases = Math.round((IMPLIED_ANNUAL_2026 * (1 + GROWTH.Normal) / 12) * SEASON_IDX[m.month]);
+    const budgetCases = Math.round((IMPLIED_ANNUAL_2026 * (1 + GROWTH.Normal) / 12) * (seasonIdx[m.month] ?? 1));
 
     return {
       ...m,
@@ -158,6 +165,13 @@ function RealMonthlyTab({onRealUpdate}:{onRealUpdate:(label:string,cases:number)
     return s+["wm","wd","xd","pw","hm","matcha"].reduce((a,k)=>a+(parseInt(data[m]?.[k as keyof MonthReal])||0),0);
   },0);
   const ytdRev=["Jan 2026","Feb 2026","Mar 2026","Apr 2026","May 2026","Jun 2026","Jul 2026"].reduce((s,m)=>s+(parseInt(data[m]?.net_sales)||0),0);
+
+  const YTD_MONTHS=["Jan 2026","Feb 2026","Mar 2026","Apr 2026","May 2026","Jun 2026","Jul 2026"];
+  const SKU_FIELDS:(keyof MonthReal)[]=["xd","pw","hm","wm","wd","matcha"];
+  const ytdBySku:Record<string,number>={};
+  for(const f of SKU_FIELDS){
+    ytdBySku[f]=YTD_MONTHS.reduce((s,m)=>(saved.has(m)?s+(parseInt(data[m]?.[f] as string)||0):s),0);
+  }
 
   const inp="rounded border border-border bg-background px-1.5 py-0.5 text-xs font-mono w-full focus:outline-none focus:ring-1 focus:ring-primary/30";
   return (
@@ -225,7 +239,9 @@ function RealMonthlyTab({onRealUpdate}:{onRealUpdate:(label:string,cases:number)
             <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
               <td className="px-3 py-2 font-semibold text-xs">TOTAL YTD</td>
               <td className="px-3 py-2 text-right font-mono">${ytdRev.toLocaleString()}</td>
-              <td colSpan={6}/>
+              {SKU_FIELDS.map(f=>(
+                <td key={f} className="px-3 py-2 text-right font-mono font-bold text-emerald-400">{ytdBySku[f]?ytdBySku[f].toLocaleString():"—"}</td>
+              ))}
               <td className="px-3 py-2 text-right font-mono font-bold text-emerald-400">{ytdCases.toLocaleString()}</td>
               <td className="px-3 py-2 text-right font-mono text-slate-300">{ytdCases>0?`$${(ytdRev/ytdCases).toFixed(2)}`:"—"}</td>
               <td/>
@@ -244,18 +260,17 @@ function SummaryTab({forecast,scenario,reals}:{forecast:any[];scenario:string;re
     if(!mainCanvas.current||!window.Chart) return;
     const existing = (mainCanvas.current as any)._chart;
     if(existing) existing.destroy();
-    const allMonths=[...HISTORICAL.map(h=>h.label),...forecast.map(f=>f.label)];
-    const realVals=[...HISTORICAL.map(h=>h.cases),...forecast.map(f=>reals[f.label]??null)];
-    const fcstVals=[...HISTORICAL.map(()=>null),...forecast.map(f=>reals[f.label]??f.totalCases)];
-    const budgetVals=[...HISTORICAL.map(()=>null),...forecast.map(f=>f.budgetCases)];
+    const allMonths=[...HISTORICAL_FULL.map(h=>h.label),...forecast.map(f=>f.label)];
+    const caseVals=[...HISTORICAL_FULL.map(h=>h.cases),...forecast.map(f=>reals[f.label]??f.totalCases)];
+    const colors=[...HISTORICAL_FULL.map(()=>"#A3224A"),...forecast.map(()=>"rgba(163,34,74,0.45)")];
+    const budgetVals=[...HISTORICAL_FULL.map(()=>null),...forecast.map(f=>f.budgetCases)];
     const chart = new window.Chart(mainCanvas.current,{
       type:"bar",
       data:{labels:allMonths,datasets:[
-        {label:"Real",data:realVals,backgroundColor:"#A3224A",borderRadius:3},
-        {label:"Forecast",data:fcstVals,backgroundColor:"rgba(163,34,74,0.35)",borderRadius:3},
+        {label:"Cases",data:caseVals,backgroundColor:colors,borderRadius:3},
         {type:"line",label:"Budget",data:budgetVals,borderColor:"#9CA3AF",borderDash:[4,3],pointRadius:3,fill:false,tension:0.3},
       ]},
-      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:"bottom",labels:{boxWidth:12,font:{size:11}}}},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
         scales:{y:{ticks:{callback:(v:number)=>v.toLocaleString()}}}}
     });
     (mainCanvas.current as any)._chart = chart;
@@ -283,7 +298,12 @@ function SummaryTab({forecast,scenario,reals}:{forecast:any[];scenario:string;re
         ))}
       </div>
       <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-        <h3 className="text-sm font-bold mb-3" style={{color:"#1C2340"}}>Forecast vs Budget vs Real · Aug 2026 → Jul 2027</h3>
+        <h3 className="text-sm font-bold mb-1" style={{color:"#1C2340"}}>Real · Forecast · Budget — Jan 2026 → Jul 2027</h3>
+        <div className="flex items-center gap-4 mb-3 text-[11px] text-muted-foreground">
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{backgroundColor:"#A3224A"}}/>Real</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{backgroundColor:"rgba(163,34,74,0.45)"}}/>Forecast</span>
+          <span className="flex items-center gap-1.5"><span className="w-4 h-0 border-t-2 border-dashed" style={{borderColor:"#9CA3AF"}}/>Budget</span>
+        </div>
         <div style={{height:280}}><canvas ref={mainCanvas}/></div>
       </div>
       <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
@@ -310,16 +330,78 @@ function SummaryTab({forecast,scenario,reals}:{forecast:any[];scenario:string;re
 }
 
 // ─── Detalle Tab ──────────────────────────────────────────────────────────────
+type DetalleRange = "all"|"ytd"|"next3"|"rest2026"|"y2027";
+const RANGE_OPTIONS: {id:DetalleRange;label:string;sub:string}[] = [
+  {id:"all",label:"All",sub:"Jan 2026 – Jul 2027"},
+  {id:"ytd",label:"Actuals (YTD)",sub:"Jan–Jul 2026"},
+  {id:"next3",label:"Next 3 months",sub:"Aug–Oct 2026"},
+  {id:"rest2026",label:"Rest of 2026",sub:"Aug–Dec 2026"},
+  {id:"y2027",label:"Full 2027",sub:"Jan–Jul 2027"},
+];
+const NEXT3_LABELS = ["Aug 2026","Sep 2026","Oct 2026"];
+const REST2026_LABELS = ["Aug 2026","Sep 2026","Oct 2026","Nov 2026","Dec 2026"];
+
 function DetalleTab({forecast,reals,onRealUpdate}:{forecast:any[];reals:Record<string,number>;onRealUpdate:(l:string,v:number)=>void}) {
   const [editing,setEditing]=useState<string|null>(null);
   const [editVal,setEditVal]=useState("");
-  const totalFcst=forecast.reduce((s,f)=>s+f.totalCases,0);
-  const totalBudget=forecast.reduce((s,f)=>s+f.budgetCases,0);
+  const [range,setRange]=useState<DetalleRange>("all");
+
+  const showHist = range==="all"||range==="ytd";
+  const histRows = showHist?HISTORICAL_FULL:[];
+  const fcstRows = forecast.filter(f=>{
+    if(range==="all") return true;
+    if(range==="ytd") return false;
+    if(range==="next3") return NEXT3_LABELS.includes(f.label);
+    if(range==="rest2026") return REST2026_LABELS.includes(f.label);
+    return f.year===2027;
+  });
+
+  const histCases = histRows.reduce((s,h)=>s+h.cases,0);
+  const histRev = histRows.reduce((s,h)=>s+h.revenue,0);
+  const fcstCases = fcstRows.reduce((s,f)=>s+(reals[f.label]??f.totalCases),0);
+  const fcstRev = fcstRows.reduce((s,f)=>s+(reals[f.label]??f.totalCases)*PRICE_PER_CASE,0);
+  const visCases = histCases+fcstCases;
+  const visRev = histRev+fcstRev;
+  const monthCount = histRows.length+fcstRows.length;
+  const totalBudget = fcstRows.reduce((s,f)=>s+f.budgetCases,0);
+  const activeOpt = RANGE_OPTIONS.find(o=>o.id===range)!;
+
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-700">
         💡 Click <strong>Actual cases</strong> to enter actuals at month close.
       </div>
+
+      <div className="flex flex-wrap gap-2">
+        {RANGE_OPTIONS.map(o=>(
+          <button key={o.id} onClick={()=>setRange(o.id)}
+            className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${range===o.id?"text-white":"border border-border text-muted-foreground hover:text-foreground"}`}
+            style={range===o.id?{backgroundColor:"#1C2340"}:{}}>
+            {o.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+        <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2">
+          Selected range: {activeOpt.label} · {activeOpt.sub}
+        </p>
+        <div className="flex flex-wrap items-baseline gap-x-8 gap-y-2">
+          <div>
+            <p className="text-[10px] uppercase text-muted-foreground">Cases forecasted</p>
+            <p className="text-xl font-bold font-mono" style={{color:"#A3224A"}}>{visCases.toLocaleString()}</p>
+          </div>
+          <div>
+            <p className="text-[10px] uppercase text-muted-foreground">Revenue</p>
+            <p className="text-xl font-bold font-mono" style={{color:"#1C2340"}}>${Math.round(visRev/1000).toLocaleString()}K</p>
+          </div>
+          <div>
+            <p className="text-[10px] uppercase text-muted-foreground">Avg $/month</p>
+            <p className="text-xl font-bold font-mono" style={{color:"#1C2340"}}>${monthCount>0?Math.round(visRev/monthCount/1000).toLocaleString():"0"}K</p>
+          </div>
+        </div>
+      </div>
+
       <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
         <table className="w-full text-sm min-w-max">
           <thead>
@@ -338,16 +420,34 @@ function DetalleTab({forecast,reals,onRealUpdate}:{forecast:any[];reals:Record<s
             </tr>
           </thead>
           <tbody>
-            {HISTORICAL.map((h,i)=>(
-              <tr key={i} className="border-t border-border/60 bg-muted/10">
-                <td className="px-4 py-1.5 font-semibold text-muted-foreground">{h.label}</td>
-                <td colSpan={3}/>
-                <td className="px-4 py-1.5 text-right font-mono font-semibold">{h.cases.toLocaleString()}</td>
+            {histRows.map((h,i)=>(
+              <tr key={h.label} className={`border-t border-border/60 bg-muted/10 ${i===histRows.length-1?"border-b-2":""}`}>
+                <td className="px-4 py-1.5 font-semibold" style={{color:"#1C2340"}}>{h.label}</td>
+                <td className="px-4 py-1.5 text-right text-muted-foreground">—</td>
+                <td className="px-4 py-1.5 text-right text-muted-foreground">—</td>
+                <td className="px-4 py-1.5 text-right text-muted-foreground">—</td>
+                <td className="px-4 py-1.5 text-right font-mono font-bold" style={{color:"#1C2340"}}>{h.cases.toLocaleString()}</td>
                 <td className="px-4 py-1.5 text-right font-mono">${Math.round(h.revenue/1000)}K</td>
-                <td colSpan={5} className="text-center text-muted-foreground text-xs">—</td>
+                <td className="px-4 py-1.5 text-right text-muted-foreground">—</td>
+                <td className="px-4 py-1.5 text-right text-muted-foreground">—</td>
+                <td className="px-4 py-1.5 text-right">
+                  <div className="inline-block rounded px-2 py-0.5" style={{backgroundColor:"#ecfdf5"}}>
+                    <span className="block font-mono text-xs font-semibold text-emerald-700">{h.cases.toLocaleString()}</span>
+                    <span className="block text-muted-foreground" style={{fontSize:9}}>actual</span>
+                  </div>
+                </td>
+                <td className="px-4 py-1.5 text-right text-muted-foreground">—</td>
+                <td className="px-4 py-1.5 text-right text-muted-foreground">—</td>
               </tr>
             ))}
-            {forecast.map((f,i)=>{
+            {histRows.length>0&&fcstRows.length>0&&(
+              <tr style={{backgroundColor:"#F5F0E8"}}>
+                <td colSpan={11} className="px-4 py-1 text-[10px] font-bold uppercase tracking-wider border-y-2" style={{color:"#A3224A",borderColor:"#A3224A"}}>
+                  Forecast →
+                </td>
+              </tr>
+            )}
+            {fcstRows.map((f,i)=>{
               const real=reals[f.label];
               const deltaVsBudget=f.totalCases-f.budgetCases;
               const deltaReal=real!=null?real-f.totalCases:null;
@@ -376,7 +476,7 @@ function DetalleTab({forecast,reals,onRealUpdate}:{forecast:any[];reals:Record<s
                     ):(
                       <button onClick={()=>{setEditing(f.label);setEditVal(String(real??""));}}
                         className={`rounded px-2 py-0.5 text-xs font-mono ${real!=null?"font-semibold text-emerald-600 hover:bg-emerald-50":"text-muted-foreground hover:bg-muted border border-dashed border-border"}`}>
-                        {real!=null?real!.toLocaleString():"cargar"}
+                        {real!=null?real!.toLocaleString():"load"}
                       </button>
                     )}
                   </td>
@@ -392,12 +492,12 @@ function DetalleTab({forecast,reals,onRealUpdate}:{forecast:any[];reals:Record<s
           </tbody>
           <tfoot>
             <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
-              <td className="px-4 py-2 text-xs font-semibold" colSpan={4}>TOTAL 12 months</td>
-              <td className="px-4 py-2 text-right font-mono font-bold">{totalFcst.toLocaleString()}</td>
-              <td className="px-4 py-2 text-right font-mono">${Math.round(totalFcst*PRICE_PER_CASE/1000)}K</td>
-              <td className="px-4 py-2 text-right font-mono text-slate-300">${Math.round(totalBudget*PRICE_PER_CASE/1000)}K</td>
-              <td className={`px-4 py-2 text-right font-mono text-xs ${totalFcst>=totalBudget?"text-emerald-400":"text-red-400"}`}>
-                {totalFcst>=totalBudget?"+":""}{(totalFcst-totalBudget).toLocaleString()}
+              <td className="px-4 py-2 text-xs font-semibold" colSpan={4}>TOTAL · {activeOpt.label} ({monthCount} months)</td>
+              <td className="px-4 py-2 text-right font-mono font-bold">{visCases.toLocaleString()}</td>
+              <td className="px-4 py-2 text-right font-mono">${Math.round(visRev/1000).toLocaleString()}K</td>
+              <td className="px-4 py-2 text-right font-mono text-slate-300">{totalBudget>0?`$${Math.round(totalBudget*PRICE_PER_CASE/1000).toLocaleString()}K`:"—"}</td>
+              <td className={`px-4 py-2 text-right font-mono text-xs ${fcstCases>=totalBudget?"text-emerald-400":"text-red-400"}`}>
+                {totalBudget>0?`${fcstCases>=totalBudget?"+":""}${(fcstCases-totalBudget).toLocaleString()}`:"—"}
               </td>
               <td colSpan={3}/>
             </tr>
@@ -497,19 +597,23 @@ function SKUTab({forecast}:{forecast:any[]}) {
 }
 
 // ─── Simulador Tab ────────────────────────────────────────────────────────────
-function SimuladorTab({onConfigChange}:{onConfigChange:(cfg:any)=>void}) {
-  const [velActive,setVelActive] = useState(VEL_CHAINS.map(()=>false));
-  const [velNew,setVelNew] = useState(VEL_CHAINS.map(c=>c.velCurrent));
+function SimuladorTab({onConfigChange,velChains}:{onConfigChange:(cfg:any)=>void;velChains:VelChain[]}) {
+  const [velActive,setVelActive] = useState(velChains.map(()=>false));
+  const [velNew,setVelNew] = useState(velChains.map(c=>c.velCurrent));
   const [retActive,setRetActive] = useState(NEW_RETAILERS.map(()=>false));
   const [retStores,setRetStores] = useState(NEW_RETAILERS.map(r=>r.stores));
   const [retVel,setRetVel] = useState(NEW_RETAILERS.map(r=>r.vel));
   const [retEntry,setRetEntry] = useState(NEW_RETAILERS.map(r=>r.entry));
 
   useEffect(()=>{
+    setVelNew(prev=>velChains.map((c,i)=>prev[i]??c.velCurrent));
+  },[velChains]);
+
+  useEffect(()=>{
     onConfigChange({velActive,velNew,retActive,retStores,retVel,retEntry});
   },[velActive,velNew,retActive,retStores,retVel,retEntry]);
 
-  const velDeltaTotal = VEL_CHAINS.reduce((s,c,i)=>{
+  const velDeltaTotal = velChains.reduce((s,c,i)=>{
     if(!velActive[i]) return s;
     return s+Math.round((velNew[i]-c.velCurrent)*c.stores*WEEKS_PER_MONTH/UNITS_PER_CASE);
   },0);
@@ -566,7 +670,7 @@ function SimuladorTab({onConfigChange}:{onConfigChange:(cfg:any)=>void}) {
             </tr>
           </thead>
           <tbody>
-            {VEL_CHAINS.map((c,i)=>{
+            {velChains.map((c,i)=>{
               const delta=velActive[i]?Math.round((velNew[i]-c.velCurrent)*c.stores*WEEKS_PER_MONTH/UNITS_PER_CASE):0;
               return (
                 <tr key={i} className={`border-t border-border/60 ${velActive[i]?"bg-emerald-50/20":""}`}>
@@ -657,26 +761,44 @@ function SimuladorTab({onConfigChange}:{onConfigChange:(cfg:any)=>void}) {
 }
 
 // ─── Seasonality Tab ───────────────────────────────────────────────────────
-function SeasonalityTab() {
+function SeasonalityTab({seasonIdx,onSeasonIdxChange,velChains,onVelChainsChange}:{
+  seasonIdx:Record<number,number>;
+  onSeasonIdxChange:(idx:Record<number,number>)=>void;
+  velChains:VelChain[];
+  onVelChainsChange:(chains:VelChain[])=>void;
+}) {
   const months=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-  const indices=[0.21,1.40,1.39,1.64,0.72,1.47,0.68,0.65,1.48,0.76,0.26,1.33];
-  const maxIdx=Math.max(...indices);
-  const velData=[
-    {chain:"Sprouts",stores:404,t4w:1.39,lw:1.20,monthly:Math.round(404*1.39*WEEKS_PER_MONTH/UNITS_PER_CASE)},
-    {chain:"Whole Foods",stores:60,t4w:8.09,lw:9.40,monthly:Math.round(60*8.09*WEEKS_PER_MONTH/UNITS_PER_CASE)},
-    {chain:"GoPuff",stores:80,t4w:2.84,lw:2.10,monthly:Math.round(80*2.84*WEEKS_PER_MONTH/UNITS_PER_CASE)},
-    {chain:"Kowalski",stores:10,t4w:6.58,lw:6.30,monthly:Math.round(10*6.58*WEEKS_PER_MONTH/UNITS_PER_CASE)},
-    {chain:"INFRA",stores:41,t4w:2.15,lw:2.00,monthly:Math.round(41*2.15*WEEKS_PER_MONTH/UNITS_PER_CASE)},
-  ];
+  const indices=months.map((_,i)=>seasonIdx[i+1]??0);
+  const maxIdx=Math.max(...indices,0.01);
+  const inp="rounded border border-border bg-background px-1.5 py-0.5 text-xs font-mono text-center focus:outline-none focus:ring-1 focus:ring-primary/30";
+
+  function setIdx(month:number,v:number){onSeasonIdxChange({...seasonIdx,[month]:v});}
+  function setChain(i:number,patch:Partial<VelChain>){
+    onVelChainsChange(velChains.map((c,j)=>j===i?{...c,...patch}:c));
+  }
+  function resetChain(i:number){
+    onVelChainsChange(velChains.map((c,j)=>j===i?{...DEFAULT_VEL_CHAINS[i]}:c));
+  }
+
   return (
     <div className="space-y-5">
       <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-        <h3 className="text-sm font-bold mb-1" style={{color:"#1C2340"}}>Seasonality indices — source: 2025 actual</h3>
-        <p className="text-xs text-muted-foreground mb-5">Distributor PO cycles, not shopper consumption. 1.0 = average</p>
-        <div className="flex items-end gap-2 h-32">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h3 className="text-sm font-bold mb-1" style={{color:"#1C2340"}}>Seasonality indices — source: 2025 actual</h3>
+            <p className="text-xs text-muted-foreground mb-5">Distributor PO cycles, not shopper consumption. 1.0 = average · editable</p>
+          </div>
+          <button onClick={()=>onSeasonIdxChange({...DEFAULT_SEASON_IDX})}
+            className="rounded-full border border-border px-3 py-1 text-xs font-semibold text-muted-foreground hover:text-foreground">
+            Reset to default
+          </button>
+        </div>
+        <div className="flex items-end gap-2 h-40">
           {indices.map((v,i)=>(
             <div key={i} className="flex-1 flex flex-col items-center gap-1">
-              <span className="text-[10px] font-mono font-semibold" style={{color:v>=1.3?"#A3224A":v<=0.4?"#9CA3AF":"#1C2340"}}>{v}</span>
+              <input type="number" step="0.01" min={0} value={v}
+                onChange={e=>setIdx(i+1,parseFloat(e.target.value)||0)}
+                className={inp} style={{width:60}}/>
               <div className="w-full rounded-t" style={{height:`${(v/maxIdx)*80}px`,backgroundColor:v>=1.3?"#A3224A":v<=0.4?"#E5E7EB":"#1C2340",minHeight:4}}/>
               <span className="text-[9px] text-muted-foreground">{months[i]}</span>
             </div>
@@ -685,26 +807,47 @@ function SeasonalityTab() {
       </div>
       <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
         <div className="px-5 py-3 border-b border-border bg-muted/30">
-          <p className="text-sm font-semibold" style={{color:"#1C2340"}}>Velocidad por cadena — Jul 2026 (Orda/Fron)</p>
+          <p className="text-sm font-semibold" style={{color:"#1C2340"}}>Velocity by chain — editable</p>
         </div>
         <table className="w-full text-sm">
           <thead>
             <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
-              <th className="px-4 py-2.5 text-left">Cadena</th>
+              <th className="px-4 py-2.5 text-left">Chain</th>
               <th className="px-4 py-2.5 text-right">Stores</th>
               <th className="px-4 py-2.5 text-right">T4W</th>
               <th className="px-4 py-2.5 text-right">Last week</th>
               <th className="px-4 py-2.5 text-right">Est. cases/month</th>
+              <th className="px-4 py-2.5 text-center">Reset</th>
             </tr>
           </thead>
           <tbody>
-            {velData.map((v,i)=>(
+            {velChains.map((c,i)=>(
               <tr key={i} className="border-t border-border/60 hover:bg-muted/20">
-                <td className="px-4 py-2 font-semibold" style={{color:"#1C2340"}}>{v.chain}</td>
-                <td className="px-4 py-2 text-right font-mono">{v.stores}</td>
-                <td className="px-4 py-2 text-right font-mono font-semibold">{v.t4w}</td>
-                <td className="px-4 py-2 text-right font-mono text-muted-foreground">{v.lw}</td>
-                <td className="px-4 py-2 text-right font-mono text-emerald-600 font-semibold">{v.monthly.toLocaleString()}</td>
+                <td className="px-4 py-2 font-semibold" style={{color:"#1C2340"}}>{c.name}</td>
+                <td className="px-4 py-2 text-right">
+                  <input type="number" min={0} value={c.stores}
+                    onChange={e=>setChain(i,{stores:parseInt(e.target.value)||0})}
+                    className={`${inp} w-20 text-right`}/>
+                </td>
+                <td className="px-4 py-2 text-right">
+                  <input type="number" step="0.01" min={0} value={c.velCurrent}
+                    onChange={e=>setChain(i,{velCurrent:parseFloat(e.target.value)||0})}
+                    className={`${inp} w-20 text-right`}/>
+                </td>
+                <td className="px-4 py-2 text-right">
+                  <input type="number" step="0.01" min={0} value={c.lastWeek}
+                    onChange={e=>setChain(i,{lastWeek:parseFloat(e.target.value)||0})}
+                    className={`${inp} w-20 text-right`}/>
+                </td>
+                <td className="px-4 py-2 text-right font-mono text-emerald-600 font-semibold">
+                  {Math.round(c.stores*c.velCurrent*WEEKS_PER_MONTH/UNITS_PER_CASE).toLocaleString()}
+                </td>
+                <td className="px-4 py-2 text-center">
+                  <button onClick={()=>resetChain(i)}
+                    className="rounded-full border border-border px-2.5 py-0.5 text-[11px] font-semibold text-muted-foreground hover:text-foreground">
+                    Reset
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -719,9 +862,11 @@ function SalesPage() {
   const [tab,setTab] = useState<SalesTab>("real");
   const [scenario,setScenario] = useState<"Pessimistic"|"Normal"|"Optimistic">("Normal");
   const [reals,setReals] = useState<Record<string,number>>({});
+  const [seasonIdx,setSeasonIdx] = useState<Record<number,number>>(DEFAULT_SEASON_IDX);
+  const [velChains,setVelChains] = useState<VelChain[]>(DEFAULT_VEL_CHAINS);
   const [simConfig,setSimConfig] = useState<any>({
-    velActive:VEL_CHAINS.map(()=>false),
-    velNew:VEL_CHAINS.map(c=>c.velCurrent),
+    velActive:DEFAULT_VEL_CHAINS.map(()=>false),
+    velNew:DEFAULT_VEL_CHAINS.map(c=>c.velCurrent),
     retActive:NEW_RETAILERS.map(()=>false),
     retStores:NEW_RETAILERS.map(r=>r.stores),
     retVel:NEW_RETAILERS.map(r=>r.vel),
@@ -732,7 +877,8 @@ function SalesPage() {
     scenario,
     simConfig.velActive,simConfig.velNew,
     simConfig.retActive,simConfig.retStores,simConfig.retVel,simConfig.retEntry,
-  ),[scenario,simConfig]);
+    velChains,seasonIdx,
+  ),[scenario,simConfig,velChains,seasonIdx]);
 
   useEffect(()=>{
     if(window.Chart) return;
@@ -787,8 +933,9 @@ function SalesPage() {
       {tab==="resumen"       && <SummaryTab forecast={forecast} scenario={scenario} reals={reals}/>}
       {tab==="detalle"       && <DetalleTab forecast={forecast} reals={reals} onRealUpdate={(l,v)=>setReals(r=>({...r,[l]:v}))}/>}
       {tab==="sku"           && <SKUTab forecast={forecast}/>}
-      {tab==="simulador"     && <SimuladorTab onConfigChange={setSimConfig}/>}
-      {tab==="estacionalidad"&& <SeasonalityTab/>}
+      {tab==="simulador"     && <SimuladorTab onConfigChange={setSimConfig} velChains={velChains}/>}
+      {tab==="estacionalidad"&& <SeasonalityTab seasonIdx={seasonIdx} onSeasonIdxChange={setSeasonIdx}
+                                  velChains={velChains} onVelChainsChange={setVelChains}/>}
     </div>
   );
 }
