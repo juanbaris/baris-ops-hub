@@ -3,40 +3,13 @@ import { useEffect, useRef, useState, useMemo } from "react";
 import { toast } from "sonner";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const PRICE_PER_CASE = 37;
-const UNITS_PER_CASE = 8;
-const WEEKS_PER_MONTH = 4.33;
-const IMPLIED_ANNUAL_2026 = 62113;
-const DEFAULT_SEASON_IDX: Record<number,number> = {
-  1:0.21,2:1.40,3:1.39,4:1.64,5:0.72,6:1.47,
-  7:0.68,8:0.65,9:1.48,10:0.76,11:0.26,12:1.33,
-};
-const GROWTH = { Pessimistic:0.0, Normal:0.15, Optimistic:0.25 };
-const SKU_MIX: Record<string,number> = {XD:0.30,PW:0.25,HM:0.18,WM:0.12,WD:0.08,Matcha:0.07};
-const FORECAST_MONTHS = [
-  {label:"Aug 2026",month:8,year:2026,yoy2025:1384},
-  {label:"Sep 2026",month:9,year:2026,yoy2025:2728},
-  {label:"Oct 2026",month:10,year:2026,yoy2025:1386},
-  {label:"Nov 2026",month:11,year:2026,yoy2025:489},
-  {label:"Dec 2026",month:12,year:2026,yoy2025:2452},
-  {label:"Jan 2027",month:1,year:2027,yoy2025:388},
-  {label:"Feb 2027",month:2,year:2027,yoy2025:2582},
-  {label:"Mar 2027",month:3,year:2027,yoy2025:2562},
-  {label:"Apr 2027",month:4,year:2027,yoy2025:3021},
-  {label:"May 2027",month:5,year:2027,yoy2025:1314},
-  {label:"Jun 2027",month:6,year:2027,yoy2025:2710},
-  {label:"Jul 2027",month:7,year:2027,yoy2025:1242},
-];
+import {
+  PRICE_PER_CASE, UNITS_PER_CASE, WEEKS_PER_MONTH, IMPLIED_ANNUAL_2026,
+  DEFAULT_SEASON_IDX, GROWTH, SKU_MIX, FORECAST_MONTHS,
+  DEFAULT_VEL_CHAINS, NEW_RETAILERS, calcForecast, skuForecast,
+  saveForecastState, type VelChain, type ForecastState,
+} from "@/lib/sales-forecast";
 
-// Exact forecast from Excel Forecast por SKU sheet
-const FORECAST_SKU_EXACT: Record<string,number[]> = {
-  XD:    [1161,2643,1357,464,2375,375,2500,2482,2929,1286,2625,1214],
-  PW:    [967,2203,1131,387,1979,313,2084,2069,2441,1072,2188,1012],
-  HM:    [696,1586,814,279,1425,225,1500,1489,1757,771,1575,729],
-  WM:    [464,1057,543,186,950,150,1000,993,1171,514,1050,486],
-  WD:    [310,705,362,124,633,100,667,662,781,343,700,324],
-  Matcha:[271,617,317,108,554,88,583,579,683,300,613,283],
-};
 const HISTORICAL_FULL = [
   {label:"Jan 2026", cases: 3529, revenue: 135884},
   {label:"Feb 2026", cases: 4022, revenue: 201332},
@@ -45,24 +18,6 @@ const HISTORICAL_FULL = [
   {label:"May 2026", cases: 7522, revenue: 294358},
   {label:"Jun 2026", cases: 5581, revenue: 212494},
   {label:"Jul 2026", cases: 7176, revenue: 277626},
-];
-// Velocity Bloque 1
-type VelChain = {name:string;stores:number;velCurrent:number;lastWeek:number};
-const DEFAULT_VEL_CHAINS: VelChain[] = [
-  {name:"Sprouts",stores:404,velCurrent:1.39,lastWeek:1.20},
-  {name:"Whole Foods",stores:60,velCurrent:8.09,lastWeek:9.40},
-  {name:"GoPuff",stores:80,velCurrent:2.84,lastWeek:2.10},
-  {name:"INFRA/Independientes",stores:41,velCurrent:2.15,lastWeek:2.00},
-];
-// New retailers Bloque 2
-const NEW_RETAILERS = [
-  {name:"Whole Foods expansion",stores:100,vel:8.09,entry:3,note:"Today 60 stores"},
-  {name:"Raley's",stores:80,vel:1.50,entry:4,note:"Regional NoCal/Nevada"},
-  {name:"Kroger",stores:300,vel:1.50,entry:6,note:"Mayor chain convencional"},
-  {name:"Walmart",stores:500,vel:1.20,entry:8,note:"Nacional Frozen"},
-  {name:"Costco",stores:50,vel:3.00,entry:6,note:"Club — alta velocidad"},
-  {name:"Publix",stores:150,vel:1.50,entry:9,note:"South East"},
-  {name:"Target",stores:400,vel:1.20,entry:10,note:"Nacional convencional"},
 ];
 const DIST_MIX = [
   {dist:"KeHE",pct:0.55,color:"#A3224A"},
@@ -84,55 +39,6 @@ const ALL_MONTHS_REAL = [
   "Aug 2026","Sep 2026","Oct 2026","Nov 2026","Dec 2026",
   "Jan 2027","Feb 2027","Mar 2027","Apr 2027","May 2027","Jun 2027","Jul 2027",
 ];
-
-// ─── Forecast calculation ─────────────────────────────────────────────────────
-function calcForecast(
-  scenario: "Pessimistic"|"Normal"|"Optimistic",
-  velActive: boolean[],
-  velNew: number[],
-  retailerActive: boolean[],
-  retailerStores: number[],
-  retailerVel: number[],
-  retailerEntry: number[],
-  velChains: VelChain[] = DEFAULT_VEL_CHAINS,
-  seasonIdx: Record<number,number> = DEFAULT_SEASON_IDX,
-) {
-  const growth = GROWTH[scenario];
-  const base = IMPLIED_ANNUAL_2026 * (1 + growth);
-
-  // Velocity delta (constant across all months)
-  const velDelta = velChains.reduce((s,chain,i) => {
-    if (!velActive[i]) return s;
-    return s + Math.round((velNew[i] - chain.velCurrent) * chain.stores * WEEKS_PER_MONTH / UNITS_PER_CASE);
-  }, 0);
-
-  return FORECAST_MONTHS.map((m,idx) => {
-    const baseCases = Math.round((base/12) * (seasonIdx[m.month] ?? 1));
-
-    // Retailer ramp-up deltas
-    const acctDelta = NEW_RETAILERS.reduce((s,retailer,ri) => {
-      if (!retailerActive[ri]) return s;
-      const monthsIn = idx - (retailerEntry[ri] - 1);
-      if (monthsIn < 0) return s;
-      const ramp = monthsIn === 0 ? 0.4 : monthsIn === 1 ? 0.7 : 1.0;
-      return s + Math.round(retailerStores[ri] * retailerVel[ri] * WEEKS_PER_MONTH / UNITS_PER_CASE * ramp);
-    }, 0);
-
-    const totalCases = baseCases + velDelta + acctDelta;
-    const budgetCases = Math.round((IMPLIED_ANNUAL_2026 * (1 + GROWTH.Normal) / 12) * (seasonIdx[m.month] ?? 1));
-
-    return {
-      ...m,
-      baseCases,
-      velDelta,
-      acctDelta,
-      totalCases,
-      revenue: Math.round(totalCases * PRICE_PER_CASE),
-      budget: Math.round(budgetCases * PRICE_PER_CASE),
-      budgetCases,
-    };
-  });
-}
 
 type SalesTab = "real"|"resumen"|"detalle"|"sku"|"simulador"|"estacionalidad";
 declare global { interface Window { Chart: any } }
@@ -514,11 +420,12 @@ function DetalleTab({forecast,reals,onRealUpdate}:{forecast:any[];reals:Record<s
 function SKUTab({forecast}:{forecast:any[]}) {
   const SKU_COLORS: Record<string,string> = {XD:"#1C2340",PW:"#A3224A",HM:"#3B82F6",WM:"#10B981",WD:"#F59E0B",Matcha:"#8B5CF6"};
   const SKUS = ["XD","PW","HM","WM","WD","Matcha"];
+  const skuMonths = useMemo(()=>skuForecast(forecast as any),[forecast]);
   const skuData = useMemo(()=>SKUS.map(sku=>({
     sku,pct:SKU_MIX[sku],
-    months:forecast.map((_,i)=>FORECAST_SKU_EXACT[sku]?.[i]??0),
-    total:FORECAST_SKU_EXACT[sku]?.reduce((a,b)=>a+b,0)??0,
-  })),[forecast]);
+    months:skuMonths[sku]??[],
+    total:(skuMonths[sku]??[]).reduce((a:number,b:number)=>a+b,0),
+  })),[forecast,skuMonths]);
   return (
     <div className="space-y-5">
       <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
@@ -881,6 +788,18 @@ function SalesPage() {
     simConfig.retActive,simConfig.retStores,simConfig.retVel,simConfig.retEntry,
     velChains,seasonIdx,
   ),[scenario,simConfig,velChains,seasonIdx]);
+
+  // Publish the forecast state so other modules (Operations → Procurement
+  // Planning) plan production against the same numbers.
+  useEffect(()=>{
+    const state: ForecastState = {
+      scenario, seasonIdx, velChains,
+      velActive:simConfig.velActive, velNew:simConfig.velNew,
+      retActive:simConfig.retActive, retStores:simConfig.retStores,
+      retVel:simConfig.retVel, retEntry:simConfig.retEntry,
+    };
+    saveForecastState(state);
+  },[scenario,seasonIdx,velChains,simConfig]);
 
   useEffect(()=>{
     if(window.Chart) return;
