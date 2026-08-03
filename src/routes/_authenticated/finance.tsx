@@ -187,7 +187,7 @@ function DashboardTab({ period, refMonth }: { period: Period; refMonth: number }
 
   // Waterfall FY totals
   const wfLabels = ['Gross Sales','Ded.','Net Sales','COGS','Fulfillment','GM','SG&A','EBITDA'];
-  const gs = sum(D.gross_sales); const ded = sum(D.trade_spend)+sum(D.distr_fees); const ns = sum(D.net_sales);
+  const gs = sum(D.gross_sales); const ded = sum(D.trade_spend)+sum(D.distr_fees); const ns = sum(revenue.netSales);
   const cogs = -sum(D.cogs); const ful = -(sum(D.storage)+sum(D.freight_out)); const gm = sum(D.gross_margin);
   const sga = sum(D.selling_exp)+sum(D.mkt_trade)+sum(D.team)+sum(D.gen_exp); const eb = sum(D.ebitda);
   const wfData = [gs, ded, ns, cogs, ful, gm, sga, eb];
@@ -197,7 +197,7 @@ function DashboardTab({ period, refMonth }: { period: Period; refMonth: number }
     type: 'bar',
     data: { labels: wfLabels, datasets: [{ data: wfData, backgroundColor: wfColors, borderRadius: 4 }] },
     options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } }, scales:{ y:{ ticks:{ callback:(v:number) => '$'+v+'K' } } } }
-  }), []);
+  }), [ns]);
 
   return (
     <div className="space-y-5">
@@ -212,6 +212,8 @@ function DashboardTab({ period, refMonth }: { period: Period; refMonth: number }
         <KPI icon="💰" label="Revenue" value={fmtK(rev)}
           sub={`Budget vs Forecast ${vsBpct>=0?'+':''}${(vsBpct*100).toFixed(1)}%`}
           subColor={vsBpct>=0?"text-emerald-600":"text-red-500"} />
+        <KPI icon="🧾" label="Net Sales" value={revenue.loading ? "—" : fmtK(netRev)}
+          sub={`Source: Sales · ${revenue.source}`} />
         <KPI icon="📊" label="Gross Margin %" value={fmtPct(gmPct)}
           sub={`${fmt(gp,0)} abs`} />
         <KPI icon="🎯" label="Business Contribution" value={fmtK(bc)}
