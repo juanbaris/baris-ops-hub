@@ -1011,33 +1011,65 @@ function SalesPage() {
   const mergedReals = useMemo(()=>({...reals,...casesByLabel}),[reals,casesByLabel]);
   const [seasonIdx,setSeasonIdx] = useState<Record<number,number>>(DEFAULT_SEASON_IDX);
   const [velChains,setVelChains] = useState<VelChain[]>(DEFAULT_VEL_CHAINS);
-  const [simConfig,setSimConfig] = useState<any>({
-    velActive:DEFAULT_VEL_CHAINS.map(()=>false),
-    velNew:DEFAULT_VEL_CHAINS.map(c=>c.velCurrent),
-    retActive:NEW_RETAILERS.map(()=>false),
-    retStores:NEW_RETAILERS.map(r=>r.stores),
-    retVel:NEW_RETAILERS.map(r=>r.vel),
-    retEntry:NEW_RETAILERS.map(r=>r.entry),
-  });
+  // Simulator levers live here so committed state survives tab switches.
+  const [velActive,setVelActive] = useState<boolean[]>(DEFAULT_VEL_CHAINS.map(()=>false));
+  const [velNew,setVelNew] = useState<number[]>(DEFAULT_VEL_CHAINS.map(c=>c.velCurrent));
+  const [retActive,setRetActive] = useState<boolean[]>(NEW_RETAILERS.map(()=>false));
+  const [retStores,setRetStores] = useState<number[]>(NEW_RETAILERS.map(r=>r.stores));
+  const [retVel,setRetVel] = useState<number[]>(NEW_RETAILERS.map(r=>r.vel));
+  const [retEntry,setRetEntry] = useState<number[]>(NEW_RETAILERS.map(r=>r.entry));
+  const [newSkus,setNewSkus] = useState<NewSku[]>(DEFAULT_NEW_SKUS);
+  const [velCommitted,setVelCommitted] = useState<boolean[]>(DEFAULT_VEL_CHAINS.map(()=>false));
+  const [retCommitted,setRetCommitted] = useState<boolean[]>(NEW_RETAILERS.map(()=>false));
+  const [skuCommitted,setSkuCommitted] = useState<boolean[]>(DEFAULT_NEW_SKUS.map(()=>false));
+  const [mixOverrides,setMixOverrides] = useState<Record<string,Record<string,number>>>({});
+  const [mixOverrideActive,setMixOverrideActive] = useState(false);
+  const [mixCommitted,setMixCommitted] = useState(false);
+
+  useEffect(()=>{
+    setVelNew(prev=>velChains.map((c,i)=>prev[i]??c.velCurrent));
+  },[velChains]);
 
   const forecast = useMemo(()=>calcForecast(
+    scenario, velActive,velNew, retActive,retStores,retVel,retEntry,
+    velChains,seasonIdx,newSkus,
+  ),[scenario,velActive,velNew,retActive,retStores,retVel,retEntry,velChains,seasonIdx,newSkus]);
+
+  const committedCount = velCommitted.filter(Boolean).length
+    + retCommitted.filter(Boolean).length
+    + skuCommitted.filter((c,i)=>c&&!!newSkus[i]).length
+    + (mixCommitted?1:0);
+
+  // When levers are locked in, downstream views use only the committed subset.
+  const committedForecast = useMemo(()=>calcForecast(
     scenario,
-    simConfig.velActive,simConfig.velNew,
-    simConfig.retActive,simConfig.retStores,simConfig.retVel,simConfig.retEntry,
+    velActive.map((a,i)=>a&&velCommitted[i]), velNew,
+    retActive.map((a,i)=>a&&retCommitted[i]), retStores,retVel,retEntry,
     velChains,seasonIdx,
-  ),[scenario,simConfig,velChains,seasonIdx]);
+    newSkus.map((s,i)=>({...s,active:s.active&&!!skuCommitted[i]})),
+  ),[scenario,velActive,velCommitted,velNew,retActive,retCommitted,retStores,retVel,retEntry,velChains,seasonIdx,newSkus,skuCommitted]);
+
+  const skuTabForecast = committedCount>0?committedForecast:forecast;
+  const skuTabNewSkus = committedCount>0
+    ? newSkus.map((s,i)=>({...s,active:s.active&&!!skuCommitted[i]}))
+    : newSkus;
+
+  function clearCommitted(){
+    setVelCommitted(velCommitted.map(()=>false));
+    setRetCommitted(retCommitted.map(()=>false));
+    setSkuCommitted(newSkus.map(()=>false));
+    setMixCommitted(false);
+  }
 
   // Publish the forecast state so other modules (Operations → Procurement
   // Planning) plan production against the same numbers.
   useEffect(()=>{
     const state: ForecastState = {
       scenario, seasonIdx, velChains,
-      velActive:simConfig.velActive, velNew:simConfig.velNew,
-      retActive:simConfig.retActive, retStores:simConfig.retStores,
-      retVel:simConfig.retVel, retEntry:simConfig.retEntry,
+      velActive, velNew, retActive, retStores, retVel, retEntry, newSkus,
     };
     saveForecastState(state);
-  },[scenario,seasonIdx,velChains,simConfig]);
+  },[scenario,seasonIdx,velChains,velActive,velNew,retActive,retStores,retVel,retEntry,newSkus]);
 
   useEffect(()=>{
     if(window.Chart) return;
@@ -1089,10 +1121,26 @@ function SalesPage() {
         ))}
       </div>
       {tab==="real"          && <RealMonthlyTab actuals={byLabel} loading={loadingActuals}/>}
-      {tab==="resumen"       && <SummaryTab forecast={forecast} scenario={scenario} reals={mergedReals} history={history}/>}
-      {tab==="detalle"       && <DetalleTab forecast={forecast} reals={mergedReals} history={history} onRealUpdate={(l,v)=>setReals(r=>({...r,[l]:v}))}/>}
-      {tab==="sku"           && <SKUTab forecast={forecast}/>}
-      {tab==="simulador"     && <SimuladorTab onConfigChange={setSimConfig} velChains={velChains}/>}
+      {tab==="resumen"       && <SummaryTab forecast={forecast} scenario={scenario} reals={mergedReals} history={history} committedCount={committedCount}/>}
+      {tab==="detalle"       && <DetalleTab forecast={forecast} reals={mergedReals} history={history} committedCount={committedCount} onRealUpdate={(l,v)=>setReals(r=>({...r,[l]:v}))}/>}
+      {tab==="sku"           && <SKUTab forecast={skuTabForecast} newSkus={skuTabNewSkus}
+                                  mixOverrides={mixOverrides} mixOverrideActive={mixOverrideActive&&(committedCount===0||mixCommitted)}
+                                  committedCount={committedCount}/>}
+      {tab==="simulador"     && <SimuladorTab velChains={velChains}
+                                  velActive={velActive} setVelActive={setVelActive}
+                                  velNew={velNew} setVelNew={setVelNew}
+                                  velCommitted={velCommitted} setVelCommitted={setVelCommitted}
+                                  retActive={retActive} setRetActive={setRetActive}
+                                  retStores={retStores} setRetStores={setRetStores}
+                                  retVel={retVel} setRetVel={setRetVel}
+                                  retEntry={retEntry} setRetEntry={setRetEntry}
+                                  retCommitted={retCommitted} setRetCommitted={setRetCommitted}
+                                  newSkus={newSkus} setNewSkus={setNewSkus}
+                                  skuCommitted={skuCommitted} setSkuCommitted={setSkuCommitted}
+                                  mixOverrides={mixOverrides} setMixOverrides={setMixOverrides}
+                                  mixOverrideActive={mixOverrideActive} setMixOverrideActive={setMixOverrideActive}
+                                  mixCommitted={mixCommitted} setMixCommitted={setMixCommitted}
+                                  onClearCommitted={clearCommitted}/>}
       {tab==="estacionalidad"&& <SeasonalityTab seasonIdx={seasonIdx} onSeasonIdxChange={setSeasonIdx}
                                   velChains={velChains} onVelChainsChange={setVelChains}/>}
     </div>
