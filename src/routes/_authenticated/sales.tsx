@@ -1185,7 +1185,11 @@ function SalesPage() {
                                   mixOverrides={mixOverrides} setMixOverrides={setMixOverrides}
                                   mixOverrideActive={mixOverrideActive} setMixOverrideActive={setMixOverrideActive}
                                   mixCommitted={mixCommitted} setMixCommitted={setMixCommitted}
-                                  onClearCommitted={clearCommitted}/>}
+                                  onClearCommitted={clearCommitted}
+                                  detailView={<DetalleTab forecast={forecast} reals={mergedReals} history={history} committedCount={committedCount} onRealUpdate={(l,v)=>setReals(r=>({...r,[l]:v}))}/>}
+                                  skuView={<SKUTab forecast={skuTabForecast} newSkus={skuTabNewSkus}
+                                    mixOverrides={mixOverrides} mixOverrideActive={mixOverrideActive&&(committedCount===0||mixCommitted)}
+                                    committedCount={committedCount}/>}/>}
       {tab==="estacionalidad"&& <SeasonalityTab seasonIdx={seasonIdx} onSeasonIdxChange={setSeasonIdx}
                                   velChains={velChains} onVelChainsChange={setVelChains}/>}
     </div>
