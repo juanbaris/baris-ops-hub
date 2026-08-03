@@ -1230,13 +1230,16 @@ function SalesPage() {
     document.head.appendChild(s);
   },[]);
 
-  const tabs: {id:SalesTab;label:string}[] = [
+  const TABS_OPERATIONAL: {id:SalesTab;label:string}[] = [
     {id:"real",label:"Real Monthly"},
     {id:"resumen",label:"Summary"},
     {id:"detalle",label:"Monthly Detail"},
     {id:"sku",label:"By SKU"},
     {id:"simulador",label:"Simulador"},
     {id:"estacionalidad",label:"Seasonality"},
+  ];
+  const TABS_REFERENCE: {id:SalesTab;label:string}[] = [
+    {id:"salesdb",label:"Sales DB"},
   ];
   const SCENARIO_INFO = {
     Pessimistic:"0% YoY · same volume · floor",
@@ -1262,11 +1265,19 @@ function SalesPage() {
         </div>
         <span className="text-xs text-muted-foreground">{SCENARIO_INFO[scenario]}</span>
       </div>
-      <div className="flex gap-1 border-b border-border overflow-x-auto">
-        {tabs.map(t=>(
+      <div className="flex gap-1 border-b border-border overflow-x-auto items-center">
+        {TABS_OPERATIONAL.map(t=>(
           <button key={t.id} onClick={()=>setTab(t.id)}
             className={`px-4 py-2 text-sm font-semibold whitespace-nowrap border-b-2 transition-colors ${tab===t.id?"border-primary text-primary":"border-transparent text-muted-foreground hover:text-foreground"}`}
             style={tab===t.id?{borderColor:"#A3224A",color:"#A3224A"}:{}}>
+            {t.label}
+          </button>
+        ))}
+        <div className="mx-2 h-5 w-px bg-border self-center flex-shrink-0"/>
+        {TABS_REFERENCE.map(t=>(
+          <button key={t.id} onClick={()=>setTab(t.id)}
+            className={`px-4 py-2 text-sm font-semibold whitespace-nowrap border-b-2 transition-colors ${tab===t.id?"border-primary text-primary":"border-transparent text-muted-foreground hover:text-foreground"}`}
+            style={tab===t.id?{borderColor:"#6B7280",color:"#6B7280"}:{}}>
             {t.label}
           </button>
         ))}
@@ -1298,6 +1309,7 @@ function SalesPage() {
                                     committedCount={committedCount}/>}/>}
       {tab==="estacionalidad"&& <SeasonalityTab seasonIdx={seasonIdx} onSeasonIdxChange={setSeasonIdx}
                                   velChains={velChains} onVelChainsChange={setVelChains}/>}
+      {tab==="salesdb"       && <SalesDBTab/>}
     </div>
   );
 }
