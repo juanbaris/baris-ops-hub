@@ -369,31 +369,54 @@ function DetalleTab({forecast,reals,onRealUpdate,history}:{forecast:any[];reals:
 }
 
 // ─── SKU Tab ──────────────────────────────────────────────────────────────────
-function SKUTab({forecast}:{forecast:any[]}) {
+function SKUTab({forecast,newSkus,mixOverrides,mixOverrideActive,committedCount}:{
+  forecast:any[];newSkus:NewSku[];mixOverrides:Record<string,Record<string,number>>;
+  mixOverrideActive:boolean;committedCount:number;
+}) {
   const SKU_COLORS: Record<string,string> = {XD:"#1C2340",PW:"#A3224A",HM:"#3B82F6",WM:"#10B981",WD:"#F59E0B",Matcha:"#8B5CF6"};
   const SKUS = ["XD","PW","HM","WM","WD","Matcha"];
-  const skuMonths = useMemo(()=>skuForecast(forecast as any),[forecast]);
-  const skuData = useMemo(()=>SKUS.map(sku=>({
-    sku,pct:SKU_MIX[sku],
-    months:skuMonths[sku]??[],
-    total:(skuMonths[sku]??[]).reduce((a:number,b:number)=>a+b,0),
-  })),[forecast,skuMonths]);
+  // Existing SKUs split the base demand; new-SKU volume is fully incremental
+  // and is listed in its own rows so the TOTAL row still ties to the forecast.
+  const baseByMonth = useMemo(()=>forecast.map(f=>f.totalCases-(f.newSkuDelta??0)),[forecast]);
+  const defaultMonths = useMemo(()=>skuForecast(forecast.map((f,i)=>({...f,totalCases:baseByMonth[i]})) as any),[forecast,baseByMonth]);
+  const skuData = useMemo(()=>SKUS.map(sku=>{
+    const months = mixOverrideActive
+      ? forecast.map((f,i)=>Math.round(baseByMonth[i]*((mixOverrides[f.label]?.[sku] ?? DEFAULT_MIX_PCT[sku])/100)))
+      : (defaultMonths[sku]??[]);
+    return {sku,pct:SKU_MIX[sku],months,total:months.reduce((a:number,b:number)=>a+b,0)};
+  }),[forecast,defaultMonths,baseByMonth,mixOverrideActive,mixOverrides]);
+
+  const activeNew = useMemo(()=>newSkus
+    .map((s,i)=>({sku:s,color:NEW_SKU_COLORS[i%NEW_SKU_COLORS.length]}))
+    .filter(x=>x.sku.active)
+    .map(x=>{
+      const months = forecast.map((_,i)=>newSkuCases(x.sku,i));
+      return {...x,months,total:months.reduce((a,b)=>a+b,0)};
+    }),[newSkus,forecast]);
+
+  const grandTotal = forecast.reduce((s,f)=>s+f.totalCases,0);
+  const mixSlices = [
+    ...SKUS.map(sku=>({key:sku,color:SKU_COLORS[sku],cases:skuData.find(d=>d.sku===sku)?.total??0})),
+    ...activeNew.map(n=>({key:n.sku.name,color:n.color,cases:n.total})),
+  ];
   return (
     <div className="space-y-5">
       <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-        <h3 className="text-sm font-bold mb-4" style={{color:"#1C2340"}}>Mix de SKUs — Forecast 2026–2027</h3>
+        <h3 className="text-sm font-bold mb-1" style={{color:"#1C2340"}}>Mix de SKUs — Forecast 2026–2027</h3>
+        {committedCount>0 && <p className="text-xs mb-3 font-semibold" style={{color:"#B45309"}}>Cases based on committed scenario</p>}
+        {mixOverrideActive && <p className="text-xs mb-3 text-muted-foreground">Mix override ON — per-month percentages from Block 4</p>}
         <div className="flex gap-2 flex-wrap mb-3">
-          {Object.entries(SKU_MIX).map(([sku,pct])=>(
-            <div key={sku} className="flex items-center gap-1.5 rounded-xl border border-border px-3 py-2">
-              <span className="w-3 h-3 rounded-sm" style={{backgroundColor:SKU_COLORS[sku]}}/>
-              <span className="text-xs font-semibold">{sku}</span>
-              <span className="text-xs text-muted-foreground">{Math.round(pct*100)}%</span>
+          {mixSlices.map(s=>(
+            <div key={s.key} className="flex items-center gap-1.5 rounded-xl border border-border px-3 py-2">
+              <span className="w-3 h-3 rounded-sm" style={{backgroundColor:s.color}}/>
+              <span className="text-xs font-semibold">{s.key}</span>
+              <span className="text-xs text-muted-foreground">{grandTotal>0?Math.round(s.cases/grandTotal*100):0}%</span>
             </div>
           ))}
         </div>
         <div className="h-3 rounded-full overflow-hidden flex">
-          {Object.entries(SKU_MIX).map(([sku,pct])=>(
-            <div key={sku} style={{width:`${pct*100}%`,backgroundColor:SKU_COLORS[sku]}} title={`${sku}: ${Math.round(pct*100)}%`}/>
+          {mixSlices.map(s=>(
+            <div key={s.key} style={{width:`${grandTotal>0?s.cases/grandTotal*100:0}%`,backgroundColor:s.color}} title={`${s.key}: ${grandTotal>0?Math.round(s.cases/grandTotal*100):0}%`}/>
           ))}
         </div>
       </div>
@@ -416,9 +439,23 @@ function SKUTab({forecast}:{forecast:any[]}) {
                     {s.sku}
                   </div>
                 </td>
-                <td className="px-4 py-1.5 text-center text-muted-foreground">{Math.round(s.pct*100)}%</td>
+                <td className="px-4 py-1.5 text-center text-muted-foreground">{grandTotal>0?Math.round(s.total/grandTotal*100):0}%</td>
                 {s.months.map((v,i)=><td key={i} className="px-3 py-1.5 text-right font-mono">{v.toLocaleString()}</td>)}
                 <td className="px-4 py-1.5 text-right font-mono font-bold">{s.total.toLocaleString()}</td>
+              </tr>
+            ))}
+            {activeNew.map(n=>(
+              <tr key={n.sku.name} className="border-t border-border/60 hover:bg-muted/20 bg-amber-50/30">
+                <td className="px-4 py-1.5 font-semibold">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-sm" style={{backgroundColor:n.color}}/>
+                    {n.sku.name}
+                    <span className="rounded-full border border-amber-400 px-1.5 text-[9px] font-semibold text-amber-700">NEW</span>
+                  </div>
+                </td>
+                <td className="px-4 py-1.5 text-center text-muted-foreground">{grandTotal>0?Math.round(n.total/grandTotal*100):0}%</td>
+                {n.months.map((v,i)=><td key={i} className="px-3 py-1.5 text-right font-mono">{v.toLocaleString()}</td>)}
+                <td className="px-4 py-1.5 text-right font-mono font-bold">{n.total.toLocaleString()}</td>
               </tr>
             ))}
             <tr className="border-t-2 border-border font-bold" style={{backgroundColor:"#1C2340",color:"#fff"}}>
@@ -430,6 +467,9 @@ function SKUTab({forecast}:{forecast:any[]}) {
           </tbody>
         </table>
       </div>
+      {activeNew.length>0 && (
+        <p className="text-xs text-amber-700">⚠ New SKU cases are simulator projections. Lock them with SET to include in production planning.</p>
+      )}
       <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
         <h3 className="text-sm font-bold mb-3" style={{color:"#1C2340"}}>Historical SKU mix</h3>
         <table className="w-full text-sm">
