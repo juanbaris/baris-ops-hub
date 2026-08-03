@@ -723,7 +723,7 @@ function SalesPage() {
   const {byLabel, casesByLabel, loading:loadingActuals} = useInvoicedActuals();
   const history: HistRow[] = useMemo(()=>Object.values(byLabel)
     .sort((a,b)=>a.year-b.year||a.month-b.month)
-    .filter(a=>a.cases>0||a.revenue>0)
+    .filter(a=>a.year>=2026&&(a.cases>0||a.revenue>0))
     .map(a=>({label:a.label,cases:a.cases,revenue:Math.round(a.revenue)})),[byLabel]);
   // Pipeline actuals win; manual overrides only fill months with no invoices.
   const mergedReals = useMemo(()=>({...reals,...casesByLabel}),[reals,casesByLabel]);
