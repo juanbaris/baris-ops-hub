@@ -207,8 +207,8 @@ function DashboardTab({ period, refMonth }: { period: Period; refMonth: number }
         </div>
       )}
 
-      {/* 7 KPIs */}
-      <div className="grid grid-cols-3 md:grid-cols-7 gap-3">
+      {/* KPIs */}
+      <div className="grid grid-cols-3 md:grid-cols-8 gap-3">
         <KPI icon="💰" label="Revenue" value={fmtK(rev)}
           sub={`Budget vs Forecast ${vsBpct>=0?'+':''}${(vsBpct*100).toFixed(1)}%`}
           subColor={vsBpct>=0?"text-emerald-600":"text-red-500"} />
