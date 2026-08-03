@@ -112,7 +112,7 @@ function RealMonthlyTab({actuals,loading}:{actuals:Record<string,MonthActual>;lo
 }
 
 // ─── Summary Tab ──────────────────────────────────────────────────────────────
-function SummaryTab({forecast,scenario,reals,history}:{forecast:any[];scenario:string;reals:Record<string,number>;history:HistRow[]}) {
+function SummaryTab({forecast,scenario,reals,history,committedCount=0}:{forecast:any[];scenario:string;reals:Record<string,number>;history:HistRow[];committedCount?:number}) {
   const mainCanvas = useRef<HTMLCanvasElement>(null);
   useEffect(()=>{
     if(!mainCanvas.current||!window.Chart) return;
@@ -163,6 +163,11 @@ function SummaryTab({forecast,scenario,reals,history}:{forecast:any[];scenario:s
           <span className="flex items-center gap-1.5"><span className="w-4 h-0 border-t-2 border-dashed" style={{borderColor:"#9CA3AF"}}/>Budget</span>
         </div>
         <div style={{height:280}}><canvas ref={mainCanvas}/></div>
+        {committedCount>0 && (
+          <p className="mt-3 text-xs font-semibold" style={{color:"#B45309"}}>
+            📌 Committed scenario: {committedCount} lever{committedCount===1?"":"s"} — this is the active production &amp; finance forecast.
+          </p>
+        )}
       </div>
       <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
         <h3 className="text-sm font-bold mb-4" style={{color:"#1C2340"}}>Projected revenue by distributor</h3>
