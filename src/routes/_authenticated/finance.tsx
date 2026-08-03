@@ -350,6 +350,7 @@ function PNLTab() {
           })}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
