@@ -571,7 +571,7 @@ function SimuladorTab(p:SimProps) {
     retActive,setRetActive,retStores,setRetStores,retVel,setRetVel,retEntry,setRetEntry,
     retCommitted,setRetCommitted,newSkus,setNewSkus,skuCommitted,setSkuCommitted,
     mixOverrides,setMixOverrides,mixOverrideActive,setMixOverrideActive,mixCommitted,setMixCommitted,
-    onClearCommitted} = p;
+    onClearCommitted,detailView,skuView} = p;
 
   const velDeltaTotal = velChains.reduce((s,c,i)=>{
     if(!velActive[i]) return s;
@@ -606,8 +606,6 @@ function SimuladorTab(p:SimProps) {
     FORECAST_MONTHS.forEach(m=>{next[m.label]={...DEFAULT_MIX_PCT};});
     setMixOverrides(next);
   }
-
-  const card="rounded-2xl border border-border bg-card shadow-sm overflow-hidden";
 
   return (
     <div className="space-y-5">
