@@ -1129,12 +1129,17 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
             🏭 Yellow cells = planned runs · Frequency: {["","monthly","bimonthly","quarterly","four-monthly","","semiannual"][freqMonths]} · Safety {safetyWoh}w · Min {minRun.toLocaleString()} cases
           </div>
+          <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-700">
+            🛠️ "In production now" = cases currently being manufactured. They count as available stock, so the planner shifts or shrinks the suggested runs. Once the run is finished, log it in Production (creates the real In movement) and clear the cell here.
+          </div>
           <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
             <table className="text-xs min-w-max w-full">
               <thead>
                 <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
                   <th className="px-4 py-2.5 text-left sticky left-0" style={{backgroundColor:"#1C2340"}}>SKU</th>
                   <th className="px-3 py-2.5 text-right">Stock avail.</th>
+                  <th className="px-3 py-2.5 text-center min-w-[150px]">In production now</th>
+                  <th className="px-3 py-2.5 text-right">Available + WIP</th>
                   {FORECAST_MONTHS_OPS.map(m=><th key={m} className="px-3 py-2.5 text-center min-w-[75px]">{m}</th>)}
                   <th className="px-4 py-2.5 text-right">Total</th>
                 </tr>
@@ -1144,11 +1149,26 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
                   const SK: Record<string,string>={XD:"xd_cases",PW:"pw_cases",HM:"hm_cases",WM:"wm_cases",WD:"wd_cases",Matcha:"matcha_cases"};
                   const comm=orders.reduce((s,o)=>s+(Number(o[SK[sku]])||0),0);
                   const avail=Math.max(0,(bySku[sku]??0)-comm);
+                  const w=wip[sku]??{cases:"",due:""};
+                  const wipCases=parseInt(w.cases)||0;
                   const skuTotal=(plan[sku]??[]).reduce((a,b)=>a+b,0);
                   return (
                     <tr key={sku} className="border-t border-border/60 hover:bg-muted/20">
                       <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{sku} <span className="text-muted-foreground font-normal text-[10px]">({SKU_ITEMS[sku as SKU]})</span></td>
                       <td className="px-3 py-1.5 text-right font-mono">{avail.toLocaleString()}</td>
+                      <td className="px-3 py-1.5">
+                        <div className="flex items-center justify-center gap-1">
+                          <input type="number" min={0} value={w.cases} placeholder="0"
+                            onChange={e=>updateWip(sku,{cases:e.target.value})}
+                            className={`${inp} w-20 text-right ${wipCases>0?"bg-emerald-50":""}`}/>
+                          <input type="date" value={w.due} title="Ready date"
+                            onChange={e=>updateWip(sku,{due:e.target.value})}
+                            className={`${inp} w-[124px]`}/>
+                        </div>
+                      </td>
+                      <td className="px-3 py-1.5 text-right font-mono font-semibold" style={{color:wipCases>0?"#10B981":undefined}}>
+                        {(avail+wipCases).toLocaleString()}
+                      </td>
                       {(plan[sku]??[]).map((prod,i)=>(
                         <td key={i} className={`px-3 py-1.5 text-center font-mono font-semibold ${prod>0?"text-amber-900":"text-muted-foreground"}`}
                           style={prod>0?{backgroundColor:"#FEF08A"}:{}}>
@@ -1164,6 +1184,12 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
                 <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
                   <td className="px-4 py-2 font-semibold sticky left-0 text-xs" style={{backgroundColor:"#1C2340"}}>Total cases</td>
                   <td className="px-3 py-2 text-right font-mono text-xs">{SKUS.reduce((s,sku)=>s+Math.max(0,(bySku[sku]??0)-orders.reduce((a,o)=>a+(Number(o[{XD:"xd_cases",PW:"pw_cases",HM:"hm_cases",WM:"wm_cases",WD:"wd_cases",Matcha:"matcha_cases"}[sku]])||0),0)),0).toLocaleString()}</td>
+                  <td className="px-3 py-2 text-center font-mono text-xs text-emerald-300">
+                    {SKUS.reduce((s,sku)=>s+(wipBySku[sku]??0),0).toLocaleString()}
+                  </td>
+                  <td className="px-3 py-2 text-right font-mono text-xs">
+                    {SKUS.reduce((s,sku)=>s+Math.max(0,(bySku[sku]??0)-orders.reduce((a,o)=>a+(Number(o[{XD:"xd_cases",PW:"pw_cases",HM:"hm_cases",WM:"wm_cases",WD:"wd_cases",Matcha:"matcha_cases"}[sku]])||0),0))+(wipBySku[sku]??0),0).toLocaleString()}
+                  </td>
                   {totalByMonth.map((t,i)=>(
                     <td key={i} className="px-3 py-2 text-center font-mono font-bold text-amber-300"
                       style={t>0?{backgroundColor:"rgba(254,240,138,0.15)"}:{}}>
