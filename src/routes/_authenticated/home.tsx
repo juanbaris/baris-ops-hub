@@ -684,7 +684,7 @@ function HomePage() {
           {/* Monthly sales chart actual vs budget */}
           <div className="rounded-xl border border-border p-4 md:col-span-2">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold" style={{ color: "#1C2340" }}>Monthly Sales · Invoiced vs Budget vs Open 2026</h3>
+              <h3 className="text-sm font-semibold" style={{ color: "#1C2340" }}>Monthly Sales · Invoiced vs Best Estimate vs Open vs REPLAN 2026</h3>
               <span className="text-xs text-muted-foreground">$ USD · net sales</span>
             </div>
             <GroupedBarChart data={monthlySales} height={320} highlightIndex={today.getMonth()} />
