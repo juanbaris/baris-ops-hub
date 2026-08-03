@@ -349,7 +349,8 @@ function RateCards({ book, orders, reload }: { book: RateBook; orders: Order[]; 
     ...book.kehe.map(k => ({ dc: k.canonical_dc, payer: "KeHe FOB" })),
   ], [book.tariffs, book.kehe]);
 
-  async function addMapping(raw: string, dc: string) {
+  async function addMapping(raw: string, choice: string) {
+    const dc = choice === "__none" ? "" : choice;
     const payer = dcOptions.find(o => o.dc === dc)?.payer ?? null;
     setBusy(true);
     const { error } = await supabase.from("logistics_dc_mapping")
