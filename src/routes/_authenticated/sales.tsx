@@ -524,6 +524,8 @@ type SimProps = {
   mixOverrideActive:boolean; setMixOverrideActive:(v:boolean)=>void;
   mixCommitted:boolean; setMixCommitted:(v:boolean)=>void;
   onClearCommitted:()=>void;
+  detailView?:ReactNode;
+  skuView?:ReactNode;
 };
 
 function SetButton({active,committed,onToggle}:{active:boolean;committed:boolean;onToggle:()=>void}) {
@@ -536,6 +538,32 @@ function SetButton({active,committed,onToggle}:{active:boolean;committed:boolean
 function rowClass(active:boolean,committed:boolean,tint:string) {
   if(committed) return "bg-amber-50/40 border-l-2 border-amber-400";
   return active?tint:"";
+}
+
+/** Collapsible section used by the simulator blocks and the live impact panels. */
+function Collapsible({title,subtitle,badge,defaultOpen=true,actions,children}:{
+  title:string;subtitle?:string;badge?:ReactNode;defaultOpen?:boolean;
+  actions?:ReactNode;children:ReactNode;
+}) {
+  const [open,setOpen]=useState(defaultOpen);
+  return (
+    <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+      <div className="px-5 py-3 border-b border-border bg-muted/30 flex items-center justify-between gap-4 flex-wrap">
+        <button type="button" onClick={()=>setOpen(o=>!o)} className="flex items-start gap-2 text-left flex-1 min-w-0">
+          <span className="mt-0.5 text-xs text-muted-foreground transition-transform" style={{transform:open?"rotate(90deg)":"none"}}>▶</span>
+          <span className="min-w-0">
+            <span className="flex items-center gap-2 flex-wrap">
+              <span className="text-sm font-bold" style={{color:"#1C2340"}}>{title}</span>
+              {badge}
+            </span>
+            {subtitle && <span className="block text-xs text-muted-foreground">{subtitle}</span>}
+          </span>
+        </button>
+        {actions && <div className="flex items-center gap-2 flex-wrap">{actions}</div>}
+      </div>
+      {open && children}
+    </div>
+  );
 }
 
 function SimuladorTab(p:SimProps) {
