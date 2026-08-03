@@ -147,6 +147,7 @@ export type ForecastState = {
   retStores: number[];
   retVel: number[];
   retEntry: number[];
+  newSkus?: NewSku[];
 };
 
 export const DEFAULT_FORECAST_STATE: ForecastState = {
@@ -159,6 +160,7 @@ export const DEFAULT_FORECAST_STATE: ForecastState = {
   retStores: NEW_RETAILERS.map(r => r.stores),
   retVel: NEW_RETAILERS.map(r => r.vel),
   retEntry: NEW_RETAILERS.map(r => r.entry),
+  newSkus: DEFAULT_NEW_SKUS,
 };
 
 const STORAGE_KEY = "baris.sales.forecast.v1";
@@ -197,6 +199,6 @@ export function forecastFromState(s: ForecastState) {
   return calcForecast(
     s.scenario, s.velActive, s.velNew,
     s.retActive, s.retStores, s.retVel, s.retEntry,
-    s.velChains, s.seasonIdx,
+    s.velChains, s.seasonIdx, s.newSkus ?? [],
   );
 }
