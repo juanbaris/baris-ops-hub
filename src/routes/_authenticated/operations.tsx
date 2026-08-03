@@ -1363,7 +1363,30 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
       {/* ── SHOPPING LIST ── */}
       {procTab==="shopping" && (
         <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-border bg-card px-4 py-3 shadow-sm">
+            <span className="text-xs font-semibold text-muted-foreground">Buy for:</span>
+            {([["next","Next run only"],["3m","Next 3 months"],["all","Full horizon (12 mo)"]] as const).map(([id,label])=>(
+              <button key={id} onClick={()=>setShopScope(id)}
+                className="rounded-full border px-3 py-1 text-xs font-semibold transition-colors"
+                style={shopScope===id
+                  ?{backgroundColor:"#A3224A",borderColor:"#A3224A",color:"#fff"}
+                  :{borderColor:"hsl(var(--border))",color:"hsl(var(--muted-foreground))"}}>
+                {label}
+              </button>
+            ))}
+            <div className="ml-auto text-right">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Covers</p>
+              <p className="text-sm font-bold font-mono" style={{color:"#1C2340"}}>
+                {shopRange
+                  ? `${FORECAST_MONTHS_OPS[shopRange[0]]}${shopRange[0]===shopRange[1]?"":` → ${FORECAST_MONTHS_OPS[shopRange[1]]}`} · ${shopCasesWindow.toLocaleString()} cases`
+                  : "No production planned"}
+              </p>
+            </div>
+          </div>
           <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-700">
+            {shopScope==="next" && nextRunIdx>=0
+              ? `📅 Next production run: ${FORECAST_MONTHS_OPS[nextRunIdx]} — ${shopCasesWindow.toLocaleString()} cases. `
+              : ""}
             💡 Inventory = load actual stock in the "Raw Materials" tab. To Acquire = Needed − Inventory rounded to pack size.
           </div>
           <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
@@ -1381,8 +1404,8 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
                 </tr>
               </thead>
               <tbody>
-                {ALL_INGS.filter(ing=>(ingNeeded[ing]??0)>0).map(ing=>{
-                  const needed=Math.round(ingNeeded[ing]??0);
+                {ALL_INGS.filter(ing=>(ingWindow[ing]??0)>0).map(ing=>{
+                  const needed=Math.round(ingWindow[ing]??0);
                   const inv=parseInt(ingInv[ing])||0;
                   const toAcq=Math.max(0,needed-inv);
                   const ps=ING_PACK_SIZES[ing]??1;
@@ -1407,8 +1430,8 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
                 <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
                   <td className="px-4 py-2 font-semibold text-xs" colSpan={7}>TOTAL INGREDIENTS</td>
                   <td className="px-4 py-2 text-right font-mono font-bold text-emerald-400">
-                    ${ALL_INGS.filter(ing=>(ingNeeded[ing]??0)>0).reduce((s,ing)=>{
-                      const needed=Math.round(ingNeeded[ing]??0);
+                    ${ALL_INGS.filter(ing=>(ingWindow[ing]??0)>0).reduce((s,ing)=>{
+                      const needed=Math.round(ingWindow[ing]??0);
                       const inv=parseInt(ingInv[ing])||0;
                       const toAcq=Math.max(0,needed-inv);
                       const ps=ING_PACK_SIZES[ing]??1;
