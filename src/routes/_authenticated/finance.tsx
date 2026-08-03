@@ -267,6 +267,7 @@ function DashboardTab({ period, refMonth }: { period: Period; refMonth: number }
 
 // ─── P&L Table ────────────────────────────────────────────────────────────────
 function PNLTab() {
+  const revenue = useFinanceRevenue();
   type RowType = 'header'|'total'|'sub'|'pct';
   const rows: { name: string; type: RowType; data?: number[] }[] = [
     { name: 'GROSS SALES', type: 'header' },
@@ -274,7 +275,7 @@ function PNLTab() {
     { name: 'SALES DEDUCTIONS', type: 'header' },
     { name: 'Trade spend', type: 'sub', data: D.trade_spend },
     { name: 'Distributor fees', type: 'sub', data: D.distr_fees },
-    { name: 'Net Sales', type: 'total', data: D.net_sales },
+    { name: 'Net Sales', type: 'total', data: revenue.netSales },
     { name: 'COGS & FULFILLMENT', type: 'header' },
     { name: 'COGS', type: 'sub', data: D.cogs.map(v=>-v) },
     { name: 'Storage', type: 'sub', data: D.storage.map(v=>-v) },
@@ -293,7 +294,16 @@ function PNLTab() {
   const gs_fy = sum(D.gross_sales);
 
   return (
-    <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="rounded-full border border-border px-3 py-1 font-semibold text-muted-foreground">
+          Net Sales source: Sales · {revenue.source}
+        </span>
+        <span className="flex items-center gap-1 text-muted-foreground">
+          <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" /> A = actual (invoiced pipeline)
+        </span>
+      </div>
+      <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
       <table className="w-full text-xs min-w-max">
         <thead>
           <tr className="bg-muted/50 border-b border-border">
