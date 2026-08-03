@@ -7,8 +7,12 @@ import {
   PRICE_PER_CASE, UNITS_PER_CASE, WEEKS_PER_MONTH, IMPLIED_ANNUAL_2026,
   DEFAULT_SEASON_IDX, GROWTH, SKU_MIX, FORECAST_MONTHS,
   DEFAULT_VEL_CHAINS, NEW_RETAILERS, calcForecast, skuForecast,
-  saveForecastState, type VelChain, type ForecastState,
+  saveForecastState, DEFAULT_NEW_SKUS, NEW_SKU_COLORS, newSkuCases,
+  type VelChain, type ForecastState, type NewSku,
 } from "@/lib/sales-forecast";
+
+const DEFAULT_MIX_PCT: Record<string,number> = {XD:30,PW:25,HM:18,WM:12,WD:8,Matcha:7};
+const MIX_SKUS = ["XD","PW","HM","WM","WD","Matcha"];
 
 type HistRow = { label: string; cases: number; revenue: number };
 const DIST_MIX = [
