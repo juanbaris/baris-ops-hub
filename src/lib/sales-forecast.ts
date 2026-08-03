@@ -16,6 +16,23 @@ export type Scenario = keyof typeof GROWTH;
 
 export const SKU_MIX: Record<string, number> = { XD: 0.30, PW: 0.25, HM: 0.18, WM: 0.12, WD: 0.08, Matcha: 0.07 };
 
+export type NewSku = { name: string; stores: number; vel: number; entry: number; active: boolean; committed?: boolean };
+export const DEFAULT_NEW_SKUS: NewSku[] = [
+  { name: "Frutilla & White", stores: 50, vel: 1.20, entry: 3, active: false, committed: false },
+  { name: "Frutilla Caramel", stores: 50, vel: 1.20, entry: 4, active: false, committed: false },
+  { name: "Frutilla Yogur", stores: 50, vel: 1.00, entry: 5, active: false, committed: false },
+  { name: "Frambusa Yogur", stores: 50, vel: 1.00, entry: 6, active: false, committed: false },
+];
+export const NEW_SKU_COLORS = ["#EC4899", "#F97316", "#14B8A6", "#A855F7"];
+
+/** Incremental cases for one new SKU in forecast month `idx` (0-based). */
+export function newSkuCases(sku: NewSku, idx: number) {
+  const monthsIn = idx - (sku.entry - 1);
+  if (monthsIn < 0) return 0;
+  const ramp = monthsIn === 0 ? 0.4 : monthsIn === 1 ? 0.7 : 1.0;
+  return Math.round(sku.stores * sku.vel * WEEKS_PER_MONTH / UNITS_PER_CASE * ramp);
+}
+
 export const FORECAST_MONTHS = [
   { label: "Aug 2026", month: 8, year: 2026, yoy2025: 1384 },
   { label: "Sep 2026", month: 9, year: 2026, yoy2025: 2728 },
@@ -59,6 +76,7 @@ export function calcForecast(
   retailerEntry: number[],
   velChains: VelChain[] = DEFAULT_VEL_CHAINS,
   seasonIdx: Record<number, number> = DEFAULT_SEASON_IDX,
+  newSkus: NewSku[] = [],
 ) {
   const growth = GROWTH[scenario];
   const base = IMPLIED_ANNUAL_2026 * (1 + growth);
@@ -79,7 +97,9 @@ export function calcForecast(
       return s + Math.round(retailerStores[ri] * retailerVel[ri] * WEEKS_PER_MONTH / UNITS_PER_CASE * ramp);
     }, 0);
 
-    const totalCases = baseCases + velDelta + acctDelta;
+    const newSkuDelta = newSkus.reduce((s, sku) => (sku.active ? s + newSkuCases(sku, idx) : s), 0);
+
+    const totalCases = baseCases + velDelta + acctDelta + newSkuDelta;
     const budgetCases = Math.round((IMPLIED_ANNUAL_2026 * (1 + GROWTH.Normal) / 12) * (seasonIdx[m.month] ?? 1));
 
     return {
@@ -87,6 +107,7 @@ export function calcForecast(
       baseCases,
       velDelta,
       acctDelta,
+      newSkuDelta,
       totalCases,
       revenue: Math.round(totalCases * PRICE_PER_CASE),
       budget: Math.round(budgetCases * PRICE_PER_CASE),
