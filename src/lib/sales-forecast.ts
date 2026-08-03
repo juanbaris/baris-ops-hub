@@ -18,10 +18,10 @@ export const SKU_MIX: Record<string, number> = { XD: 0.30, PW: 0.25, HM: 0.18, W
 
 export type NewSku = { name: string; stores: number; vel: number; entry: number; active: boolean; committed?: boolean };
 export const DEFAULT_NEW_SKUS: NewSku[] = [
-  { name: "Frutilla & White", stores: 50, vel: 1.20, entry: 3, active: false, committed: false },
-  { name: "Frutilla Caramel", stores: 50, vel: 1.20, entry: 4, active: false, committed: false },
-  { name: "Frutilla Yogur", stores: 50, vel: 1.00, entry: 5, active: false, committed: false },
-  { name: "Frambusa Yogur", stores: 50, vel: 1.00, entry: 6, active: false, committed: false },
+  { name: "Strawberry & White", stores: 50, vel: 1.20, entry: 3, active: false, committed: false },
+  { name: "Strawberry Caramel", stores: 50, vel: 1.20, entry: 4, active: false, committed: false },
+  { name: "Strawberry Yogurt", stores: 50, vel: 1.00, entry: 5, active: false, committed: false },
+  { name: "Raspberry Yogurt", stores: 50, vel: 1.00, entry: 6, active: false, committed: false },
 ];
 export const NEW_SKU_COLORS = ["#EC4899", "#F97316", "#14B8A6", "#A855F7"];
 
@@ -148,6 +148,14 @@ export type ForecastState = {
   retVel: number[];
   retEntry: number[];
   newSkus?: NewSku[];
+  /** Committed ("SET") levers — the official production/finance scenario. */
+  velCommitted?: boolean[];
+  retCommitted?: boolean[];
+  skuCommitted?: boolean[];
+  mixCommitted?: boolean;
+  mixOverrides?: Record<string, Record<string, number>>;
+  mixOverrideActive?: boolean;
+  committedAt?: string | null;
 };
 
 export const DEFAULT_FORECAST_STATE: ForecastState = {
@@ -161,6 +169,13 @@ export const DEFAULT_FORECAST_STATE: ForecastState = {
   retVel: NEW_RETAILERS.map(r => r.vel),
   retEntry: NEW_RETAILERS.map(r => r.entry),
   newSkus: DEFAULT_NEW_SKUS,
+  velCommitted: DEFAULT_VEL_CHAINS.map(() => false),
+  retCommitted: NEW_RETAILERS.map(() => false),
+  skuCommitted: DEFAULT_NEW_SKUS.map(() => false),
+  mixCommitted: false,
+  mixOverrides: {},
+  mixOverrideActive: false,
+  committedAt: null,
 };
 
 const STORAGE_KEY = "baris.sales.forecast.v1";
@@ -201,4 +216,71 @@ export function forecastFromState(s: ForecastState) {
     s.retActive, s.retStores, s.retVel, s.retEntry,
     s.velChains, s.seasonIdx, s.newSkus ?? [],
   );
+}
+
+// ─── Committed ("SET") scenario ──────────────────────────────────────────────
+
+export const MIX_SKUS = ["XD", "PW", "HM", "WM", "WD", "Matcha"] as const;
+export const DEFAULT_MIX_PCT: Record<string, number> = { XD: 30, PW: 25, HM: 18, WM: 12, WD: 8, Matcha: 7 };
+
+/** How many levers the user locked in with SET. */
+export function committedLeverCount(s: ForecastState) {
+  const vel = (s.velCommitted ?? []).filter((c, i) => c && s.velActive[i]).length;
+  const ret = (s.retCommitted ?? []).filter((c, i) => c && s.retActive[i]).length;
+  const sku = (s.skuCommitted ?? []).filter((c, i) => c && (s.newSkus ?? [])[i]?.active).length;
+  return vel + ret + sku + (s.mixCommitted ? 1 : 0);
+}
+
+/** Forecast built from committed levers only. Null when nothing is committed. */
+export function committedForecastFromState(s: ForecastState) {
+  if (committedLeverCount(s) === 0) return null;
+  const velC = s.velCommitted ?? [];
+  const retC = s.retCommitted ?? [];
+  const skuC = s.skuCommitted ?? [];
+  return calcForecast(
+    s.scenario,
+    s.velActive.map((a, i) => a && !!velC[i]), s.velNew,
+    s.retActive.map((a, i) => a && !!retC[i]), s.retStores, s.retVel, s.retEntry,
+    s.velChains, s.seasonIdx,
+    (s.newSkus ?? []).map((sk, i) => ({ ...sk, active: sk.active && !!skuC[i] })),
+  );
+}
+
+/** Existing-SKU cases per month, honouring a per-month mix override. */
+export function skuForecastWithMix(
+  forecast: ForecastRow[],
+  mixOverrides: Record<string, Record<string, number>> = {},
+  mixOverrideActive = false,
+): Record<string, number[]> {
+  const base = forecast.map(f => f.totalCases - (f.newSkuDelta ?? 0));
+  return Object.fromEntries(MIX_SKUS.map(sku => [
+    sku,
+    forecast.map((f, i) => {
+      const pct = mixOverrideActive
+        ? (mixOverrides[f.label]?.[sku] ?? DEFAULT_MIX_PCT[sku])
+        : DEFAULT_MIX_PCT[sku];
+      return Math.round(base[i] * (pct / 100));
+    }),
+  ]));
+}
+
+export type ProductionMonth = {
+  label: string; month: number; year: number; totalCases: number;
+  skuBreakdown: Record<string, number>;
+  newSkuBreakdown: { name: string; cases: number }[];
+};
+
+/** Per-SKU production requirement per month for a given forecast. */
+export function productionRequirements(
+  forecast: ForecastRow[],
+  newSkus: NewSku[],
+  mixOverrides: Record<string, Record<string, number>> = {},
+  mixOverrideActive = false,
+): ProductionMonth[] {
+  const bySku = skuForecastWithMix(forecast, mixOverrides, mixOverrideActive);
+  return forecast.map((f, i) => ({
+    label: f.label, month: f.month, year: f.year, totalCases: f.totalCases,
+    skuBreakdown: Object.fromEntries(MIX_SKUS.map(s => [s, bySku[s]?.[i] ?? 0])),
+    newSkuBreakdown: newSkus.filter(s => s.active).map(s => ({ name: s.name, cases: newSkuCases(s, i) })),
+  }));
 }

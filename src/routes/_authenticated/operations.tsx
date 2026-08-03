@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/app-shell";
@@ -869,6 +869,81 @@ function buildOpsForecast(bySkuMonthKey: Record<string, Record<string, number>>)
 
 type ProcSubTab = "schedule"|"stock_proj"|"bom_cogs"|"shopping"|"raw_materials";
 
+/** Production requirements coming from the Sales simulator (committed scenario wins). */
+function CommittedRequirements() {
+  const { production, isCommitted, committedLevers, committedAt, scenario } = useSalesForecast();
+  const newSkuNames = useMemo(()=>{
+    const set = new Set<string>();
+    for(const m of production) for(const n of m.newSkuBreakdown) set.add(n.name);
+    return [...set];
+  },[production]);
+
+  function exportCsv(){
+    const head = ["Month",...SKUS,...newSkuNames,"TOTAL"];
+    const rows = production.map(m=>[
+      m.label,
+      ...SKUS.map(s=>m.skuBreakdown[s]??0),
+      ...newSkuNames.map(n=>m.newSkuBreakdown.find(x=>x.name===n)?.cases??0),
+      m.totalCases,
+    ]);
+    const csv=[head,...rows].map(r=>r.join(",")).join("\n");
+    const url=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
+    const a=document.createElement("a");
+    a.href=url; a.download="production-requirements.csv"; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-border bg-muted/30">
+        <div>
+          <p className="text-sm font-bold" style={{color:"#1C2340"}}>Production requirements — {isCommitted?"committed scenario":"active forecast"}</p>
+          {isCommitted ? (
+            <p className="text-xs text-amber-700 font-semibold">
+              🔒 Based on committed scenario · {committedLevers} lever{committedLevers===1?"":"s"} active
+              {committedAt?` · Last updated: ${new Date(committedAt).toLocaleString()}`:""}
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              ℹ️ No committed scenario — showing active forecast ({scenario}). Go to Sales → Simulador and click SET on any lever to define the production input.
+            </p>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <Link to="/sales" className="rounded-full border border-border px-3 py-1 text-xs font-semibold text-muted-foreground hover:text-foreground">
+            Review in Simulador
+          </Link>
+          <button onClick={exportCsv} className="rounded-full border border-border px-3 py-1 text-xs font-semibold text-muted-foreground hover:text-foreground">
+            Export CSV
+          </button>
+        </div>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs min-w-max">
+          <thead>
+            <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
+              <th className="px-4 py-2 text-left">Month</th>
+              {SKUS.map(s=><th key={s} className="px-3 py-2 text-right">{s}</th>)}
+              {newSkuNames.map(n=><th key={n} className="px-3 py-2 text-right">{n}</th>)}
+              <th className="px-4 py-2 text-right font-bold">TOTAL</th>
+            </tr>
+          </thead>
+          <tbody>
+            {production.map(m=>(
+              <tr key={m.label} className="border-t border-border/60 hover:bg-muted/20">
+                <td className="px-4 py-1.5 font-semibold">{m.label}</td>
+                {SKUS.map(s=><td key={s} className="px-3 py-1.5 text-right font-mono">{(m.skuBreakdown[s]??0).toLocaleString()}</td>)}
+                {newSkuNames.map(n=><td key={n} className="px-3 py-1.5 text-right font-mono">{(m.newSkuBreakdown.find(x=>x.name===n)?.cases??0).toLocaleString()}</td>)}
+                <td className="px-4 py-1.5 text-right font-mono font-bold">{m.totalCases.toLocaleString()}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function calcCOGSFull(prices: Record<string,number>, costs: typeof DEFAULT_PROD_COSTS, scrap: {raspberry:number;chocolate:number}) {
   return Object.fromEntries(SKUS.map(sku => {
     const bom = BOM_PCT[sku]??{};
@@ -965,6 +1040,7 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
 
   return (
     <div className="space-y-4">
+      <CommittedRequirements />
       {/* Controls */}
       <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
         <div className="flex flex-wrap items-center gap-6">

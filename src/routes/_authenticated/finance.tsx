@@ -1,5 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useInvoicedActuals } from "@/hooks/use-invoiced-actuals";
+import { useSalesForecast } from "@/hooks/use-sales-forecast";
 
 // ─── Data (values in $K) ──────────────────────────────────────────────────────
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'] as const;
@@ -66,6 +68,28 @@ function periodSlice(arr: number[], period: Period, refMonth: number) {
   return sum(arr);
 }
 
+// ─── Top-line revenue comes from Sales (actuals + committed/active forecast) ──
+function useFinanceRevenue() {
+  const { byLabel, loading } = useInvoicedActuals();
+  const { effectiveForecast, isCommitted, scenario } = useSalesForecast();
+  return useMemo(() => {
+    const fcByKey: Record<string, number> = {};
+    for (const f of effectiveForecast) fcByKey[`${f.year}-${f.month}`] = f.revenue;
+    const isReal: boolean[] = [];
+    const netSales = MONTHS.map((m, i) => {
+      const real = byLabel[`${m} 2026`]?.revenue ?? 0;
+      if (real > 0) { isReal.push(true); return real / 1000; }
+      isReal.push(false);
+      const fc = fcByKey[`2026-${i + 1}`];
+      return fc != null ? fc / 1000 : D.net_sales[i];
+    });
+    return {
+      netSales, isReal, loading,
+      source: isCommitted ? "Committed" : `${scenario} scenario`,
+    };
+  }, [byLabel, effectiveForecast, isCommitted, scenario, loading]);
+}
+
 // ─── Chart wrapper using Chart.js via CDN ─────────────────────────────────────
 declare global { interface Window { Chart: any } }
 
@@ -97,9 +121,10 @@ function KPI({ icon, label, value, sub, subColor, onClick }: {
 
 // ─── Dashboard Tab ────────────────────────────────────────────────────────────
 function DashboardTab({ period, refMonth }: { period: Period; refMonth: number }) {
+  const revenue = useFinanceRevenue();
   const rev = periodSlice(D.gross_sales, period, refMonth);
   const budgetRev = periodSlice(BUDGET.gross_sales, period, refMonth);
-  const netRev = periodSlice(D.net_sales, period, refMonth);
+  const netRev = periodSlice(revenue.netSales, period, refMonth);
   const gp = periodSlice(D.gross_margin, period, refMonth);
   const gmPct = netRev ? gp/netRev : 0;
   const bc = periodSlice(D.business_contribution, period, refMonth);
@@ -162,7 +187,7 @@ function DashboardTab({ period, refMonth }: { period: Period; refMonth: number }
 
   // Waterfall FY totals
   const wfLabels = ['Gross Sales','Ded.','Net Sales','COGS','Fulfillment','GM','SG&A','EBITDA'];
-  const gs = sum(D.gross_sales); const ded = sum(D.trade_spend)+sum(D.distr_fees); const ns = sum(D.net_sales);
+  const gs = sum(D.gross_sales); const ded = sum(D.trade_spend)+sum(D.distr_fees); const ns = sum(revenue.netSales);
   const cogs = -sum(D.cogs); const ful = -(sum(D.storage)+sum(D.freight_out)); const gm = sum(D.gross_margin);
   const sga = sum(D.selling_exp)+sum(D.mkt_trade)+sum(D.team)+sum(D.gen_exp); const eb = sum(D.ebitda);
   const wfData = [gs, ded, ns, cogs, ful, gm, sga, eb];
@@ -172,7 +197,7 @@ function DashboardTab({ period, refMonth }: { period: Period; refMonth: number }
     type: 'bar',
     data: { labels: wfLabels, datasets: [{ data: wfData, backgroundColor: wfColors, borderRadius: 4 }] },
     options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } }, scales:{ y:{ ticks:{ callback:(v:number) => '$'+v+'K' } } } }
-  }), []);
+  }), [ns]);
 
   return (
     <div className="space-y-5">
@@ -182,11 +207,13 @@ function DashboardTab({ period, refMonth }: { period: Period; refMonth: number }
         </div>
       )}
 
-      {/* 7 KPIs */}
-      <div className="grid grid-cols-3 md:grid-cols-7 gap-3">
+      {/* KPIs */}
+      <div className="grid grid-cols-3 md:grid-cols-8 gap-3">
         <KPI icon="💰" label="Revenue" value={fmtK(rev)}
           sub={`Budget vs Forecast ${vsBpct>=0?'+':''}${(vsBpct*100).toFixed(1)}%`}
           subColor={vsBpct>=0?"text-emerald-600":"text-red-500"} />
+        <KPI icon="🧾" label="Net Sales" value={revenue.loading ? "—" : fmtK(netRev)}
+          sub={`Source: Sales · ${revenue.source}`} />
         <KPI icon="📊" label="Gross Margin %" value={fmtPct(gmPct)}
           sub={`${fmt(gp,0)} abs`} />
         <KPI icon="🎯" label="Business Contribution" value={fmtK(bc)}
@@ -240,6 +267,7 @@ function DashboardTab({ period, refMonth }: { period: Period; refMonth: number }
 
 // ─── P&L Table ────────────────────────────────────────────────────────────────
 function PNLTab() {
+  const revenue = useFinanceRevenue();
   type RowType = 'header'|'total'|'sub'|'pct';
   const rows: { name: string; type: RowType; data?: number[] }[] = [
     { name: 'GROSS SALES', type: 'header' },
@@ -247,7 +275,7 @@ function PNLTab() {
     { name: 'SALES DEDUCTIONS', type: 'header' },
     { name: 'Trade spend', type: 'sub', data: D.trade_spend },
     { name: 'Distributor fees', type: 'sub', data: D.distr_fees },
-    { name: 'Net Sales', type: 'total', data: D.net_sales },
+    { name: 'Net Sales', type: 'total', data: revenue.netSales },
     { name: 'COGS & FULFILLMENT', type: 'header' },
     { name: 'COGS', type: 'sub', data: D.cogs.map(v=>-v) },
     { name: 'Storage', type: 'sub', data: D.storage.map(v=>-v) },
@@ -266,15 +294,28 @@ function PNLTab() {
   const gs_fy = sum(D.gross_sales);
 
   return (
-    <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="rounded-full border border-border px-3 py-1 font-semibold text-muted-foreground">
+          Net Sales source: Sales · {revenue.source}
+        </span>
+        <span className="flex items-center gap-1 text-muted-foreground">
+          <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" /> A = actual (invoiced pipeline)
+        </span>
+      </div>
+      <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
       <table className="w-full text-xs min-w-max">
         <thead>
           <tr className="bg-muted/50 border-b border-border">
             <th className="text-left px-4 py-2.5 font-semibold text-[10px] uppercase tracking-wide text-muted-foreground w-40">Line</th>
             {MONTHS.map((m,i) => (
               <th key={m} className="text-right px-2 py-2.5 text-[10px] uppercase tracking-wide w-12"
-                style={{color: i < REAL_MONTHS ? "#1C2340" : "#9CA3AF"}}>
-                {m}<div className="text-[8px]">{i<REAL_MONTHS?"R":"F"}</div>
+                style={{color: revenue.isReal[i] ? "#1C2340" : "#9CA3AF"}}>
+                {m}
+                <div className="text-[8px] flex items-center justify-end gap-0.5">
+                  {revenue.isReal[i] && <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />}
+                  {revenue.isReal[i] ? "A" : "F"}
+                </div>
               </th>
             ))}
             <th className="text-right px-2 py-2.5 text-[10px] uppercase text-muted-foreground w-14">FY</th>
@@ -313,6 +354,7 @@ function PNLTab() {
           })}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

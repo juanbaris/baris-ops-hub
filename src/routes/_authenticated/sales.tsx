@@ -1077,9 +1077,13 @@ function SalesPage() {
     const state: ForecastState = {
       scenario, seasonIdx, velChains,
       velActive, velNew, retActive, retStores, retVel, retEntry, newSkus,
+      velCommitted, retCommitted, skuCommitted, mixCommitted,
+      mixOverrides, mixOverrideActive,
+      committedAt: committedCount>0 ? new Date().toISOString() : null,
     };
     saveForecastState(state);
-  },[scenario,seasonIdx,velChains,velActive,velNew,retActive,retStores,retVel,retEntry,newSkus]);
+  },[scenario,seasonIdx,velChains,velActive,velNew,retActive,retStores,retVel,retEntry,newSkus,
+     velCommitted,retCommitted,skuCommitted,mixCommitted,mixOverrides,mixOverrideActive,committedCount]);
 
   useEffect(()=>{
     if(window.Chart) return;
