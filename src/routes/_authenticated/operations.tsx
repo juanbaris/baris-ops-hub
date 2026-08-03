@@ -1019,6 +1019,25 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
   const [prodCosts,  setProdCosts]  = useState({...DEFAULT_PROD_COSTS});
   const [scrap,      setScrap]      = useState({raspberry:0.10,chocolate:0.08});
   const [ingInv,     setIngInv]     = useState<Record<string,string>>(Object.fromEntries(ALL_INGS.map(k=>[k,""])));
+  // WIP = cases currently being produced (manual entry), counted as available stock.
+  const WIP_KEY="baris.ops.wip.v1";
+  const [wip, setWip] = useState<Record<string,{cases:string;due:string}>>(
+    Object.fromEntries(SKUS.map(s=>[s,{cases:"",due:""}])));
+  const [shopScope, setShopScope] = useState<"next"|"3m"|"all">("next");
+  useEffect(()=>{
+    try{
+      const raw=window.localStorage.getItem(WIP_KEY);
+      if(raw) setWip(w=>({...w,...JSON.parse(raw)}));
+    }catch{/* ignore */}
+  },[]);
+  function updateWip(sku:string, patch:Partial<{cases:string;due:string}>){
+    setWip(w=>{
+      const next={...w,[sku]:{...(w[sku]??{cases:"",due:""}),...patch}};
+      try{ window.localStorage.setItem(WIP_KEY, JSON.stringify(next)); }catch{/* ignore */}
+      return next;
+    });
+  }
+  const wipBySku = useMemo(()=>Object.fromEntries(SKUS.map(s=>[s,parseInt(wip[s]?.cases??"")||0])),[wip]);
   const { bySkuMonthKey } = useSalesForecast();
   const fcstOps = useMemo(()=>buildOpsForecast(bySkuMonthKey),[bySkuMonthKey]);
 
@@ -1028,10 +1047,29 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
     return m;
   },[movements]);
 
-  const {plan,stockProj,ingNeeded} = useMemo(()=>calcProdSchedule(bySku,orders,safetyWoh,minRun,freqMonths,fcstOps),[bySku,orders,safetyWoh,minRun,freqMonths,fcstOps]);
+  const {plan,stockProj,ingNeeded,ingByMonth} = useMemo(()=>calcProdSchedule(bySku,orders,safetyWoh,minRun,freqMonths,fcstOps,wipBySku),[bySku,orders,safetyWoh,minRun,freqMonths,fcstOps,wipBySku]);
   const cogs = useMemo(()=>calcCOGSFull(ingPrices,prodCosts,scrap),[ingPrices,prodCosts,scrap]);
 
   const totalByMonth = FORECAST_MONTHS_OPS.map((_,i)=>SKUS.reduce((s,sku)=>s+(plan[sku]?.[i]??0),0));
+  const nextRunIdx = totalByMonth.findIndex(t=>t>0);
+  const shopRange = useMemo(()=>{
+    if(nextRunIdx<0) return null;
+    if(shopScope==="next") return [nextRunIdx,nextRunIdx] as const;
+    if(shopScope==="3m") return [nextRunIdx,Math.min(nextRunIdx+2,FORECAST_MONTHS_OPS.length-1)] as const;
+    return [0,FORECAST_MONTHS_OPS.length-1] as const;
+  },[shopScope,nextRunIdx]);
+  /** Ingredient lbs required for the selected shopping-list window. */
+  const ingWindow = useMemo(()=>{
+    const out:Record<string,number>={};
+    if(!shopRange) return out;
+    for(const [ing,arr] of Object.entries(ingByMonth)){
+      let s=0; for(let i=shopRange[0];i<=shopRange[1];i++) s+=arr[i]??0;
+      if(s>0) out[ing]=s;
+    }
+    return out;
+  },[ingByMonth,shopRange]);
+  const shopCasesWindow = shopRange
+    ? totalByMonth.slice(shopRange[0],shopRange[1]+1).reduce((a,b)=>a+b,0) : 0;
   const totalProduce = SKUS.reduce((s,sku)=>s+(plan[sku]??[]).reduce((a,b)=>a+b,0),0);
   const weightedCOGS = SKUS.reduce((s,sku)=>s+(cogs[sku]?.per_case??0)*(SKU_MIX_PCT[sku]??0),0);
 
