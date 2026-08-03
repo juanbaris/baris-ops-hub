@@ -27,8 +27,113 @@ const ALL_MONTHS_REAL = [
   "Jan 2027","Feb 2027","Mar 2027","Apr 2027","May 2027","Jun 2027","Jul 2027",
 ];
 
-type SalesTab = "real"|"resumen"|"detalle"|"sku"|"simulador"|"estacionalidad";
+type SalesTab = "real"|"resumen"|"detalle"|"sku"|"simulador"|"estacionalidad"|"salesdb";
 declare global { interface Window { Chart: any } }
+
+// ─── Sales DB Tab (reference · read-only order-level source data) ────────────
+const DB_SKU_COLS = [
+  {key:"xd_cases",label:"XD"},{key:"pw_cases",label:"PW"},{key:"hm_cases",label:"HM"},
+  {key:"wm_cases",label:"WM"},{key:"wd_cases",label:"WD"},{key:"matcha_cases",label:"Matcha"},
+] as const;
+
+function SalesDBTab() {
+  const [rows,setRows]=useState<any[]>([]);
+  const [loading,setLoading]=useState(true);
+  const [error,setError]=useState<string|null>(null);
+  const [q,setQ]=useState("");
+  const [status,setStatus]=useState<string>("All");
+
+  useEffect(()=>{
+    let cancel=false;
+    (async()=>{
+      const {data,error}=await supabase
+        .from("customer_orders")
+        .select("id,po_number,po_date,invoice_date,distributor,customer,status,net_sales,gross_sales,xd_cases,pw_cases,hm_cases,wm_cases,wd_cases,matcha_cases")
+        .order("po_date",{ascending:false});
+      if(cancel) return;
+      if(error){setError(error.message);setLoading(false);return;}
+      setRows(data??[]);setLoading(false);
+    })();
+    return()=>{cancel=true;};
+  },[]);
+
+  const statuses = useMemo(()=>["All",...Array.from(new Set(rows.map(r=>r.status).filter(Boolean)))],[rows]);
+  const filtered = useMemo(()=>rows.filter(r=>{
+    if(status!=="All"&&r.status!==status) return false;
+    if(!q.trim()) return true;
+    const s=q.toLowerCase();
+    return [r.po_number,r.customer,r.distributor].some(v=>String(v??"").toLowerCase().includes(s));
+  }),[rows,q,status]);
+
+  const casesOf=(r:any)=>DB_SKU_COLS.reduce((s,c)=>s+(Number(r[c.key])||0),0);
+  const totCases=filtered.reduce((s,r)=>s+casesOf(r),0);
+  const totRev=filtered.reduce((s,r)=>s+(Number(r.net_sales??r.gross_sales)||0),0);
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border border-border bg-muted/30 px-4 py-3 text-xs text-muted-foreground">
+        📚 Reference view — order-level source data behind every "Real" number in Sales. Read-only; edit orders in <strong>Fulfillment</strong>.
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search PO, customer or distributor…"
+          className="rounded-lg border border-border bg-background px-3 py-1.5 text-sm w-72 focus:outline-none focus:ring-1 focus:ring-primary/30"/>
+        {statuses.map(s=>(
+          <button key={s} onClick={()=>setStatus(s)}
+            className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${status===s?"text-white":"border border-border text-muted-foreground hover:text-foreground"}`}
+            style={status===s?{backgroundColor:"#6B7280"}:{}}>{s}</button>
+        ))}
+        <span className="text-xs text-muted-foreground ml-auto">{filtered.length} orders</span>
+      </div>
+
+      {error && <p className="text-xs text-red-600">{error}</p>}
+
+      <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
+        <table className="w-full text-xs min-w-max">
+          <thead>
+            <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/40 border-b border-border">
+              <th className="px-3 py-2.5 text-left">PO</th>
+              <th className="px-3 py-2.5 text-left">PO date</th>
+              <th className="px-3 py-2.5 text-left">Invoice date</th>
+              <th className="px-3 py-2.5 text-left">Distributor</th>
+              <th className="px-3 py-2.5 text-left">Customer</th>
+              <th className="px-3 py-2.5 text-left">Status</th>
+              {DB_SKU_COLS.map(c=><th key={c.key} className="px-2 py-2.5 text-right">{c.label}</th>)}
+              <th className="px-3 py-2.5 text-right">Cases</th>
+              <th className="px-3 py-2.5 text-right">Net sales</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading && <tr><td colSpan={15} className="px-3 py-6 text-center text-muted-foreground">Loading orders…</td></tr>}
+            {!loading && filtered.length===0 && <tr><td colSpan={15} className="px-3 py-6 text-center text-muted-foreground">No orders match this filter.</td></tr>}
+            {filtered.map(r=>(
+              <tr key={r.id} className="border-t border-border/60 hover:bg-muted/20">
+                <td className="px-3 py-1.5 font-semibold" style={{color:"#1C2340"}}>{r.po_number??"—"}</td>
+                <td className="px-3 py-1.5 font-mono text-muted-foreground">{r.po_date??"—"}</td>
+                <td className="px-3 py-1.5 font-mono text-muted-foreground">{r.invoice_date??"—"}</td>
+                <td className="px-3 py-1.5">{r.distributor??"—"}</td>
+                <td className="px-3 py-1.5">{r.customer??"—"}</td>
+                <td className="px-3 py-1.5">
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${r.status==="Invoiced"?"bg-emerald-100 text-emerald-700":"bg-muted text-muted-foreground"}`}>{r.status??"—"}</span>
+                </td>
+                {DB_SKU_COLS.map(c=><td key={c.key} className="px-2 py-1.5 text-right font-mono text-muted-foreground">{Number(r[c.key])||0}</td>)}
+                <td className="px-3 py-1.5 text-right font-mono font-semibold">{casesOf(r).toLocaleString()}</td>
+                <td className="px-3 py-1.5 text-right font-mono">${Math.round(Number(r.net_sales??r.gross_sales)||0).toLocaleString()}</td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
+              <td className="px-3 py-2 text-xs font-semibold" colSpan={12}>TOTAL · {filtered.length} orders</td>
+              <td className="px-3 py-2 text-right font-mono font-bold">{totCases.toLocaleString()}</td>
+              <td className="px-3 py-2 text-right font-mono font-bold">${Math.round(totRev).toLocaleString()}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  );
+}
 
 // ─── Real Monthly Tab (derived from invoiced pipeline) ───────────────────────
 function RealMonthlyTab({actuals,loading}:{actuals:Record<string,MonthActual>;loading:boolean}) {
