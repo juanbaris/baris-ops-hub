@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useRef, useState, useMemo, type ReactNode } from "react";
 import { useInvoicedActuals, type MonthActual } from "@/hooks/use-invoiced-actuals";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -524,6 +524,8 @@ type SimProps = {
   mixOverrideActive:boolean; setMixOverrideActive:(v:boolean)=>void;
   mixCommitted:boolean; setMixCommitted:(v:boolean)=>void;
   onClearCommitted:()=>void;
+  detailView?:ReactNode;
+  skuView?:ReactNode;
 };
 
 function SetButton({active,committed,onToggle}:{active:boolean;committed:boolean;onToggle:()=>void}) {
@@ -538,12 +540,38 @@ function rowClass(active:boolean,committed:boolean,tint:string) {
   return active?tint:"";
 }
 
+/** Collapsible section used by the simulator blocks and the live impact panels. */
+function Collapsible({title,subtitle,badge,defaultOpen=true,actions,children}:{
+  title:string;subtitle?:string;badge?:ReactNode;defaultOpen?:boolean;
+  actions?:ReactNode;children:ReactNode;
+}) {
+  const [open,setOpen]=useState(defaultOpen);
+  return (
+    <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+      <div className="px-5 py-3 border-b border-border bg-muted/30 flex items-center justify-between gap-4 flex-wrap">
+        <button type="button" onClick={()=>setOpen(o=>!o)} className="flex items-start gap-2 text-left flex-1 min-w-0">
+          <span className="mt-0.5 text-xs text-muted-foreground transition-transform" style={{transform:open?"rotate(90deg)":"none"}}>▶</span>
+          <span className="min-w-0">
+            <span className="flex items-center gap-2 flex-wrap">
+              <span className="text-sm font-bold" style={{color:"#1C2340"}}>{title}</span>
+              {badge}
+            </span>
+            {subtitle && <span className="block text-xs text-muted-foreground">{subtitle}</span>}
+          </span>
+        </button>
+        {actions && <div className="flex items-center gap-2 flex-wrap">{actions}</div>}
+      </div>
+      {open && children}
+    </div>
+  );
+}
+
 function SimuladorTab(p:SimProps) {
   const {velChains,velActive,setVelActive,velNew,setVelNew,velCommitted,setVelCommitted,
     retActive,setRetActive,retStores,setRetStores,retVel,setRetVel,retEntry,setRetEntry,
     retCommitted,setRetCommitted,newSkus,setNewSkus,skuCommitted,setSkuCommitted,
     mixOverrides,setMixOverrides,mixOverrideActive,setMixOverrideActive,mixCommitted,setMixCommitted,
-    onClearCommitted} = p;
+    onClearCommitted,detailView,skuView} = p;
 
   const velDeltaTotal = velChains.reduce((s,c,i)=>{
     if(!velActive[i]) return s;
@@ -578,8 +606,6 @@ function SimuladorTab(p:SimProps) {
     FORECAST_MONTHS.forEach(m=>{next[m.label]={...DEFAULT_MIX_PCT};});
     setMixOverrides(next);
   }
-
-  const card="rounded-2xl border border-border bg-card shadow-sm overflow-hidden";
 
   return (
     <div className="space-y-5">
@@ -619,11 +645,9 @@ function SimuladorTab(p:SimProps) {
       </div>
 
       {/* Bloque 1 — Velocity */}
-      <div className={card}>
-        <div className="px-5 py-3 border-b border-border bg-muted/30">
-          <p className="text-sm font-bold" style={{color:"#1C2340"}}>Bloque 1 — Velocity por cadena</p>
-          <p className="text-xs text-muted-foreground">Cambio de u/tienda/semana en cadenas activas. Activar con SI.</p>
-        </div>
+      <Collapsible title="Bloque 1 — Velocity por cadena"
+        subtitle="Cambio de u/tienda/semana en cadenas activas. Activar con SI."
+        badge={velDeltaTotal!==0?<span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">{velDeltaTotal>0?"+":""}{velDeltaTotal.toLocaleString()} cs/mo</span>:undefined}>
         <table className="w-full text-sm">
           <thead>
             <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
@@ -671,14 +695,12 @@ function SimuladorTab(p:SimProps) {
             })}
           </tbody>
         </table>
-      </div>
+      </Collapsible>
 
       {/* Bloque 2 — New retailers */}
-      <div className={card}>
-        <div className="px-5 py-3 border-b border-border bg-muted/30">
-          <p className="text-sm font-bold" style={{color:"#1C2340"}}>Block 2 — New retailers</p>
-          <p className="text-xs text-muted-foreground">Automatic ramp-up: month 1 = 40% · month 2 = 70% · month 3+ = 100%</p>
-        </div>
+      <Collapsible title="Block 2 — New retailers"
+        subtitle="Automatic ramp-up: month 1 = 40% · month 2 = 70% · month 3+ = 100%"
+        badge={retDeltaTotal!==0?<span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold" style={{color:"#A3224A"}}>+{retDeltaTotal.toLocaleString()} cs/mo</span>:undefined}>
         <table className="w-full text-sm">
           <thead>
             <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
@@ -737,14 +759,12 @@ function SimuladorTab(p:SimProps) {
             })}
           </tbody>
         </table>
-      </div>
+      </Collapsible>
 
       {/* Bloque 3 — New SKUs */}
-      <div className={card}>
-        <div className="px-5 py-3 border-b border-border bg-muted/30">
-          <p className="text-sm font-bold" style={{color:"#1C2340"}}>Block 3 — New SKUs</p>
-          <p className="text-xs text-muted-foreground">Fully incremental · 0% cannibalization · ramp-up: month 1=40% · month 2=70% · month 3+=100%</p>
-        </div>
+      <Collapsible title="Block 3 — New SKUs"
+        subtitle="Fully incremental · 0% cannibalization · ramp-up: month 1=40% · month 2=70% · month 3+=100%"
+        badge={skuDeltaTotal!==0?<span className="rounded-full bg-pink-100 px-2 py-0.5 text-[10px] font-bold text-pink-700">+{skuDeltaTotal.toLocaleString()} cs/mo</span>:undefined}>
         <table className="w-full text-sm">
           <thead>
             <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
@@ -819,16 +839,13 @@ function SimuladorTab(p:SimProps) {
             + Add SKU
           </button>
         </div>
-      </div>
+      </Collapsible>
 
       {/* Bloque 4 — SKU mix override */}
-      <div className={card}>
-        <div className="px-5 py-3 border-b border-border bg-muted/30 flex items-center justify-between gap-4 flex-wrap">
-          <div>
-            <p className="text-sm font-bold" style={{color:"#1C2340"}}>Block 4 — SKU Mix override</p>
-            <p className="text-xs text-muted-foreground">Override the default mix per month. Use for promos or seasonal launches.</p>
-          </div>
-          <div className="flex items-center gap-2">
+      <Collapsible title="Block 4 — SKU Mix override"
+        subtitle="Override the default mix per month. Use for promos or seasonal launches."
+        actions={
+          <>
             <button onClick={()=>{
                 const next=!mixOverrideActive;setMixOverrideActive(next);
                 if(!next) setMixCommitted(false);
@@ -846,8 +863,8 @@ function SimuladorTab(p:SimProps) {
               Apply default to all months
             </button>
             <SetButton active={mixOverrideActive} committed={mixCommitted} onToggle={()=>setMixCommitted(!mixCommitted)}/>
-          </div>
-        </div>
+          </>
+        }>
         {mixOverrideActive && (
           <>
             <div className="overflow-x-auto">
@@ -895,7 +912,21 @@ function SimuladorTab(p:SimProps) {
             </p>
           </>
         )}
-      </div>
+      </Collapsible>
+
+      {/* Live impact — see the effect without switching tabs */}
+      {detailView && (
+        <Collapsible title="Live impact — Monthly Detail" defaultOpen={false}
+          subtitle="Same view as the Monthly Detail tab, recalculated as you change levers above.">
+          <div className="p-4">{detailView}</div>
+        </Collapsible>
+      )}
+      {skuView && (
+        <Collapsible title="Live impact — By SKU" defaultOpen={false}
+          subtitle="Per-SKU split of the current simulation, including new SKUs and mix override.">
+          <div className="p-4">{skuView}</div>
+        </Collapsible>
+      )}
 
       {lockedCount>0 && (
         <div className="rounded-xl border border-border bg-muted/30 px-5 py-3">
@@ -1154,7 +1185,11 @@ function SalesPage() {
                                   mixOverrides={mixOverrides} setMixOverrides={setMixOverrides}
                                   mixOverrideActive={mixOverrideActive} setMixOverrideActive={setMixOverrideActive}
                                   mixCommitted={mixCommitted} setMixCommitted={setMixCommitted}
-                                  onClearCommitted={clearCommitted}/>}
+                                  onClearCommitted={clearCommitted}
+                                  detailView={<DetalleTab forecast={forecast} reals={mergedReals} history={history} committedCount={committedCount} onRealUpdate={(l,v)=>setReals(r=>({...r,[l]:v}))}/>}
+                                  skuView={<SKUTab forecast={skuTabForecast} newSkus={skuTabNewSkus}
+                                    mixOverrides={mixOverrides} mixOverrideActive={mixOverrideActive&&(committedCount===0||mixCommitted)}
+                                    committedCount={committedCount}/>}/>}
       {tab==="estacionalidad"&& <SeasonalityTab seasonIdx={seasonIdx} onSeasonIdxChange={setSeasonIdx}
                                   velChains={velChains} onVelChainsChange={setVelChains}/>}
     </div>
