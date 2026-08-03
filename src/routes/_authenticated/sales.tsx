@@ -27,50 +27,23 @@ const ALL_MONTHS_REAL = [
 type SalesTab = "real"|"resumen"|"detalle"|"sku"|"simulador"|"estacionalidad";
 declare global { interface Window { Chart: any } }
 
-// ─── Real Monthly Tab ─────────────────────────────────────────────────────────
-type MonthReal = {net_sales:string;wm:string;wd:string;xd:string;pw:string;hm:string;matcha:string};
-function RealMonthlyTab({onRealUpdate}:{onRealUpdate:(label:string,cases:number)=>void}) {
-  const [data,setData] = useState<Record<string,MonthReal>>(() => {
-    const init: Record<string,MonthReal> = {};
-    for (const m of ALL_MONTHS_REAL) {
-      const p = PRELOADED_REALS[m];
-      init[m] = p
-        ? {net_sales:String(p.net_sales),wm:String(p.wm||""),wd:String(p.wd||""),xd:String(p.xd||""),pw:String(p.pw||""),hm:String(p.hm||""),matcha:String(p.matcha||"")}
-        : {net_sales:"",wm:"",wd:"",xd:"",pw:"",hm:"",matcha:""};
-    }
-    return init;
-  });
-  const [saved,setSaved] = useState<Set<string>>(new Set(Object.keys(PRELOADED_REALS)));
+// ─── Real Monthly Tab (derived from invoiced pipeline) ───────────────────────
+function RealMonthlyTab({actuals,loading}:{actuals:Record<string,MonthActual>;loading:boolean}) {
+  const SKU_FIELDS = ["xd","pw","hm","wm","wd","matcha"] as const;
+  const YTD_MONTHS = ["Jan 2026","Feb 2026","Mar 2026","Apr 2026","May 2026","Jun 2026","Jul 2026"];
 
-  function set(m:string,f:keyof MonthReal,v:string){setData(d=>({...d,[m]:{...d[m],[f]:v}}))}
-  function saveMonth(m:string){
-    const row=data[m];
-    const total=["wm","wd","xd","pw","hm","matcha"].reduce((s,k)=>s+(parseInt(row[k as keyof MonthReal])||0),0);
-    setSaved(s=>new Set([...s,m]));
-    onRealUpdate(m,total);
-    toast.success(`${m} saved: ${total.toLocaleString()} cases`);
-  }
+  const ytdCases = YTD_MONTHS.reduce((s,m)=>s+(actuals[m]?.cases??0),0);
+  const ytdRev = YTD_MONTHS.reduce((s,m)=>s+(actuals[m]?.revenue??0),0);
+  const ytdBySku: Record<string,number> = {};
+  for(const f of SKU_FIELDS) ytdBySku[f]=YTD_MONTHS.reduce((s,m)=>s+(actuals[m]?.sku[f]??0),0);
 
-  const ytdCases=["Jan 2026","Feb 2026","Mar 2026","Apr 2026","May 2026","Jun 2026","Jul 2026"].reduce((s,m)=>{
-    return s+["wm","wd","xd","pw","hm","matcha"].reduce((a,k)=>a+(parseInt(data[m]?.[k as keyof MonthReal])||0),0);
-  },0);
-  const ytdRev=["Jan 2026","Feb 2026","Mar 2026","Apr 2026","May 2026","Jun 2026","Jul 2026"].reduce((s,m)=>s+(parseInt(data[m]?.net_sales)||0),0);
-
-  const YTD_MONTHS=["Jan 2026","Feb 2026","Mar 2026","Apr 2026","May 2026","Jun 2026","Jul 2026"];
-  const SKU_FIELDS:(keyof MonthReal)[]=["xd","pw","hm","wm","wd","matcha"];
-  const ytdBySku:Record<string,number>={};
-  for(const f of SKU_FIELDS){
-    ytdBySku[f]=YTD_MONTHS.reduce((s,m)=>(saved.has(m)?s+(parseInt(data[m]?.[f] as string)||0):s),0);
-  }
-
-  const inp="rounded border border-border bg-background px-1.5 py-0.5 text-xs font-mono w-full focus:outline-none focus:ring-1 focus:ring-primary/30";
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-3 gap-4">
         {[
           {label:"YTD 2026 Revenue (Jan–Jul)",value:`$${Math.round(ytdRev/1000)}K`,color:"#A3224A"},
           {label:"YTD 2026 Cases (Jan–Jul)",value:ytdCases.toLocaleString(),color:"#1C2340"},
-          {label:"$/case promedio YTD",value:`$${ytdCases>0?(ytdRev/ytdCases).toFixed(2):"—"}`,color:"#1C2340"},
+          {label:"Avg $/case YTD",value:`$${ytdCases>0?(ytdRev/ytdCases).toFixed(2):"—"}`,color:"#1C2340"},
         ].map((k,i)=>(
           <div key={i} className="rounded-2xl border border-border bg-card p-5 shadow-sm">
             <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">{k.label}</p>
@@ -79,7 +52,7 @@ function RealMonthlyTab({onRealUpdate}:{onRealUpdate:(label:string,cases:number)
         ))}
       </div>
       <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-700">
-        💡 Jan–Jul 2026 pre-loaded from BARIS_Acc. Complete the current month at close with net sales ($) and cases by SKU.
+        🔗 Derived view — every number comes from the Fulfillment pipeline, counting only POs with status <strong>Invoiced</strong>, bucketed by invoice month. Not editable here: to change a month, invoice or edit the PO in Fulfillment.
       </div>
       <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
         <table className="w-full text-xs min-w-max">
@@ -92,35 +65,27 @@ function RealMonthlyTab({onRealUpdate}:{onRealUpdate:(label:string,cases:number)
               <th className="px-3 py-2.5 text-right">WD</th><th className="px-3 py-2.5 text-right">Matcha</th>
               <th className="px-3 py-2.5 text-right font-bold">TOTAL</th>
               <th className="px-3 py-2.5 text-right">$/case</th>
-              <th className="px-3 py-2.5 text-center">Action</th>
+              <th className="px-3 py-2.5 text-right">Invoiced POs</th>
             </tr>
           </thead>
           <tbody>
-            {ALL_MONTHS_REAL.map(m=>{
-              const row=data[m];
-              const isSaved=saved.has(m);
-              const isFuture=!PRELOADED_REALS[m]&&!isSaved;
-              const total=["wm","wd","xd","pw","hm","matcha"].reduce((s,k)=>s+(parseInt(row?.[k as keyof MonthReal])||0),0);
-              const rev=parseInt(row?.net_sales)||0;
+            {loading ? (
+              <tr><td colSpan={11} className="px-3 py-6 text-center text-muted-foreground">Loading pipeline…</td></tr>
+            ) : ALL_MONTHS_REAL.map(m=>{
+              const a=actuals[m];
+              const total=a?.cases??0;
+              const rev=a?.revenue??0;
+              const has=!!a&&(total>0||rev>0);
               return (
-                <tr key={m} className={`border-t border-border/60 ${isSaved?"bg-emerald-50/20":isFuture?"bg-muted/10":""}`}>
+                <tr key={m} className={`border-t border-border/60 ${has?"bg-emerald-50/20":"bg-muted/10"}`}>
                   <td className="px-3 py-1.5 font-semibold" style={{color:"#1C2340"}}>{m}</td>
-                  {(["net_sales","xd","pw","hm","wm","wd","matcha"] as (keyof MonthReal)[]).map(field=>(
-                    <td key={field} className="px-3 py-1.5">
-                      <input type="number" className={inp} value={row?.[field]??""}
-                        onChange={e=>set(m,field,e.target.value)} placeholder={isFuture?"—":"0"}
-                        style={isSaved&&!isFuture?{backgroundColor:"#f0fdf4"}:{}}/>
-                    </td>
+                  <td className="px-3 py-1.5 text-right font-mono">{rev>0?`$${Math.round(rev).toLocaleString()}`:"—"}</td>
+                  {SKU_FIELDS.map(f=>(
+                    <td key={f} className="px-3 py-1.5 text-right font-mono">{a?.sku[f]?a.sku[f].toLocaleString():"—"}</td>
                   ))}
                   <td className="px-3 py-1.5 text-right font-mono font-bold" style={total>0?{color:"#1C2340"}:{}}>{total>0?total.toLocaleString():"—"}</td>
                   <td className="px-3 py-1.5 text-right font-mono text-muted-foreground">{total>0&&rev>0?`$${(rev/total).toFixed(2)}`:"—"}</td>
-                  <td className="px-3 py-1.5 text-center">
-                    <button onClick={()=>saveMonth(m)}
-                      className={`rounded px-2 py-0.5 text-[10px] font-semibold ${isSaved?"bg-emerald-100 text-emerald-700":"text-white"}`}
-                      style={!isSaved?{backgroundColor:"#A3224A"}:{}}>
-                      {isSaved?"✓ Saved":"Save"}
-                    </button>
-                  </td>
+                  <td className="px-3 py-1.5 text-right font-mono text-muted-foreground">{a?.orders??"—"}</td>
                 </tr>
               );
             })}
@@ -128,7 +93,7 @@ function RealMonthlyTab({onRealUpdate}:{onRealUpdate:(label:string,cases:number)
           <tfoot>
             <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
               <td className="px-3 py-2 font-semibold text-xs">TOTAL YTD</td>
-              <td className="px-3 py-2 text-right font-mono">${ytdRev.toLocaleString()}</td>
+              <td className="px-3 py-2 text-right font-mono">${Math.round(ytdRev).toLocaleString()}</td>
               {SKU_FIELDS.map(f=>(
                 <td key={f} className="px-3 py-2 text-right font-mono font-bold text-emerald-400">{ytdBySku[f]?ytdBySku[f].toLocaleString():"—"}</td>
               ))}
