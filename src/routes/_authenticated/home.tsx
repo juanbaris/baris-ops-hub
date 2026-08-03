@@ -341,15 +341,38 @@ function HomePage() {
   const [period, setPeriod] = useState<"month" | "quarter" | "year" | "ytd">("month");
   const [exporting, setExporting] = useState(false);
 
-  // Budget for forecast months comes live from the Sales module forecast
-  const { forecast: salesForecast } = useSalesForecast();
-  const forecastBudget2026 = useMemo(() => {
+  // Forecast months come live from the Sales module simulator state.
+  const { state: fcState } = useSalesForecast();
+
+  // GRAY = Pessimistic scenario (our Best Estimate 2026) — base plan, no levers.
+  const pessimisticBudget2026 = useMemo(() => {
+    const rows = calcForecast(
+      "Pessimistic",
+      fcState.velActive.map(() => false), fcState.velNew,
+      fcState.retActive.map(() => false), fcState.retStores, fcState.retVel, fcState.retEntry,
+      fcState.velChains, fcState.seasonIdx, [],
+    );
     const map: Record<number, number> = {};
-    for (const f of salesForecast) {
-      if (f.year === 2026) map[f.month] = Math.round(f.revenue);
-    }
+    for (const f of rows) if (f.year === 2026) map[f.month] = Math.round(f.revenue);
     return map;
-  }, [salesForecast]);
+  }, [fcState]);
+
+  // BLACK = REPLAN: Normal scenario + whatever levers were SET in the simulator.
+  const replan2026 = useMemo(() => {
+    const velC = fcState.velCommitted ?? [];
+    const retC = fcState.retCommitted ?? [];
+    const skuC = fcState.skuCommitted ?? [];
+    const rows = calcForecast(
+      "Normal",
+      fcState.velActive.map((a, i) => a && !!velC[i]), fcState.velNew,
+      fcState.retActive.map((a, i) => a && !!retC[i]), fcState.retStores, fcState.retVel, fcState.retEntry,
+      fcState.velChains, fcState.seasonIdx,
+      (fcState.newSkus ?? []).map((sk, i) => ({ ...sk, active: sk.active && !!skuC[i] })),
+    );
+    const map: Record<number, number> = {};
+    for (const f of rows) if (f.year === 2026) map[f.month] = Math.round(f.revenue);
+    return map;
+  }, [fcState]);
 
   const today = new Date();
   const y = today.getFullYear();
@@ -468,9 +491,9 @@ function HomePage() {
   // Budget = Sales forecast where available, otherwise budget_lines / fallback
   const effBudget = useMemo(() => {
     const b: Record<number, number> = { ...budget };
-    for (const [mn, v] of Object.entries(forecastBudget2026)) b[Number(mn)] = v;
+    for (const [mn, v] of Object.entries(pessimisticBudget2026)) b[Number(mn)] = v;
     return b;
-  }, [budget, forecastBudget2026]);
+  }, [budget, pessimisticBudget2026]);
 
   const monthlySales = useMemo(() => {
     const byMonth: Record<number, number> = {};
@@ -493,8 +516,9 @@ function HomePage() {
       actual: Math.round(byMonth[i + 1] ?? 0),
       budget: Math.round(effBudget[i + 1] ?? 0),
       open: Math.round(openByMonth[i + 1] ?? 0),
+      replan: Math.round(replan2026[i + 1] ?? 0),
     }));
-  }, [invoiced, orders, effBudget]);
+  }, [invoiced, orders, effBudget, replan2026]);
 
   // ── Sales by Quarter ─────────────────────────────────────────────────────────
   const quarterSales = useMemo(() => {
