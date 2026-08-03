@@ -128,7 +128,7 @@ function GroupedBarChart({ data, height = 300, highlightIndex, actualLabel = "In
 function QuarterCompare({ data }: { data: { label: string; actual: number; budget: number }[] }) {
   return (
     <div className="space-y-4">
-      <GroupedBarChart data={data} height={260} actualLabel="Actual sales" />
+      <GroupedBarChart data={data} height={260} actualLabel="Actual sales" budgetLabel="Budget" />
       <div className="grid grid-cols-4 gap-3">
         {data.map(d => {
           const pct = d.budget > 0 ? (d.actual / d.budget) * 100 : null;
