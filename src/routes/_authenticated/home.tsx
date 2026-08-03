@@ -5,6 +5,7 @@ import type { Database } from "@/integrations/supabase/types";
 import { generateWeeklyDeck } from "@/lib/weekly-deck";
 import { toast } from "sonner";
 import { useSalesForecast } from "@/hooks/use-sales-forecast";
+import { calcForecast } from "@/lib/sales-forecast";
 
 type Order = Database["public"]["Tables"]["customer_orders"]["Row"];
 type FPMovement = Database["public"]["Tables"]["fp_movements"]["Row"];
@@ -36,17 +37,20 @@ function fmtFull$(n: number) { return `$${Math.round(n).toLocaleString()}`; }
 const C_ACTUAL = "#7EB53F";  // invoiced sales — green
 const C_BUDGET = "#94A3B8";  // budget (uploaded forecast) — gray
 const C_OPEN   = "#F5A623";  // open orders (not yet invoiced) — yellow
+const C_REPLAN = "#111827";  // replan (Sales normal scenario + committed sets) — black
 
 // ─── Grouped bar chart: actual / budget / open ───────────────────────────────
 // Drawn in a large coordinate space (1000 wide) so labels stay crisp when scaled.
-function GroupedBarChart({ data, height = 300, highlightIndex, actualLabel = "Invoiced sales" }: {
-  data: { label: string; actual: number; budget: number; open?: number }[];
+function GroupedBarChart({ data, height = 300, highlightIndex, actualLabel = "Invoiced sales", budgetLabel = "Budget · Pessimistic (Best Estimate)" }: {
+  data: { label: string; actual: number; budget: number; open?: number; replan?: number }[];
   height?: number;
   highlightIndex?: number;
   actualLabel?: string;
+  budgetLabel?: string;
 }) {
   const hasOpen = data.some(d => (d.open ?? 0) > 0);
-  const rawMax = Math.max(...data.flatMap(d => [d.actual, d.budget, d.open ?? 0]), 1);
+  const hasReplan = data.some(d => (d.replan ?? 0) > 0);
+  const rawMax = Math.max(...data.flatMap(d => [d.actual, d.budget, d.open ?? 0, d.replan ?? 0]), 1);
   // round axis max up to a nice number
   const step = Math.pow(10, Math.floor(Math.log10(rawMax))) / 2;
   const max = Math.ceil(rawMax / step) * step;
@@ -57,7 +61,7 @@ function GroupedBarChart({ data, height = 300, highlightIndex, actualLabel = "In
   const bottom = 30;
   const plotW = W - axisW - 12;
   const colW = plotW / data.length;
-  const series = hasOpen ? 3 : 2;
+  const series = 2 + (hasOpen ? 1 : 0) + (hasReplan ? 1 : 0);
   const gap = colW * 0.05;
   const groupW = colW * 0.72;
   const barW = (groupW - gap * (series - 1)) / series;
@@ -85,6 +89,7 @@ function GroupedBarChart({ data, height = 300, highlightIndex, actualLabel = "In
             { v: d.actual, c: C_ACTUAL },
             { v: d.budget, c: C_BUDGET },
             ...(hasOpen ? [{ v: d.open ?? 0, c: C_OPEN }] : []),
+            ...(hasReplan ? [{ v: d.replan ?? 0, c: C_REPLAN }] : []),
           ];
           return (
             <g key={d.label}>
@@ -111,8 +116,9 @@ function GroupedBarChart({ data, height = 300, highlightIndex, actualLabel = "In
       </svg>
       <div className="flex items-center gap-5 text-xs text-muted-foreground">
         <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: C_ACTUAL }} />{actualLabel}</span>
-        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: C_BUDGET }} />Budget</span>
+        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: C_BUDGET }} />{budgetLabel}</span>
         {hasOpen && <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: C_OPEN }} />Open orders</span>}
+        {hasReplan && <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: C_REPLAN }} />REPLAN · Normal + SET</span>}
       </div>
     </div>
   );
@@ -122,7 +128,7 @@ function GroupedBarChart({ data, height = 300, highlightIndex, actualLabel = "In
 function QuarterCompare({ data }: { data: { label: string; actual: number; budget: number }[] }) {
   return (
     <div className="space-y-4">
-      <GroupedBarChart data={data} height={260} actualLabel="Actual sales" />
+      <GroupedBarChart data={data} height={260} actualLabel="Actual sales" budgetLabel="Budget" />
       <div className="grid grid-cols-4 gap-3">
         {data.map(d => {
           const pct = d.budget > 0 ? (d.actual / d.budget) * 100 : null;
@@ -335,15 +341,38 @@ function HomePage() {
   const [period, setPeriod] = useState<"month" | "quarter" | "year" | "ytd">("month");
   const [exporting, setExporting] = useState(false);
 
-  // Budget for forecast months comes live from the Sales module forecast
-  const { forecast: salesForecast } = useSalesForecast();
-  const forecastBudget2026 = useMemo(() => {
+  // Forecast months come live from the Sales module simulator state.
+  const { state: fcState } = useSalesForecast();
+
+  // GRAY = Pessimistic scenario (our Best Estimate 2026) — base plan, no levers.
+  const pessimisticBudget2026 = useMemo(() => {
+    const rows = calcForecast(
+      "Pessimistic",
+      fcState.velActive.map(() => false), fcState.velNew,
+      fcState.retActive.map(() => false), fcState.retStores, fcState.retVel, fcState.retEntry,
+      fcState.velChains, fcState.seasonIdx, [],
+    );
     const map: Record<number, number> = {};
-    for (const f of salesForecast) {
-      if (f.year === 2026) map[f.month] = Math.round(f.revenue);
-    }
+    for (const f of rows) if (f.year === 2026) map[f.month] = Math.round(f.revenue);
     return map;
-  }, [salesForecast]);
+  }, [fcState]);
+
+  // BLACK = REPLAN: Normal scenario + whatever levers were SET in the simulator.
+  const replan2026 = useMemo(() => {
+    const velC = fcState.velCommitted ?? [];
+    const retC = fcState.retCommitted ?? [];
+    const skuC = fcState.skuCommitted ?? [];
+    const rows = calcForecast(
+      "Normal",
+      fcState.velActive.map((a, i) => a && !!velC[i]), fcState.velNew,
+      fcState.retActive.map((a, i) => a && !!retC[i]), fcState.retStores, fcState.retVel, fcState.retEntry,
+      fcState.velChains, fcState.seasonIdx,
+      (fcState.newSkus ?? []).map((sk, i) => ({ ...sk, active: sk.active && !!skuC[i] })),
+    );
+    const map: Record<number, number> = {};
+    for (const f of rows) if (f.year === 2026) map[f.month] = Math.round(f.revenue);
+    return map;
+  }, [fcState]);
 
   const today = new Date();
   const y = today.getFullYear();
@@ -462,9 +491,9 @@ function HomePage() {
   // Budget = Sales forecast where available, otherwise budget_lines / fallback
   const effBudget = useMemo(() => {
     const b: Record<number, number> = { ...budget };
-    for (const [mn, v] of Object.entries(forecastBudget2026)) b[Number(mn)] = v;
+    for (const [mn, v] of Object.entries(pessimisticBudget2026)) b[Number(mn)] = v;
     return b;
-  }, [budget, forecastBudget2026]);
+  }, [budget, pessimisticBudget2026]);
 
   const monthlySales = useMemo(() => {
     const byMonth: Record<number, number> = {};
@@ -487,8 +516,9 @@ function HomePage() {
       actual: Math.round(byMonth[i + 1] ?? 0),
       budget: Math.round(effBudget[i + 1] ?? 0),
       open: Math.round(openByMonth[i + 1] ?? 0),
+      replan: Math.round(replan2026[i + 1] ?? 0),
     }));
-  }, [invoiced, orders, effBudget]);
+  }, [invoiced, orders, effBudget, replan2026]);
 
   // ── Sales by Quarter ─────────────────────────────────────────────────────────
   const quarterSales = useMemo(() => {
@@ -654,7 +684,7 @@ function HomePage() {
           {/* Monthly sales chart actual vs budget */}
           <div className="rounded-xl border border-border p-4 md:col-span-2">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold" style={{ color: "#1C2340" }}>Monthly Sales · Invoiced vs Budget vs Open 2026</h3>
+              <h3 className="text-sm font-semibold" style={{ color: "#1C2340" }}>Monthly Sales · Invoiced vs Best Estimate vs Open vs REPLAN 2026</h3>
               <span className="text-xs text-muted-foreground">$ USD · net sales</span>
             </div>
             <GroupedBarChart data={monthlySales} height={320} highlightIndex={today.getMonth()} />
