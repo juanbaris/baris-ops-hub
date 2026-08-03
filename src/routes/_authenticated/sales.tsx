@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState, useMemo } from "react";
-import { toast } from "sonner";
+import { useInvoicedActuals, type MonthActual } from "@/hooks/use-invoiced-actuals";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 import {
@@ -10,30 +10,13 @@ import {
   saveForecastState, type VelChain, type ForecastState,
 } from "@/lib/sales-forecast";
 
-const HISTORICAL_FULL = [
-  {label:"Jan 2026", cases: 3529, revenue: 135884},
-  {label:"Feb 2026", cases: 4022, revenue: 201332},
-  {label:"Mar 2026", cases: 4620, revenue: 195015},
-  {label:"Apr 2026", cases: 2740, revenue: 111511},
-  {label:"May 2026", cases: 7522, revenue: 294358},
-  {label:"Jun 2026", cases: 5581, revenue: 212494},
-  {label:"Jul 2026", cases: 7176, revenue: 277626},
-];
+type HistRow = { label: string; cases: number; revenue: number };
 const DIST_MIX = [
   {dist:"KeHE",pct:0.55,color:"#A3224A"},
   {dist:"UNFI",pct:0.28,color:"#1C2340"},
   {dist:"Rainforest",pct:0.10,color:"#3B82F6"},
   {dist:"RFD/Other",pct:0.07,color:"#9CA3AF"},
 ];
-const PRELOADED_REALS: Record<string,{net_sales:number;wm:number;wd:number;xd:number;pw:number;hm:number;matcha:number}> = {
-  "Jan 2026":{net_sales:135884,wm:0,wd:0,xd:1418,pw:1078,hm:1033,matcha:0},
-  "Feb 2026":{net_sales:201332,wm:840,wd:550,xd:1018,pw:867,hm:747,matcha:0},
-  "Mar 2026":{net_sales:195015,wm:645,wd:705,xd:1560,pw:900,hm:810,matcha:0},
-  "Apr 2026":{net_sales:111511,wm:495,wd:300,xd:641,pw:877,hm:427,matcha:0},
-  "May 2026":{net_sales:294358,wm:690,wd:691,xd:2108,pw:2368,hm:1665,matcha:0},
-  "Jun 2026":{net_sales:212494,wm:891,wd:542,xd:1939,pw:1149,hm:1060,matcha:0},
-  "Jul 2026":{net_sales:277626,wm:585,wd:510,xd:2916,pw:1440,hm:1725,matcha:0},
-};
 const ALL_MONTHS_REAL = [
   "Jan 2026","Feb 2026","Mar 2026","Apr 2026","May 2026","Jun 2026","Jul 2026",
   "Aug 2026","Sep 2026","Oct 2026","Nov 2026","Dec 2026",
@@ -43,50 +26,23 @@ const ALL_MONTHS_REAL = [
 type SalesTab = "real"|"resumen"|"detalle"|"sku"|"simulador"|"estacionalidad";
 declare global { interface Window { Chart: any } }
 
-// ─── Real Monthly Tab ─────────────────────────────────────────────────────────
-type MonthReal = {net_sales:string;wm:string;wd:string;xd:string;pw:string;hm:string;matcha:string};
-function RealMonthlyTab({onRealUpdate}:{onRealUpdate:(label:string,cases:number)=>void}) {
-  const [data,setData] = useState<Record<string,MonthReal>>(() => {
-    const init: Record<string,MonthReal> = {};
-    for (const m of ALL_MONTHS_REAL) {
-      const p = PRELOADED_REALS[m];
-      init[m] = p
-        ? {net_sales:String(p.net_sales),wm:String(p.wm||""),wd:String(p.wd||""),xd:String(p.xd||""),pw:String(p.pw||""),hm:String(p.hm||""),matcha:String(p.matcha||"")}
-        : {net_sales:"",wm:"",wd:"",xd:"",pw:"",hm:"",matcha:""};
-    }
-    return init;
-  });
-  const [saved,setSaved] = useState<Set<string>>(new Set(Object.keys(PRELOADED_REALS)));
+// ─── Real Monthly Tab (derived from invoiced pipeline) ───────────────────────
+function RealMonthlyTab({actuals,loading}:{actuals:Record<string,MonthActual>;loading:boolean}) {
+  const SKU_FIELDS = ["xd","pw","hm","wm","wd","matcha"] as const;
+  const YTD_MONTHS = ["Jan 2026","Feb 2026","Mar 2026","Apr 2026","May 2026","Jun 2026","Jul 2026"];
 
-  function set(m:string,f:keyof MonthReal,v:string){setData(d=>({...d,[m]:{...d[m],[f]:v}}))}
-  function saveMonth(m:string){
-    const row=data[m];
-    const total=["wm","wd","xd","pw","hm","matcha"].reduce((s,k)=>s+(parseInt(row[k as keyof MonthReal])||0),0);
-    setSaved(s=>new Set([...s,m]));
-    onRealUpdate(m,total);
-    toast.success(`${m} saved: ${total.toLocaleString()} cases`);
-  }
+  const ytdCases = YTD_MONTHS.reduce((s,m)=>s+(actuals[m]?.cases??0),0);
+  const ytdRev = YTD_MONTHS.reduce((s,m)=>s+(actuals[m]?.revenue??0),0);
+  const ytdBySku: Record<string,number> = {};
+  for(const f of SKU_FIELDS) ytdBySku[f]=YTD_MONTHS.reduce((s,m)=>s+(actuals[m]?.sku[f]??0),0);
 
-  const ytdCases=["Jan 2026","Feb 2026","Mar 2026","Apr 2026","May 2026","Jun 2026","Jul 2026"].reduce((s,m)=>{
-    return s+["wm","wd","xd","pw","hm","matcha"].reduce((a,k)=>a+(parseInt(data[m]?.[k as keyof MonthReal])||0),0);
-  },0);
-  const ytdRev=["Jan 2026","Feb 2026","Mar 2026","Apr 2026","May 2026","Jun 2026","Jul 2026"].reduce((s,m)=>s+(parseInt(data[m]?.net_sales)||0),0);
-
-  const YTD_MONTHS=["Jan 2026","Feb 2026","Mar 2026","Apr 2026","May 2026","Jun 2026","Jul 2026"];
-  const SKU_FIELDS:(keyof MonthReal)[]=["xd","pw","hm","wm","wd","matcha"];
-  const ytdBySku:Record<string,number>={};
-  for(const f of SKU_FIELDS){
-    ytdBySku[f]=YTD_MONTHS.reduce((s,m)=>(saved.has(m)?s+(parseInt(data[m]?.[f] as string)||0):s),0);
-  }
-
-  const inp="rounded border border-border bg-background px-1.5 py-0.5 text-xs font-mono w-full focus:outline-none focus:ring-1 focus:ring-primary/30";
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-3 gap-4">
         {[
           {label:"YTD 2026 Revenue (Jan–Jul)",value:`$${Math.round(ytdRev/1000)}K`,color:"#A3224A"},
           {label:"YTD 2026 Cases (Jan–Jul)",value:ytdCases.toLocaleString(),color:"#1C2340"},
-          {label:"$/case promedio YTD",value:`$${ytdCases>0?(ytdRev/ytdCases).toFixed(2):"—"}`,color:"#1C2340"},
+          {label:"Avg $/case YTD",value:`$${ytdCases>0?(ytdRev/ytdCases).toFixed(2):"—"}`,color:"#1C2340"},
         ].map((k,i)=>(
           <div key={i} className="rounded-2xl border border-border bg-card p-5 shadow-sm">
             <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">{k.label}</p>
@@ -95,7 +51,7 @@ function RealMonthlyTab({onRealUpdate}:{onRealUpdate:(label:string,cases:number)
         ))}
       </div>
       <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-700">
-        💡 Jan–Jul 2026 pre-loaded from BARIS_Acc. Complete the current month at close with net sales ($) and cases by SKU.
+        🔗 Derived view — every number comes from the Fulfillment pipeline, counting only POs with status <strong>Invoiced</strong>, bucketed by invoice month. Not editable here: to change a month, invoice or edit the PO in Fulfillment.
       </div>
       <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
         <table className="w-full text-xs min-w-max">
@@ -108,35 +64,27 @@ function RealMonthlyTab({onRealUpdate}:{onRealUpdate:(label:string,cases:number)
               <th className="px-3 py-2.5 text-right">WD</th><th className="px-3 py-2.5 text-right">Matcha</th>
               <th className="px-3 py-2.5 text-right font-bold">TOTAL</th>
               <th className="px-3 py-2.5 text-right">$/case</th>
-              <th className="px-3 py-2.5 text-center">Action</th>
+              <th className="px-3 py-2.5 text-right">Invoiced POs</th>
             </tr>
           </thead>
           <tbody>
-            {ALL_MONTHS_REAL.map(m=>{
-              const row=data[m];
-              const isSaved=saved.has(m);
-              const isFuture=!PRELOADED_REALS[m]&&!isSaved;
-              const total=["wm","wd","xd","pw","hm","matcha"].reduce((s,k)=>s+(parseInt(row?.[k as keyof MonthReal])||0),0);
-              const rev=parseInt(row?.net_sales)||0;
+            {loading ? (
+              <tr><td colSpan={11} className="px-3 py-6 text-center text-muted-foreground">Loading pipeline…</td></tr>
+            ) : ALL_MONTHS_REAL.map(m=>{
+              const a=actuals[m];
+              const total=a?.cases??0;
+              const rev=a?.revenue??0;
+              const has=!!a&&(total>0||rev>0);
               return (
-                <tr key={m} className={`border-t border-border/60 ${isSaved?"bg-emerald-50/20":isFuture?"bg-muted/10":""}`}>
+                <tr key={m} className={`border-t border-border/60 ${has?"bg-emerald-50/20":"bg-muted/10"}`}>
                   <td className="px-3 py-1.5 font-semibold" style={{color:"#1C2340"}}>{m}</td>
-                  {(["net_sales","xd","pw","hm","wm","wd","matcha"] as (keyof MonthReal)[]).map(field=>(
-                    <td key={field} className="px-3 py-1.5">
-                      <input type="number" className={inp} value={row?.[field]??""}
-                        onChange={e=>set(m,field,e.target.value)} placeholder={isFuture?"—":"0"}
-                        style={isSaved&&!isFuture?{backgroundColor:"#f0fdf4"}:{}}/>
-                    </td>
+                  <td className="px-3 py-1.5 text-right font-mono">{rev>0?`$${Math.round(rev).toLocaleString()}`:"—"}</td>
+                  {SKU_FIELDS.map(f=>(
+                    <td key={f} className="px-3 py-1.5 text-right font-mono">{a?.sku[f]?a.sku[f].toLocaleString():"—"}</td>
                   ))}
                   <td className="px-3 py-1.5 text-right font-mono font-bold" style={total>0?{color:"#1C2340"}:{}}>{total>0?total.toLocaleString():"—"}</td>
                   <td className="px-3 py-1.5 text-right font-mono text-muted-foreground">{total>0&&rev>0?`$${(rev/total).toFixed(2)}`:"—"}</td>
-                  <td className="px-3 py-1.5 text-center">
-                    <button onClick={()=>saveMonth(m)}
-                      className={`rounded px-2 py-0.5 text-[10px] font-semibold ${isSaved?"bg-emerald-100 text-emerald-700":"text-white"}`}
-                      style={!isSaved?{backgroundColor:"#A3224A"}:{}}>
-                      {isSaved?"✓ Saved":"Save"}
-                    </button>
-                  </td>
+                  <td className="px-3 py-1.5 text-right font-mono text-muted-foreground">{a?.orders??"—"}</td>
                 </tr>
               );
             })}
@@ -144,7 +92,7 @@ function RealMonthlyTab({onRealUpdate}:{onRealUpdate:(label:string,cases:number)
           <tfoot>
             <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
               <td className="px-3 py-2 font-semibold text-xs">TOTAL YTD</td>
-              <td className="px-3 py-2 text-right font-mono">${ytdRev.toLocaleString()}</td>
+              <td className="px-3 py-2 text-right font-mono">${Math.round(ytdRev).toLocaleString()}</td>
               {SKU_FIELDS.map(f=>(
                 <td key={f} className="px-3 py-2 text-right font-mono font-bold text-emerald-400">{ytdBySku[f]?ytdBySku[f].toLocaleString():"—"}</td>
               ))}
@@ -160,16 +108,16 @@ function RealMonthlyTab({onRealUpdate}:{onRealUpdate:(label:string,cases:number)
 }
 
 // ─── Summary Tab ──────────────────────────────────────────────────────────────
-function SummaryTab({forecast,scenario,reals}:{forecast:any[];scenario:string;reals:Record<string,number>}) {
+function SummaryTab({forecast,scenario,reals,history}:{forecast:any[];scenario:string;reals:Record<string,number>;history:HistRow[]}) {
   const mainCanvas = useRef<HTMLCanvasElement>(null);
   useEffect(()=>{
     if(!mainCanvas.current||!window.Chart) return;
     const existing = (mainCanvas.current as any)._chart;
     if(existing) existing.destroy();
-    const allMonths=[...HISTORICAL_FULL.map(h=>h.label),...forecast.map(f=>f.label)];
-    const caseVals=[...HISTORICAL_FULL.map(h=>h.cases),...forecast.map(f=>reals[f.label]??f.totalCases)];
-    const colors=[...HISTORICAL_FULL.map(()=>"#A3224A"),...forecast.map(()=>"rgba(163,34,74,0.45)")];
-    const budgetVals=[...HISTORICAL_FULL.map(()=>null),...forecast.map(f=>f.budgetCases)];
+    const allMonths=[...history.map(h=>h.label),...forecast.map(f=>f.label)];
+    const caseVals=[...history.map(h=>h.cases),...forecast.map(f=>reals[f.label]??f.totalCases)];
+    const colors=[...history.map(()=>"#A3224A"),...forecast.map(()=>"rgba(163,34,74,0.45)")];
+    const budgetVals=[...history.map(()=>null),...forecast.map(f=>f.budgetCases)];
     const chart = new window.Chart(mainCanvas.current,{
       type:"bar",
       data:{labels:allMonths,datasets:[
@@ -180,7 +128,7 @@ function SummaryTab({forecast,scenario,reals}:{forecast:any[];scenario:string;re
         scales:{y:{ticks:{callback:(v:number)=>v.toLocaleString()}}}}
     });
     (mainCanvas.current as any)._chart = chart;
-  },[forecast,reals]);
+  },[forecast,reals,history]);
 
   const totalFcst=forecast.reduce((s,f)=>s+f.totalCases,0);
   const totalRev=forecast.reduce((s,f)=>s+f.revenue,0);
@@ -248,13 +196,13 @@ const RANGE_OPTIONS: {id:DetalleRange;label:string;sub:string}[] = [
 const NEXT3_LABELS = ["Aug 2026","Sep 2026","Oct 2026"];
 const REST2026_LABELS = ["Aug 2026","Sep 2026","Oct 2026","Nov 2026","Dec 2026"];
 
-function DetalleTab({forecast,reals,onRealUpdate}:{forecast:any[];reals:Record<string,number>;onRealUpdate:(l:string,v:number)=>void}) {
+function DetalleTab({forecast,reals,onRealUpdate,history}:{forecast:any[];reals:Record<string,number>;onRealUpdate:(l:string,v:number)=>void;history:HistRow[]}) {
   const [editing,setEditing]=useState<string|null>(null);
   const [editVal,setEditVal]=useState("");
   const [range,setRange]=useState<DetalleRange>("all");
 
   const showHist = range==="all"||range==="ytd"||range==="y2026";
-  const histRows = showHist?HISTORICAL_FULL:[];
+  const histRows: HistRow[] = showHist?history:[];
   const fcstRows = forecast.filter(f=>{
     if(range==="all") return true;
     if(range==="ytd") return false;
@@ -771,6 +719,14 @@ function SalesPage() {
   const [tab,setTab] = useState<SalesTab>("real");
   const [scenario,setScenario] = useState<"Pessimistic"|"Normal"|"Optimistic">("Normal");
   const [reals,setReals] = useState<Record<string,number>>({});
+  // Actuals are derived from the Fulfillment pipeline (status = Invoiced).
+  const {byLabel, casesByLabel, loading:loadingActuals} = useInvoicedActuals();
+  const history: HistRow[] = useMemo(()=>Object.values(byLabel)
+    .sort((a,b)=>a.year-b.year||a.month-b.month)
+    .filter(a=>a.year>=2026&&(a.cases>0||a.revenue>0))
+    .map(a=>({label:a.label,cases:a.cases,revenue:Math.round(a.revenue)})),[byLabel]);
+  // Pipeline actuals win; manual overrides only fill months with no invoices.
+  const mergedReals = useMemo(()=>({...reals,...casesByLabel}),[reals,casesByLabel]);
   const [seasonIdx,setSeasonIdx] = useState<Record<number,number>>(DEFAULT_SEASON_IDX);
   const [velChains,setVelChains] = useState<VelChain[]>(DEFAULT_VEL_CHAINS);
   const [simConfig,setSimConfig] = useState<any>({
@@ -850,9 +806,9 @@ function SalesPage() {
           </button>
         ))}
       </div>
-      {tab==="real"          && <RealMonthlyTab onRealUpdate={(l,v)=>setReals(r=>({...r,[l]:v}))}/>}
-      {tab==="resumen"       && <SummaryTab forecast={forecast} scenario={scenario} reals={reals}/>}
-      {tab==="detalle"       && <DetalleTab forecast={forecast} reals={reals} onRealUpdate={(l,v)=>setReals(r=>({...r,[l]:v}))}/>}
+      {tab==="real"          && <RealMonthlyTab actuals={byLabel} loading={loadingActuals}/>}
+      {tab==="resumen"       && <SummaryTab forecast={forecast} scenario={scenario} reals={mergedReals} history={history}/>}
+      {tab==="detalle"       && <DetalleTab forecast={forecast} reals={mergedReals} history={history} onRealUpdate={(l,v)=>setReals(r=>({...r,[l]:v}))}/>}
       {tab==="sku"           && <SKUTab forecast={forecast}/>}
       {tab==="simulador"     && <SimuladorTab onConfigChange={setSimConfig} velChains={velChains}/>}
       {tab==="estacionalidad"&& <SeasonalityTab seasonIdx={seasonIdx} onSeasonIdxChange={setSeasonIdx}
