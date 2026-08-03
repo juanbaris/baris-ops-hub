@@ -5,6 +5,7 @@ import type { Database } from "@/integrations/supabase/types";
 import { generateWeeklyDeck } from "@/lib/weekly-deck";
 import { toast } from "sonner";
 import { useSalesForecast } from "@/hooks/use-sales-forecast";
+import { calcForecast } from "@/lib/sales-forecast";
 
 type Order = Database["public"]["Tables"]["customer_orders"]["Row"];
 type FPMovement = Database["public"]["Tables"]["fp_movements"]["Row"];
@@ -36,17 +37,20 @@ function fmtFull$(n: number) { return `$${Math.round(n).toLocaleString()}`; }
 const C_ACTUAL = "#7EB53F";  // invoiced sales — green
 const C_BUDGET = "#94A3B8";  // budget (uploaded forecast) — gray
 const C_OPEN   = "#F5A623";  // open orders (not yet invoiced) — yellow
+const C_REPLAN = "#111827";  // replan (Sales normal scenario + committed sets) — black
 
 // ─── Grouped bar chart: actual / budget / open ───────────────────────────────
 // Drawn in a large coordinate space (1000 wide) so labels stay crisp when scaled.
-function GroupedBarChart({ data, height = 300, highlightIndex, actualLabel = "Invoiced sales" }: {
-  data: { label: string; actual: number; budget: number; open?: number }[];
+function GroupedBarChart({ data, height = 300, highlightIndex, actualLabel = "Invoiced sales", budgetLabel = "Budget · Pessimistic (Best Estimate)" }: {
+  data: { label: string; actual: number; budget: number; open?: number; replan?: number }[];
   height?: number;
   highlightIndex?: number;
   actualLabel?: string;
+  budgetLabel?: string;
 }) {
   const hasOpen = data.some(d => (d.open ?? 0) > 0);
-  const rawMax = Math.max(...data.flatMap(d => [d.actual, d.budget, d.open ?? 0]), 1);
+  const hasReplan = data.some(d => (d.replan ?? 0) > 0);
+  const rawMax = Math.max(...data.flatMap(d => [d.actual, d.budget, d.open ?? 0, d.replan ?? 0]), 1);
   // round axis max up to a nice number
   const step = Math.pow(10, Math.floor(Math.log10(rawMax))) / 2;
   const max = Math.ceil(rawMax / step) * step;
@@ -57,7 +61,7 @@ function GroupedBarChart({ data, height = 300, highlightIndex, actualLabel = "In
   const bottom = 30;
   const plotW = W - axisW - 12;
   const colW = plotW / data.length;
-  const series = hasOpen ? 3 : 2;
+  const series = 2 + (hasOpen ? 1 : 0) + (hasReplan ? 1 : 0);
   const gap = colW * 0.05;
   const groupW = colW * 0.72;
   const barW = (groupW - gap * (series - 1)) / series;
@@ -85,6 +89,7 @@ function GroupedBarChart({ data, height = 300, highlightIndex, actualLabel = "In
             { v: d.actual, c: C_ACTUAL },
             { v: d.budget, c: C_BUDGET },
             ...(hasOpen ? [{ v: d.open ?? 0, c: C_OPEN }] : []),
+            ...(hasReplan ? [{ v: d.replan ?? 0, c: C_REPLAN }] : []),
           ];
           return (
             <g key={d.label}>
@@ -111,8 +116,9 @@ function GroupedBarChart({ data, height = 300, highlightIndex, actualLabel = "In
       </svg>
       <div className="flex items-center gap-5 text-xs text-muted-foreground">
         <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: C_ACTUAL }} />{actualLabel}</span>
-        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: C_BUDGET }} />Budget</span>
+        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: C_BUDGET }} />{budgetLabel}</span>
         {hasOpen && <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: C_OPEN }} />Open orders</span>}
+        {hasReplan && <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: C_REPLAN }} />REPLAN · Normal + SET</span>}
       </div>
     </div>
   );
