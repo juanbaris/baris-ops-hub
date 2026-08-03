@@ -842,13 +842,10 @@ function SimuladorTab(p:SimProps) {
       </Collapsible>
 
       {/* Bloque 4 — SKU mix override */}
-      <div className={card}>
-        <div className="px-5 py-3 border-b border-border bg-muted/30 flex items-center justify-between gap-4 flex-wrap">
-          <div>
-            <p className="text-sm font-bold" style={{color:"#1C2340"}}>Block 4 — SKU Mix override</p>
-            <p className="text-xs text-muted-foreground">Override the default mix per month. Use for promos or seasonal launches.</p>
-          </div>
-          <div className="flex items-center gap-2">
+      <Collapsible title="Block 4 — SKU Mix override"
+        subtitle="Override the default mix per month. Use for promos or seasonal launches."
+        actions={
+          <>
             <button onClick={()=>{
                 const next=!mixOverrideActive;setMixOverrideActive(next);
                 if(!next) setMixCommitted(false);
@@ -866,8 +863,8 @@ function SimuladorTab(p:SimProps) {
               Apply default to all months
             </button>
             <SetButton active={mixOverrideActive} committed={mixCommitted} onToggle={()=>setMixCommitted(!mixCommitted)}/>
-          </div>
-        </div>
+          </>
+        }>
         {mixOverrideActive && (
           <>
             <div className="overflow-x-auto">
@@ -915,7 +912,21 @@ function SimuladorTab(p:SimProps) {
             </p>
           </>
         )}
-      </div>
+      </Collapsible>
+
+      {/* Live impact — see the effect without switching tabs */}
+      {detailView && (
+        <Collapsible title="Live impact — Monthly Detail" defaultOpen={false}
+          subtitle="Same view as the Monthly Detail tab, recalculated as you change levers above.">
+          <div className="p-4">{detailView}</div>
+        </Collapsible>
+      )}
+      {skuView && (
+        <Collapsible title="Live impact — By SKU" defaultOpen={false}
+          subtitle="Per-SKU split of the current simulation, including new SKUs and mix override.">
+          <div className="p-4">{skuView}</div>
+        </Collapsible>
+      )}
 
       {lockedCount>0 && (
         <div className="rounded-xl border border-border bg-muted/30 px-5 py-3">
