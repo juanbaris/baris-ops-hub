@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useRef, useState, useMemo, type ReactNode } from "react";
 import { useInvoicedActuals, type MonthActual } from "@/hooks/use-invoiced-actuals";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
