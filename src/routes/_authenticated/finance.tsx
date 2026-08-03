@@ -310,8 +310,12 @@ function PNLTab() {
             <th className="text-left px-4 py-2.5 font-semibold text-[10px] uppercase tracking-wide text-muted-foreground w-40">Line</th>
             {MONTHS.map((m,i) => (
               <th key={m} className="text-right px-2 py-2.5 text-[10px] uppercase tracking-wide w-12"
-                style={{color: i < REAL_MONTHS ? "#1C2340" : "#9CA3AF"}}>
-                {m}<div className="text-[8px]">{i<REAL_MONTHS?"R":"F"}</div>
+                style={{color: revenue.isReal[i] ? "#1C2340" : "#9CA3AF"}}>
+                {m}
+                <div className="text-[8px] flex items-center justify-end gap-0.5">
+                  {revenue.isReal[i] && <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />}
+                  {revenue.isReal[i] ? "A" : "F"}
+                </div>
               </th>
             ))}
             <th className="text-right px-2 py-2.5 text-[10px] uppercase text-muted-foreground w-14">FY</th>
