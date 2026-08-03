@@ -18,10 +18,10 @@ export const SKU_MIX: Record<string, number> = { XD: 0.30, PW: 0.25, HM: 0.18, W
 
 export type NewSku = { name: string; stores: number; vel: number; entry: number; active: boolean; committed?: boolean };
 export const DEFAULT_NEW_SKUS: NewSku[] = [
-  { name: "Frutilla & White", stores: 50, vel: 1.20, entry: 3, active: false, committed: false },
-  { name: "Frutilla Caramel", stores: 50, vel: 1.20, entry: 4, active: false, committed: false },
-  { name: "Frutilla Yogur", stores: 50, vel: 1.00, entry: 5, active: false, committed: false },
-  { name: "Frambusa Yogur", stores: 50, vel: 1.00, entry: 6, active: false, committed: false },
+  { name: "Strawberry & White", stores: 50, vel: 1.20, entry: 3, active: false, committed: false },
+  { name: "Strawberry Caramel", stores: 50, vel: 1.20, entry: 4, active: false, committed: false },
+  { name: "Strawberry Yogurt", stores: 50, vel: 1.00, entry: 5, active: false, committed: false },
+  { name: "Raspberry Yogurt", stores: 50, vel: 1.00, entry: 6, active: false, committed: false },
 ];
 export const NEW_SKU_COLORS = ["#EC4899", "#F97316", "#14B8A6", "#A855F7"];
 
@@ -148,6 +148,14 @@ export type ForecastState = {
   retVel: number[];
   retEntry: number[];
   newSkus?: NewSku[];
+  /** Committed ("SET") levers — the official production/finance scenario. */
+  velCommitted?: boolean[];
+  retCommitted?: boolean[];
+  skuCommitted?: boolean[];
+  mixCommitted?: boolean;
+  mixOverrides?: Record<string, Record<string, number>>;
+  mixOverrideActive?: boolean;
+  committedAt?: string | null;
 };
 
 export const DEFAULT_FORECAST_STATE: ForecastState = {
@@ -161,6 +169,13 @@ export const DEFAULT_FORECAST_STATE: ForecastState = {
   retVel: NEW_RETAILERS.map(r => r.vel),
   retEntry: NEW_RETAILERS.map(r => r.entry),
   newSkus: DEFAULT_NEW_SKUS,
+  velCommitted: DEFAULT_VEL_CHAINS.map(() => false),
+  retCommitted: NEW_RETAILERS.map(() => false),
+  skuCommitted: DEFAULT_NEW_SKUS.map(() => false),
+  mixCommitted: false,
+  mixOverrides: {},
+  mixOverrideActive: false,
+  committedAt: null,
 };
 
 const STORAGE_KEY = "baris.sales.forecast.v1";
