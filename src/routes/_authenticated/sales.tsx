@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState, useMemo } from "react";
 import { toast } from "sonner";
+import { useInvoicedActuals, type MonthActual } from "@/hooks/use-invoiced-actuals";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 import {
@@ -10,30 +11,13 @@ import {
   saveForecastState, type VelChain, type ForecastState,
 } from "@/lib/sales-forecast";
 
-const HISTORICAL_FULL = [
-  {label:"Jan 2026", cases: 3529, revenue: 135884},
-  {label:"Feb 2026", cases: 4022, revenue: 201332},
-  {label:"Mar 2026", cases: 4620, revenue: 195015},
-  {label:"Apr 2026", cases: 2740, revenue: 111511},
-  {label:"May 2026", cases: 7522, revenue: 294358},
-  {label:"Jun 2026", cases: 5581, revenue: 212494},
-  {label:"Jul 2026", cases: 7176, revenue: 277626},
-];
+type HistRow = { label: string; cases: number; revenue: number };
 const DIST_MIX = [
   {dist:"KeHE",pct:0.55,color:"#A3224A"},
   {dist:"UNFI",pct:0.28,color:"#1C2340"},
   {dist:"Rainforest",pct:0.10,color:"#3B82F6"},
   {dist:"RFD/Other",pct:0.07,color:"#9CA3AF"},
 ];
-const PRELOADED_REALS: Record<string,{net_sales:number;wm:number;wd:number;xd:number;pw:number;hm:number;matcha:number}> = {
-  "Jan 2026":{net_sales:135884,wm:0,wd:0,xd:1418,pw:1078,hm:1033,matcha:0},
-  "Feb 2026":{net_sales:201332,wm:840,wd:550,xd:1018,pw:867,hm:747,matcha:0},
-  "Mar 2026":{net_sales:195015,wm:645,wd:705,xd:1560,pw:900,hm:810,matcha:0},
-  "Apr 2026":{net_sales:111511,wm:495,wd:300,xd:641,pw:877,hm:427,matcha:0},
-  "May 2026":{net_sales:294358,wm:690,wd:691,xd:2108,pw:2368,hm:1665,matcha:0},
-  "Jun 2026":{net_sales:212494,wm:891,wd:542,xd:1939,pw:1149,hm:1060,matcha:0},
-  "Jul 2026":{net_sales:277626,wm:585,wd:510,xd:2916,pw:1440,hm:1725,matcha:0},
-};
 const ALL_MONTHS_REAL = [
   "Jan 2026","Feb 2026","Mar 2026","Apr 2026","May 2026","Jun 2026","Jul 2026",
   "Aug 2026","Sep 2026","Oct 2026","Nov 2026","Dec 2026",
