@@ -645,11 +645,9 @@ function SimuladorTab(p:SimProps) {
       </div>
 
       {/* Bloque 1 — Velocity */}
-      <div className={card}>
-        <div className="px-5 py-3 border-b border-border bg-muted/30">
-          <p className="text-sm font-bold" style={{color:"#1C2340"}}>Bloque 1 — Velocity por cadena</p>
-          <p className="text-xs text-muted-foreground">Cambio de u/tienda/semana en cadenas activas. Activar con SI.</p>
-        </div>
+      <Collapsible title="Bloque 1 — Velocity por cadena"
+        subtitle="Cambio de u/tienda/semana en cadenas activas. Activar con SI."
+        badge={velDeltaTotal!==0?<span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">{velDeltaTotal>0?"+":""}{velDeltaTotal.toLocaleString()} cs/mo</span>:undefined}>
         <table className="w-full text-sm">
           <thead>
             <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
@@ -697,14 +695,12 @@ function SimuladorTab(p:SimProps) {
             })}
           </tbody>
         </table>
-      </div>
+      </Collapsible>
 
       {/* Bloque 2 — New retailers */}
-      <div className={card}>
-        <div className="px-5 py-3 border-b border-border bg-muted/30">
-          <p className="text-sm font-bold" style={{color:"#1C2340"}}>Block 2 — New retailers</p>
-          <p className="text-xs text-muted-foreground">Automatic ramp-up: month 1 = 40% · month 2 = 70% · month 3+ = 100%</p>
-        </div>
+      <Collapsible title="Block 2 — New retailers"
+        subtitle="Automatic ramp-up: month 1 = 40% · month 2 = 70% · month 3+ = 100%"
+        badge={retDeltaTotal!==0?<span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold" style={{color:"#A3224A"}}>+{retDeltaTotal.toLocaleString()} cs/mo</span>:undefined}>
         <table className="w-full text-sm">
           <thead>
             <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
@@ -763,14 +759,12 @@ function SimuladorTab(p:SimProps) {
             })}
           </tbody>
         </table>
-      </div>
+      </Collapsible>
 
       {/* Bloque 3 — New SKUs */}
-      <div className={card}>
-        <div className="px-5 py-3 border-b border-border bg-muted/30">
-          <p className="text-sm font-bold" style={{color:"#1C2340"}}>Block 3 — New SKUs</p>
-          <p className="text-xs text-muted-foreground">Fully incremental · 0% cannibalization · ramp-up: month 1=40% · month 2=70% · month 3+=100%</p>
-        </div>
+      <Collapsible title="Block 3 — New SKUs"
+        subtitle="Fully incremental · 0% cannibalization · ramp-up: month 1=40% · month 2=70% · month 3+=100%"
+        badge={skuDeltaTotal!==0?<span className="rounded-full bg-pink-100 px-2 py-0.5 text-[10px] font-bold text-pink-700">+{skuDeltaTotal.toLocaleString()} cs/mo</span>:undefined}>
         <table className="w-full text-sm">
           <thead>
             <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
@@ -845,7 +839,7 @@ function SimuladorTab(p:SimProps) {
             + Add SKU
           </button>
         </div>
-      </div>
+      </Collapsible>
 
       {/* Bloque 4 — SKU mix override */}
       <div className={card}>
