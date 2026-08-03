@@ -205,7 +205,7 @@ const RANGE_OPTIONS: {id:DetalleRange;label:string;sub:string}[] = [
 const NEXT3_LABELS = ["Aug 2026","Sep 2026","Oct 2026"];
 const REST2026_LABELS = ["Aug 2026","Sep 2026","Oct 2026","Nov 2026","Dec 2026"];
 
-function DetalleTab({forecast,reals,onRealUpdate,history}:{forecast:any[];reals:Record<string,number>;onRealUpdate:(l:string,v:number)=>void;history:HistRow[]}) {
+function DetalleTab({forecast,reals,onRealUpdate,history,committedCount=0}:{forecast:any[];reals:Record<string,number>;onRealUpdate:(l:string,v:number)=>void;history:HistRow[];committedCount?:number}) {
   const [editing,setEditing]=useState<string|null>(null);
   const [editVal,setEditVal]=useState("");
   const [range,setRange]=useState<DetalleRange>("all");
@@ -369,6 +369,11 @@ function DetalleTab({forecast,reals,onRealUpdate,history}:{forecast:any[];reals:
           </tfoot>
         </table>
       </div>
+      {committedCount>0 && (
+        <p className="text-xs font-semibold" style={{color:"#B45309"}}>
+          📌 Committed scenario: {committedCount} lever{committedCount===1?"":"s"} — this is the active production &amp; finance forecast.
+        </p>
+      )}
     </div>
   );
 }
