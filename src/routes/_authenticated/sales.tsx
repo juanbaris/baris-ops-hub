@@ -1,6 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState, useMemo } from "react";
-import { toast } from "sonner";
 import { useInvoicedActuals, type MonthActual } from "@/hooks/use-invoiced-actuals";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -109,16 +108,16 @@ function RealMonthlyTab({actuals,loading}:{actuals:Record<string,MonthActual>;lo
 }
 
 // ─── Summary Tab ──────────────────────────────────────────────────────────────
-function SummaryTab({forecast,scenario,reals}:{forecast:any[];scenario:string;reals:Record<string,number>}) {
+function SummaryTab({forecast,scenario,reals,history}:{forecast:any[];scenario:string;reals:Record<string,number>;history:HistRow[]}) {
   const mainCanvas = useRef<HTMLCanvasElement>(null);
   useEffect(()=>{
     if(!mainCanvas.current||!window.Chart) return;
     const existing = (mainCanvas.current as any)._chart;
     if(existing) existing.destroy();
-    const allMonths=[...HISTORICAL_FULL.map(h=>h.label),...forecast.map(f=>f.label)];
-    const caseVals=[...HISTORICAL_FULL.map(h=>h.cases),...forecast.map(f=>reals[f.label]??f.totalCases)];
-    const colors=[...HISTORICAL_FULL.map(()=>"#A3224A"),...forecast.map(()=>"rgba(163,34,74,0.45)")];
-    const budgetVals=[...HISTORICAL_FULL.map(()=>null),...forecast.map(f=>f.budgetCases)];
+    const allMonths=[...history.map(h=>h.label),...forecast.map(f=>f.label)];
+    const caseVals=[...history.map(h=>h.cases),...forecast.map(f=>reals[f.label]??f.totalCases)];
+    const colors=[...history.map(()=>"#A3224A"),...forecast.map(()=>"rgba(163,34,74,0.45)")];
+    const budgetVals=[...history.map(()=>null),...forecast.map(f=>f.budgetCases)];
     const chart = new window.Chart(mainCanvas.current,{
       type:"bar",
       data:{labels:allMonths,datasets:[
@@ -129,7 +128,7 @@ function SummaryTab({forecast,scenario,reals}:{forecast:any[];scenario:string;re
         scales:{y:{ticks:{callback:(v:number)=>v.toLocaleString()}}}}
     });
     (mainCanvas.current as any)._chart = chart;
-  },[forecast,reals]);
+  },[forecast,reals,history]);
 
   const totalFcst=forecast.reduce((s,f)=>s+f.totalCases,0);
   const totalRev=forecast.reduce((s,f)=>s+f.revenue,0);
@@ -197,13 +196,13 @@ const RANGE_OPTIONS: {id:DetalleRange;label:string;sub:string}[] = [
 const NEXT3_LABELS = ["Aug 2026","Sep 2026","Oct 2026"];
 const REST2026_LABELS = ["Aug 2026","Sep 2026","Oct 2026","Nov 2026","Dec 2026"];
 
-function DetalleTab({forecast,reals,onRealUpdate}:{forecast:any[];reals:Record<string,number>;onRealUpdate:(l:string,v:number)=>void}) {
+function DetalleTab({forecast,reals,onRealUpdate,history}:{forecast:any[];reals:Record<string,number>;onRealUpdate:(l:string,v:number)=>void;history:HistRow[]}) {
   const [editing,setEditing]=useState<string|null>(null);
   const [editVal,setEditVal]=useState("");
   const [range,setRange]=useState<DetalleRange>("all");
 
   const showHist = range==="all"||range==="ytd"||range==="y2026";
-  const histRows = showHist?HISTORICAL_FULL:[];
+  const histRows: HistRow[] = showHist?history:[];
   const fcstRows = forecast.filter(f=>{
     if(range==="all") return true;
     if(range==="ytd") return false;
@@ -720,6 +719,14 @@ function SalesPage() {
   const [tab,setTab] = useState<SalesTab>("real");
   const [scenario,setScenario] = useState<"Pessimistic"|"Normal"|"Optimistic">("Normal");
   const [reals,setReals] = useState<Record<string,number>>({});
+  // Actuals are derived from the Fulfillment pipeline (status = Invoiced).
+  const {byLabel, casesByLabel, loading:loadingActuals} = useInvoicedActuals();
+  const history: HistRow[] = useMemo(()=>Object.values(byLabel)
+    .sort((a,b)=>a.year-b.year||a.month-b.month)
+    .filter(a=>a.cases>0||a.revenue>0)
+    .map(a=>({label:a.label,cases:a.cases,revenue:Math.round(a.revenue)})),[byLabel]);
+  // Pipeline actuals win; manual overrides only fill months with no invoices.
+  const mergedReals = useMemo(()=>({...reals,...casesByLabel}),[reals,casesByLabel]);
   const [seasonIdx,setSeasonIdx] = useState<Record<number,number>>(DEFAULT_SEASON_IDX);
   const [velChains,setVelChains] = useState<VelChain[]>(DEFAULT_VEL_CHAINS);
   const [simConfig,setSimConfig] = useState<any>({
@@ -799,9 +806,9 @@ function SalesPage() {
           </button>
         ))}
       </div>
-      {tab==="real"          && <RealMonthlyTab onRealUpdate={(l,v)=>setReals(r=>({...r,[l]:v}))}/>}
-      {tab==="resumen"       && <SummaryTab forecast={forecast} scenario={scenario} reals={reals}/>}
-      {tab==="detalle"       && <DetalleTab forecast={forecast} reals={reals} onRealUpdate={(l,v)=>setReals(r=>({...r,[l]:v}))}/>}
+      {tab==="real"          && <RealMonthlyTab actuals={byLabel} loading={loadingActuals}/>}
+      {tab==="resumen"       && <SummaryTab forecast={forecast} scenario={scenario} reals={mergedReals} history={history}/>}
+      {tab==="detalle"       && <DetalleTab forecast={forecast} reals={mergedReals} history={history} onRealUpdate={(l,v)=>setReals(r=>({...r,[l]:v}))}/>}
       {tab==="sku"           && <SKUTab forecast={forecast}/>}
       {tab==="simulador"     && <SimuladorTab onConfigChange={setSimConfig} velChains={velChains}/>}
       {tab==="estacionalidad"&& <SeasonalityTab seasonIdx={seasonIdx} onSeasonIdxChange={setSeasonIdx}
