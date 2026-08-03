@@ -964,15 +964,16 @@ function calcCOGSFull(prices: Record<string,number>, costs: typeof DEFAULT_PROD_
   }));
 }
 
-function calcProdSchedule(stockBySku:Record<string,number>, orders:any[], safetyWoh:number, minRun:number, freqMonths:number, FORECAST_SKU_OPS:Record<string,number[]>) {
+function calcProdSchedule(stockBySku:Record<string,number>, orders:any[], safetyWoh:number, minRun:number, freqMonths:number, FORECAST_SKU_OPS:Record<string,number[]>, wipBySku:Record<string,number>={}) {
   const SK: Record<string,string>={XD:"xd_cases",PW:"pw_cases",HM:"hm_cases",WM:"wm_cases",WD:"wd_cases",Matcha:"matcha_cases"};
   const committed: Record<string,number>={};
   for(const sku of SKUS) committed[sku]=orders.reduce((s,o)=>s+(Number(o[SK[sku]])||0),0);
   const plan: Record<string,number[]>={};
   const stockProj: Record<string,number[]>={};
   const ingNeeded: Record<string,number>={};
+  const ingByMonth: Record<string,number[]>={};
   for(const sku of SKUS) {
-    let running=Math.max(0,(stockBySku[sku]??0)-(committed[sku]??0));
+    let running=Math.max(0,(stockBySku[sku]??0)-(committed[sku]??0))+(wipBySku[sku]??0);
     plan[sku]=[]; stockProj[sku]=[];
     for(let i=0;i<FORECAST_MONTHS_OPS.length;i++) {
       const fcst=FORECAST_SKU_OPS[sku]?.[i]??0;
@@ -998,12 +999,15 @@ function calcProdSchedule(stockBySku:Record<string,number>, orders:any[], safety
           const lbs=(pct/100)*LBS_PER_CASE_BOM*produce;
           const isR=ing==="IQF Raspberry";
           const isC=["RASG Dark 72%","Corinthian White","Valcour Milk","Duluth Dark"].includes(ing);
-          ingNeeded[ing]=(ingNeeded[ing]??0)+lbs*(isR?1.10:isC?1.08:1);
+          const qty=lbs*(isR?1.10:isC?1.08:1);
+          ingNeeded[ing]=(ingNeeded[ing]??0)+qty;
+          if(!ingByMonth[ing]) ingByMonth[ing]=FORECAST_MONTHS_OPS.map(()=>0);
+          ingByMonth[ing][i]+=qty;
         }
       }
     }
   }
-  return {plan,stockProj,ingNeeded};
+  return {plan,stockProj,ingNeeded,ingByMonth};
 }
 
 function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any[] }) {
@@ -1015,6 +1019,25 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
   const [prodCosts,  setProdCosts]  = useState({...DEFAULT_PROD_COSTS});
   const [scrap,      setScrap]      = useState({raspberry:0.10,chocolate:0.08});
   const [ingInv,     setIngInv]     = useState<Record<string,string>>(Object.fromEntries(ALL_INGS.map(k=>[k,""])));
+  // WIP = cases currently being produced (manual entry), counted as available stock.
+  const WIP_KEY="baris.ops.wip.v1";
+  const [wip, setWip] = useState<Record<string,{cases:string;due:string}>>(
+    Object.fromEntries(SKUS.map(s=>[s,{cases:"",due:""}])));
+  const [shopScope, setShopScope] = useState<"next"|"3m"|"all">("next");
+  useEffect(()=>{
+    try{
+      const raw=window.localStorage.getItem(WIP_KEY);
+      if(raw) setWip(w=>({...w,...JSON.parse(raw)}));
+    }catch{/* ignore */}
+  },[]);
+  function updateWip(sku:string, patch:Partial<{cases:string;due:string}>){
+    setWip(w=>{
+      const next={...w,[sku]:{...(w[sku]??{cases:"",due:""}),...patch}};
+      try{ window.localStorage.setItem(WIP_KEY, JSON.stringify(next)); }catch{/* ignore */}
+      return next;
+    });
+  }
+  const wipBySku = useMemo(()=>Object.fromEntries(SKUS.map(s=>[s,parseInt(wip[s]?.cases??"")||0])),[wip]);
   const { bySkuMonthKey } = useSalesForecast();
   const fcstOps = useMemo(()=>buildOpsForecast(bySkuMonthKey),[bySkuMonthKey]);
 
@@ -1024,10 +1047,29 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
     return m;
   },[movements]);
 
-  const {plan,stockProj,ingNeeded} = useMemo(()=>calcProdSchedule(bySku,orders,safetyWoh,minRun,freqMonths,fcstOps),[bySku,orders,safetyWoh,minRun,freqMonths,fcstOps]);
+  const {plan,stockProj,ingNeeded,ingByMonth} = useMemo(()=>calcProdSchedule(bySku,orders,safetyWoh,minRun,freqMonths,fcstOps,wipBySku),[bySku,orders,safetyWoh,minRun,freqMonths,fcstOps,wipBySku]);
   const cogs = useMemo(()=>calcCOGSFull(ingPrices,prodCosts,scrap),[ingPrices,prodCosts,scrap]);
 
   const totalByMonth = FORECAST_MONTHS_OPS.map((_,i)=>SKUS.reduce((s,sku)=>s+(plan[sku]?.[i]??0),0));
+  const nextRunIdx = totalByMonth.findIndex(t=>t>0);
+  const shopRange = useMemo(()=>{
+    if(nextRunIdx<0) return null;
+    if(shopScope==="next") return [nextRunIdx,nextRunIdx] as const;
+    if(shopScope==="3m") return [nextRunIdx,Math.min(nextRunIdx+2,FORECAST_MONTHS_OPS.length-1)] as const;
+    return [0,FORECAST_MONTHS_OPS.length-1] as const;
+  },[shopScope,nextRunIdx]);
+  /** Ingredient lbs required for the selected shopping-list window. */
+  const ingWindow = useMemo(()=>{
+    const out:Record<string,number>={};
+    if(!shopRange) return out;
+    for(const [ing,arr] of Object.entries(ingByMonth)){
+      let s=0; for(let i=shopRange[0];i<=shopRange[1];i++) s+=arr[i]??0;
+      if(s>0) out[ing]=s;
+    }
+    return out;
+  },[ingByMonth,shopRange]);
+  const shopCasesWindow = shopRange
+    ? totalByMonth.slice(shopRange[0],shopRange[1]+1).reduce((a,b)=>a+b,0) : 0;
   const totalProduce = SKUS.reduce((s,sku)=>s+(plan[sku]??[]).reduce((a,b)=>a+b,0),0);
   const weightedCOGS = SKUS.reduce((s,sku)=>s+(cogs[sku]?.per_case??0)*(SKU_MIX_PCT[sku]??0),0);
 
@@ -1087,12 +1129,17 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
             🏭 Yellow cells = planned runs · Frequency: {["","monthly","bimonthly","quarterly","four-monthly","","semiannual"][freqMonths]} · Safety {safetyWoh}w · Min {minRun.toLocaleString()} cases
           </div>
+          <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-700">
+            🛠️ "In production now" = cases currently being manufactured. They count as available stock, so the planner shifts or shrinks the suggested runs. Once the run is finished, log it in Production (creates the real In movement) and clear the cell here.
+          </div>
           <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
             <table className="text-xs min-w-max w-full">
               <thead>
                 <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
                   <th className="px-4 py-2.5 text-left sticky left-0" style={{backgroundColor:"#1C2340"}}>SKU</th>
                   <th className="px-3 py-2.5 text-right">Stock avail.</th>
+                  <th className="px-3 py-2.5 text-center min-w-[150px]">In production now</th>
+                  <th className="px-3 py-2.5 text-right">Available + WIP</th>
                   {FORECAST_MONTHS_OPS.map(m=><th key={m} className="px-3 py-2.5 text-center min-w-[75px]">{m}</th>)}
                   <th className="px-4 py-2.5 text-right">Total</th>
                 </tr>
@@ -1102,11 +1149,26 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
                   const SK: Record<string,string>={XD:"xd_cases",PW:"pw_cases",HM:"hm_cases",WM:"wm_cases",WD:"wd_cases",Matcha:"matcha_cases"};
                   const comm=orders.reduce((s,o)=>s+(Number(o[SK[sku]])||0),0);
                   const avail=Math.max(0,(bySku[sku]??0)-comm);
+                  const w=wip[sku]??{cases:"",due:""};
+                  const wipCases=parseInt(w.cases)||0;
                   const skuTotal=(plan[sku]??[]).reduce((a,b)=>a+b,0);
                   return (
                     <tr key={sku} className="border-t border-border/60 hover:bg-muted/20">
                       <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{sku} <span className="text-muted-foreground font-normal text-[10px]">({SKU_ITEMS[sku as SKU]})</span></td>
                       <td className="px-3 py-1.5 text-right font-mono">{avail.toLocaleString()}</td>
+                      <td className="px-3 py-1.5">
+                        <div className="flex items-center justify-center gap-1">
+                          <input type="number" min={0} value={w.cases} placeholder="0"
+                            onChange={e=>updateWip(sku,{cases:e.target.value})}
+                            className={`${inp} w-20 text-right ${wipCases>0?"bg-emerald-50":""}`}/>
+                          <input type="date" value={w.due} title="Ready date"
+                            onChange={e=>updateWip(sku,{due:e.target.value})}
+                            className={`${inp} w-[124px]`}/>
+                        </div>
+                      </td>
+                      <td className="px-3 py-1.5 text-right font-mono font-semibold" style={{color:wipCases>0?"#10B981":undefined}}>
+                        {(avail+wipCases).toLocaleString()}
+                      </td>
                       {(plan[sku]??[]).map((prod,i)=>(
                         <td key={i} className={`px-3 py-1.5 text-center font-mono font-semibold ${prod>0?"text-amber-900":"text-muted-foreground"}`}
                           style={prod>0?{backgroundColor:"#FEF08A"}:{}}>
@@ -1122,6 +1184,12 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
                 <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
                   <td className="px-4 py-2 font-semibold sticky left-0 text-xs" style={{backgroundColor:"#1C2340"}}>Total cases</td>
                   <td className="px-3 py-2 text-right font-mono text-xs">{SKUS.reduce((s,sku)=>s+Math.max(0,(bySku[sku]??0)-orders.reduce((a,o)=>a+(Number(o[{XD:"xd_cases",PW:"pw_cases",HM:"hm_cases",WM:"wm_cases",WD:"wd_cases",Matcha:"matcha_cases"}[sku]])||0),0)),0).toLocaleString()}</td>
+                  <td className="px-3 py-2 text-center font-mono text-xs text-emerald-300">
+                    {SKUS.reduce((s,sku)=>s+(wipBySku[sku]??0),0).toLocaleString()}
+                  </td>
+                  <td className="px-3 py-2 text-right font-mono text-xs">
+                    {SKUS.reduce((s,sku)=>s+Math.max(0,(bySku[sku]??0)-orders.reduce((a,o)=>a+(Number(o[{XD:"xd_cases",PW:"pw_cases",HM:"hm_cases",WM:"wm_cases",WD:"wd_cases",Matcha:"matcha_cases"}[sku]])||0),0))+(wipBySku[sku]??0),0).toLocaleString()}
+                  </td>
                   {totalByMonth.map((t,i)=>(
                     <td key={i} className="px-3 py-2 text-center font-mono font-bold text-amber-300"
                       style={t>0?{backgroundColor:"rgba(254,240,138,0.15)"}:{}}>
@@ -1295,7 +1363,30 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
       {/* ── SHOPPING LIST ── */}
       {procTab==="shopping" && (
         <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-border bg-card px-4 py-3 shadow-sm">
+            <span className="text-xs font-semibold text-muted-foreground">Buy for:</span>
+            {([["next","Next run only"],["3m","Next 3 months"],["all","Full horizon (12 mo)"]] as const).map(([id,label])=>(
+              <button key={id} onClick={()=>setShopScope(id)}
+                className="rounded-full border px-3 py-1 text-xs font-semibold transition-colors"
+                style={shopScope===id
+                  ?{backgroundColor:"#A3224A",borderColor:"#A3224A",color:"#fff"}
+                  :{borderColor:"hsl(var(--border))",color:"hsl(var(--muted-foreground))"}}>
+                {label}
+              </button>
+            ))}
+            <div className="ml-auto text-right">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Covers</p>
+              <p className="text-sm font-bold font-mono" style={{color:"#1C2340"}}>
+                {shopRange
+                  ? `${FORECAST_MONTHS_OPS[shopRange[0]]}${shopRange[0]===shopRange[1]?"":` → ${FORECAST_MONTHS_OPS[shopRange[1]]}`} · ${shopCasesWindow.toLocaleString()} cases`
+                  : "No production planned"}
+              </p>
+            </div>
+          </div>
           <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-700">
+            {shopScope==="next" && nextRunIdx>=0
+              ? `📅 Next production run: ${FORECAST_MONTHS_OPS[nextRunIdx]} — ${shopCasesWindow.toLocaleString()} cases. `
+              : ""}
             💡 Inventory = load actual stock in the "Raw Materials" tab. To Acquire = Needed − Inventory rounded to pack size.
           </div>
           <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
@@ -1313,8 +1404,8 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
                 </tr>
               </thead>
               <tbody>
-                {ALL_INGS.filter(ing=>(ingNeeded[ing]??0)>0).map(ing=>{
-                  const needed=Math.round(ingNeeded[ing]??0);
+                {ALL_INGS.filter(ing=>(ingWindow[ing]??0)>0).map(ing=>{
+                  const needed=Math.round(ingWindow[ing]??0);
                   const inv=parseInt(ingInv[ing])||0;
                   const toAcq=Math.max(0,needed-inv);
                   const ps=ING_PACK_SIZES[ing]??1;
@@ -1339,8 +1430,8 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
                 <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
                   <td className="px-4 py-2 font-semibold text-xs" colSpan={7}>TOTAL INGREDIENTS</td>
                   <td className="px-4 py-2 text-right font-mono font-bold text-emerald-400">
-                    ${ALL_INGS.filter(ing=>(ingNeeded[ing]??0)>0).reduce((s,ing)=>{
-                      const needed=Math.round(ingNeeded[ing]??0);
+                    ${ALL_INGS.filter(ing=>(ingWindow[ing]??0)>0).reduce((s,ing)=>{
+                      const needed=Math.round(ingWindow[ing]??0);
                       const inv=parseInt(ingInv[ing])||0;
                       const toAcq=Math.max(0,needed-inv);
                       const ps=ING_PACK_SIZES[ing]??1;
