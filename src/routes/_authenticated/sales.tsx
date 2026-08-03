@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState, useMemo, type ReactNode } from "react";
 import { useInvoicedActuals, type MonthActual } from "@/hooks/use-invoiced-actuals";
+import { supabase } from "@/integrations/supabase/client";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 import {
@@ -104,8 +105,8 @@ function SalesDBTab() {
             </tr>
           </thead>
           <tbody>
-            {loading && <tr><td colSpan={15} className="px-3 py-6 text-center text-muted-foreground">Loading orders…</td></tr>}
-            {!loading && filtered.length===0 && <tr><td colSpan={15} className="px-3 py-6 text-center text-muted-foreground">No orders match this filter.</td></tr>}
+            {loading && <tr><td colSpan={14} className="px-3 py-6 text-center text-muted-foreground">Loading orders…</td></tr>}
+            {!loading && filtered.length===0 && <tr><td colSpan={14} className="px-3 py-6 text-center text-muted-foreground">No orders match this filter.</td></tr>}
             {filtered.map(r=>(
               <tr key={r.id} className="border-t border-border/60 hover:bg-muted/20">
                 <td className="px-3 py-1.5 font-semibold" style={{color:"#1C2340"}}>{r.po_number??"—"}</td>
