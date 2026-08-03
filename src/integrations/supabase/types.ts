@@ -388,6 +388,174 @@ export type Database = {
         }
         Relationships: []
       }
+      logistics_accessorial_rates: {
+        Row: {
+          assumed_lb_per_case: number
+          bol_per_shipment: number
+          case_picking_per_case: number
+          cases_per_pallet: number
+          created_at: string
+          id: string
+          loading_per_pallet: number
+          updated_at: string
+        }
+        Insert: {
+          assumed_lb_per_case?: number
+          bol_per_shipment?: number
+          case_picking_per_case?: number
+          cases_per_pallet?: number
+          created_at?: string
+          id?: string
+          loading_per_pallet?: number
+          updated_at?: string
+        }
+        Update: {
+          assumed_lb_per_case?: number
+          bol_per_shipment?: number
+          case_picking_per_case?: number
+          cases_per_pallet?: number
+          created_at?: string
+          id?: string
+          loading_per_pallet?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      logistics_dc_mapping: {
+        Row: {
+          canonical_dc: string | null
+          created_at: string
+          id: string
+          quien_cobra_flete: string | null
+          raw_customer_name: string
+          updated_at: string
+        }
+        Insert: {
+          canonical_dc?: string | null
+          created_at?: string
+          id?: string
+          quien_cobra_flete?: string | null
+          raw_customer_name: string
+          updated_at?: string
+        }
+        Update: {
+          canonical_dc?: string | null
+          created_at?: string
+          id?: string
+          quien_cobra_flete?: string | null
+          raw_customer_name?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      logistics_kehe_rate: {
+        Row: {
+          canonical_dc: string
+          cost_per_lb: number
+          created_at: string
+          id: string
+          updated_at: string
+        }
+        Insert: {
+          canonical_dc: string
+          cost_per_lb?: number
+          created_at?: string
+          id?: string
+          updated_at?: string
+        }
+        Update: {
+          canonical_dc?: string
+          cost_per_lb?: number
+          created_at?: string
+          id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      logistics_lineage_surcharges: {
+        Row: {
+          created_at: string
+          detention_expected: number
+          fuel_surcharge_pct: number
+          id: string
+          lumper_expected: number
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          detention_expected?: number
+          fuel_surcharge_pct?: number
+          id?: string
+          lumper_expected?: number
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          detention_expected?: number
+          fuel_surcharge_pct?: number
+          id?: string
+          lumper_expected?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      logistics_lineage_tariff: {
+        Row: {
+          canonical_dc: string
+          confianza: string
+          created_at: string
+          id: string
+          plt_1: number
+          plt_10: number
+          plt_2: number
+          plt_3: number
+          plt_4: number
+          plt_5: number
+          plt_6: number
+          plt_7: number
+          plt_8: number
+          plt_9: number
+          state: string | null
+          updated_at: string
+        }
+        Insert: {
+          canonical_dc: string
+          confianza?: string
+          created_at?: string
+          id?: string
+          plt_1?: number
+          plt_10?: number
+          plt_2?: number
+          plt_3?: number
+          plt_4?: number
+          plt_5?: number
+          plt_6?: number
+          plt_7?: number
+          plt_8?: number
+          plt_9?: number
+          state?: string | null
+          updated_at?: string
+        }
+        Update: {
+          canonical_dc?: string
+          confianza?: string
+          created_at?: string
+          id?: string
+          plt_1?: number
+          plt_10?: number
+          plt_2?: number
+          plt_3?: number
+          plt_4?: number
+          plt_5?: number
+          plt_6?: number
+          plt_7?: number
+          plt_8?: number
+          plt_9?: number
+          state?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       production_runs: {
         Row: {
           cases_produced: number
