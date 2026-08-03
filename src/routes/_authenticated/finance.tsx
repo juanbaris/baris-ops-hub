@@ -1,5 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useInvoicedActuals } from "@/hooks/use-invoiced-actuals";
+import { useSalesForecast } from "@/hooks/use-sales-forecast";
 
 // ─── Data (values in $K) ──────────────────────────────────────────────────────
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'] as const;
@@ -66,6 +68,28 @@ function periodSlice(arr: number[], period: Period, refMonth: number) {
   return sum(arr);
 }
 
+// ─── Top-line revenue comes from Sales (actuals + committed/active forecast) ──
+function useFinanceRevenue() {
+  const { byLabel, loading } = useInvoicedActuals();
+  const { effectiveForecast, isCommitted, scenario } = useSalesForecast();
+  return useMemo(() => {
+    const fcByKey: Record<string, number> = {};
+    for (const f of effectiveForecast) fcByKey[`${f.year}-${f.month}`] = f.revenue;
+    const isReal: boolean[] = [];
+    const netSales = MONTHS.map((m, i) => {
+      const real = byLabel[`${m} 2026`]?.revenue ?? 0;
+      if (real > 0) { isReal.push(true); return real / 1000; }
+      isReal.push(false);
+      const fc = fcByKey[`2026-${i + 1}`];
+      return fc != null ? fc / 1000 : D.net_sales[i];
+    });
+    return {
+      netSales, isReal, loading,
+      source: isCommitted ? "Committed" : `${scenario} scenario`,
+    };
+  }, [byLabel, effectiveForecast, isCommitted, scenario, loading]);
+}
+
 // ─── Chart wrapper using Chart.js via CDN ─────────────────────────────────────
 declare global { interface Window { Chart: any } }
 
@@ -97,9 +121,10 @@ function KPI({ icon, label, value, sub, subColor, onClick }: {
 
 // ─── Dashboard Tab ────────────────────────────────────────────────────────────
 function DashboardTab({ period, refMonth }: { period: Period; refMonth: number }) {
+  const revenue = useFinanceRevenue();
   const rev = periodSlice(D.gross_sales, period, refMonth);
   const budgetRev = periodSlice(BUDGET.gross_sales, period, refMonth);
-  const netRev = periodSlice(D.net_sales, period, refMonth);
+  const netRev = periodSlice(revenue.netSales, period, refMonth);
   const gp = periodSlice(D.gross_margin, period, refMonth);
   const gmPct = netRev ? gp/netRev : 0;
   const bc = periodSlice(D.business_contribution, period, refMonth);
