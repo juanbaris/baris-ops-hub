@@ -217,3 +217,70 @@ export function forecastFromState(s: ForecastState) {
     s.velChains, s.seasonIdx, s.newSkus ?? [],
   );
 }
+
+// ─── Committed ("SET") scenario ──────────────────────────────────────────────
+
+export const MIX_SKUS = ["XD", "PW", "HM", "WM", "WD", "Matcha"] as const;
+export const DEFAULT_MIX_PCT: Record<string, number> = { XD: 30, PW: 25, HM: 18, WM: 12, WD: 8, Matcha: 7 };
+
+/** How many levers the user locked in with SET. */
+export function committedLeverCount(s: ForecastState) {
+  const vel = (s.velCommitted ?? []).filter((c, i) => c && s.velActive[i]).length;
+  const ret = (s.retCommitted ?? []).filter((c, i) => c && s.retActive[i]).length;
+  const sku = (s.skuCommitted ?? []).filter((c, i) => c && (s.newSkus ?? [])[i]?.active).length;
+  return vel + ret + sku + (s.mixCommitted ? 1 : 0);
+}
+
+/** Forecast built from committed levers only. Null when nothing is committed. */
+export function committedForecastFromState(s: ForecastState) {
+  if (committedLeverCount(s) === 0) return null;
+  const velC = s.velCommitted ?? [];
+  const retC = s.retCommitted ?? [];
+  const skuC = s.skuCommitted ?? [];
+  return calcForecast(
+    s.scenario,
+    s.velActive.map((a, i) => a && !!velC[i]), s.velNew,
+    s.retActive.map((a, i) => a && !!retC[i]), s.retStores, s.retVel, s.retEntry,
+    s.velChains, s.seasonIdx,
+    (s.newSkus ?? []).map((sk, i) => ({ ...sk, active: sk.active && !!skuC[i] })),
+  );
+}
+
+/** Existing-SKU cases per month, honouring a per-month mix override. */
+export function skuForecastWithMix(
+  forecast: ForecastRow[],
+  mixOverrides: Record<string, Record<string, number>> = {},
+  mixOverrideActive = false,
+): Record<string, number[]> {
+  const base = forecast.map(f => f.totalCases - (f.newSkuDelta ?? 0));
+  return Object.fromEntries(MIX_SKUS.map(sku => [
+    sku,
+    forecast.map((f, i) => {
+      const pct = mixOverrideActive
+        ? (mixOverrides[f.label]?.[sku] ?? DEFAULT_MIX_PCT[sku])
+        : DEFAULT_MIX_PCT[sku];
+      return Math.round(base[i] * (pct / 100));
+    }),
+  ]));
+}
+
+export type ProductionMonth = {
+  label: string; month: number; year: number; totalCases: number;
+  skuBreakdown: Record<string, number>;
+  newSkuBreakdown: { name: string; cases: number }[];
+};
+
+/** Per-SKU production requirement per month for a given forecast. */
+export function productionRequirements(
+  forecast: ForecastRow[],
+  newSkus: NewSku[],
+  mixOverrides: Record<string, Record<string, number>> = {},
+  mixOverrideActive = false,
+): ProductionMonth[] {
+  const bySku = skuForecastWithMix(forecast, mixOverrides, mixOverrideActive);
+  return forecast.map((f, i) => ({
+    label: f.label, month: f.month, year: f.year, totalCases: f.totalCases,
+    skuBreakdown: Object.fromEntries(MIX_SKUS.map(s => [s, bySku[s]?.[i] ?? 0])),
+    newSkuBreakdown: newSkus.filter(s => s.active).map(s => ({ name: s.name, cases: newSkuCases(s, i) })),
+  }));
+}
