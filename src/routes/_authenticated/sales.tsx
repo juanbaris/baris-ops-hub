@@ -498,63 +498,118 @@ function SKUTab({forecast,newSkus,mixOverrides,mixOverrideActive,committedCount}
 }
 
 // ─── Simulador Tab ────────────────────────────────────────────────────────────
-function SimuladorTab({onConfigChange,velChains}:{onConfigChange:(cfg:any)=>void;velChains:VelChain[]}) {
-  const [velActive,setVelActive] = useState(velChains.map(()=>false));
-  const [velNew,setVelNew] = useState(velChains.map(c=>c.velCurrent));
-  const [retActive,setRetActive] = useState(NEW_RETAILERS.map(()=>false));
-  const [retStores,setRetStores] = useState(NEW_RETAILERS.map(r=>r.stores));
-  const [retVel,setRetVel] = useState(NEW_RETAILERS.map(r=>r.vel));
-  const [retEntry,setRetEntry] = useState(NEW_RETAILERS.map(r=>r.entry));
+type SimProps = {
+  velChains:VelChain[];
+  velActive:boolean[]; setVelActive:(v:boolean[])=>void;
+  velNew:number[]; setVelNew:(v:number[])=>void;
+  velCommitted:boolean[]; setVelCommitted:(v:boolean[])=>void;
+  retActive:boolean[]; setRetActive:(v:boolean[])=>void;
+  retStores:number[]; setRetStores:(v:number[])=>void;
+  retVel:number[]; setRetVel:(v:number[])=>void;
+  retEntry:number[]; setRetEntry:(v:number[])=>void;
+  retCommitted:boolean[]; setRetCommitted:(v:boolean[])=>void;
+  newSkus:NewSku[]; setNewSkus:(v:NewSku[])=>void;
+  skuCommitted:boolean[]; setSkuCommitted:(v:boolean[])=>void;
+  mixOverrides:Record<string,Record<string,number>>; setMixOverrides:(v:Record<string,Record<string,number>>)=>void;
+  mixOverrideActive:boolean; setMixOverrideActive:(v:boolean)=>void;
+  mixCommitted:boolean; setMixCommitted:(v:boolean)=>void;
+  onClearCommitted:()=>void;
+};
 
-  useEffect(()=>{
-    setVelNew(prev=>velChains.map((c,i)=>prev[i]??c.velCurrent));
-  },[velChains]);
+function SetButton({active,committed,onToggle}:{active:boolean;committed:boolean;onToggle:()=>void}) {
+  const base="rounded-full px-3 py-0.5 text-xs font-semibold";
+  if(!active) return <button disabled className={`${base} border border-gray-300 text-gray-400 cursor-not-allowed`}>Set</button>;
+  if(committed) return <button onClick={onToggle} className={`${base} border border-gray-400 text-gray-500`}>Unset</button>;
+  return <button onClick={onToggle} className={`${base} border border-[#1C2340] text-[#1C2340] hover:bg-[#1C2340]/5`}>Set</button>;
+}
 
-  useEffect(()=>{
-    onConfigChange({velActive,velNew,retActive,retStores,retVel,retEntry});
-  },[velActive,velNew,retActive,retStores,retVel,retEntry]);
+function rowClass(active:boolean,committed:boolean,tint:string) {
+  if(committed) return "bg-amber-50/40 border-l-2 border-amber-400";
+  return active?tint:"";
+}
+
+function SimuladorTab(p:SimProps) {
+  const {velChains,velActive,setVelActive,velNew,setVelNew,velCommitted,setVelCommitted,
+    retActive,setRetActive,retStores,setRetStores,retVel,setRetVel,retEntry,setRetEntry,
+    retCommitted,setRetCommitted,newSkus,setNewSkus,skuCommitted,setSkuCommitted,
+    mixOverrides,setMixOverrides,mixOverrideActive,setMixOverrideActive,mixCommitted,setMixCommitted,
+    onClearCommitted} = p;
 
   const velDeltaTotal = velChains.reduce((s,c,i)=>{
     if(!velActive[i]) return s;
     return s+Math.round((velNew[i]-c.velCurrent)*c.stores*WEEKS_PER_MONTH/UNITS_PER_CASE);
   },0);
-  const retDeltaTotal = NEW_RETAILERS.reduce((s,r,i)=>{
+  const retDeltaTotal = NEW_RETAILERS.reduce((s,_r,i)=>{
     if(!retActive[i]) return s;
     return s+Math.round(retStores[i]*retVel[i]*WEEKS_PER_MONTH/UNITS_PER_CASE);
   },0);
+  const skuDeltaTotal = newSkus.reduce((s,sku)=>
+    sku.active?s+Math.round(sku.stores*sku.vel*WEEKS_PER_MONTH/UNITS_PER_CASE):s,0);
+  const totalDelta = velDeltaTotal+retDeltaTotal+skuDeltaTotal;
+
+  const velLocked = velCommitted.filter(Boolean).length;
+  const retLocked = retCommitted.filter(Boolean).length;
+  const skuLocked = skuCommitted.filter((c,i)=>c&&newSkus[i]).length;
+  const lockedCount = velLocked+retLocked+skuLocked+(mixCommitted?1:0);
+  const committedSkuNames = newSkus.filter((_s,i)=>skuCommitted[i]).map(s=>s.name);
 
   const inp="rounded-lg border border-border bg-background px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-primary/30";
   const MONTH_LABELS=["Aug26","Sep26","Oct26","Nov26","Dec26","Jan27","Feb27","Mar27","Apr27","May27","Jun27","Jul27"];
 
+  function toggleArr(arr:boolean[],i:number,set:(v:boolean[])=>void){const n=[...arr];n[i]=!n[i];set(n);}
+  function patchSku(i:number,patch:Partial<NewSku>){const n=newSkus.map((s,j)=>j===i?{...s,...patch}:s);setNewSkus(n);}
+
+  function mixFor(label:string){return mixOverrides[label]??DEFAULT_MIX_PCT;}
+  function setMixCell(label:string,sku:string,v:number){
+    setMixOverrides({...mixOverrides,[label]:{...mixFor(label),[sku]:v}});
+  }
+  function applyDefaultAll(){
+    const next:Record<string,Record<string,number>>={};
+    FORECAST_MONTHS.forEach(m=>{next[m.label]={...DEFAULT_MIX_PCT};});
+    setMixOverrides(next);
+  }
+
+  const card="rounded-2xl border border-border bg-card shadow-sm overflow-hidden";
+
   return (
     <div className="space-y-5">
+      {lockedCount>0 && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 px-5 py-3 flex items-start justify-between gap-4">
+          <div>
+            <p className="text-sm font-bold text-amber-900">🔒 Committed scenario active · {lockedCount} lever{lockedCount===1?"":"s"} locked in</p>
+            <p className="text-xs text-amber-800 mt-0.5">
+              Velocity: {velLocked} · Retailers: {retLocked} · New SKUs: {skuLocked} · Mix override: {mixCommitted?"yes":"no"}
+            </p>
+          </div>
+          <button onClick={()=>{
+              if(window.confirm("Reset all committed levers to Testing? This will affect production planning inputs.")) onClearCommitted();
+            }}
+            className="shrink-0 rounded-full border border-amber-500 px-3 py-1 text-xs font-semibold text-amber-800 hover:bg-amber-100">
+            Clear all committed
+          </button>
+        </div>
+      )}
+
       {/* Summary cards */}
-      <div className="grid grid-cols-3 gap-4">
-        <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-          <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Δ Velocity (Bloque 1)</p>
-          <p className="text-xl font-bold font-mono" style={{color:velDeltaTotal>0?"#10B981":"#6B7280"}}>
-            {velDeltaTotal>0?"+":""}{velDeltaTotal.toLocaleString()} cases/month
-          </p>
-          <p className="text-xs text-muted-foreground">${(velDeltaTotal*PRICE_PER_CASE*12/1000).toFixed(0)}K revenue anual</p>
-        </div>
-        <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-          <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Δ New Retailers (Block 2)</p>
-          <p className="text-xl font-bold font-mono" style={{color:retDeltaTotal>0?"#A3224A":"#6B7280"}}>
-            {retDeltaTotal>0?"+":""}{retDeltaTotal.toLocaleString()} cases/month
-          </p>
-          <p className="text-xs text-muted-foreground">${(retDeltaTotal*PRICE_PER_CASE*12/1000).toFixed(0)}K revenue anual</p>
-        </div>
-        <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-          <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">TOTAL Δ incremental</p>
-          <p className="text-xl font-bold font-mono" style={{color:"#1C2340"}}>
-            +{(velDeltaTotal+retDeltaTotal).toLocaleString()} cases/month
-          </p>
-          <p className="text-xs text-muted-foreground">${((velDeltaTotal+retDeltaTotal)*PRICE_PER_CASE*12/1000).toFixed(0)}K revenue anual</p>
-        </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {[
+          {label:"Δ Velocity (Bloque 1)",value:velDeltaTotal,color:velDeltaTotal>0?"#10B981":"#6B7280"},
+          {label:"Δ New Retailers (Block 2)",value:retDeltaTotal,color:retDeltaTotal>0?"#A3224A":"#6B7280"},
+          {label:"Δ NEW SKUs (Block 3)",value:skuDeltaTotal,color:skuDeltaTotal>0?"#EC4899":"#6B7280"},
+          {label:"TOTAL Δ incremental",value:totalDelta,color:"#1C2340"},
+        ].map(k=>(
+          <div key={k.label} className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">{k.label}</p>
+            <p className="text-xl font-bold font-mono" style={{color:k.color}}>
+              {k.value>0?"+":""}{k.value.toLocaleString()} cases/month
+            </p>
+            <p className="text-xs text-muted-foreground">${(k.value*PRICE_PER_CASE*12/1000).toFixed(0)}K annual revenue</p>
+          </div>
+        ))}
       </div>
 
       {/* Bloque 1 — Velocity */}
-      <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+      <div className={card}>
         <div className="px-5 py-3 border-b border-border bg-muted/30">
           <p className="text-sm font-bold" style={{color:"#1C2340"}}>Bloque 1 — Velocity por cadena</p>
           <p className="text-xs text-muted-foreground">Cambio de u/tienda/semana en cadenas activas. Activar con SI.</p>
@@ -568,13 +623,14 @@ function SimuladorTab({onConfigChange,velChains}:{onConfigChange:(cfg:any)=>void
               <th className="px-4 py-2.5 text-right">Vel. nueva</th>
               <th className="px-4 py-2.5 text-right">Δ cases/month</th>
               <th className="px-4 py-2.5 text-center">Activar</th>
+              <th className="px-4 py-2.5 text-center">Set</th>
             </tr>
           </thead>
           <tbody>
             {velChains.map((c,i)=>{
               const delta=velActive[i]?Math.round((velNew[i]-c.velCurrent)*c.stores*WEEKS_PER_MONTH/UNITS_PER_CASE):0;
               return (
-                <tr key={i} className={`border-t border-border/60 ${velActive[i]?"bg-emerald-50/20":""}`}>
+                <tr key={i} className={`border-t border-border/60 ${rowClass(velActive[i],velCommitted[i],"bg-emerald-50/20")}`}>
                   <td className="px-4 py-2 font-semibold">{c.name}</td>
                   <td className="px-4 py-2 text-right font-mono">{c.stores}</td>
                   <td className="px-4 py-2 text-right font-mono text-muted-foreground">{c.velCurrent}</td>
@@ -587,11 +643,18 @@ function SimuladorTab({onConfigChange,velChains}:{onConfigChange:(cfg:any)=>void
                     {velActive[i]?(delta>0?"+":"")+delta.toLocaleString():"—"}
                   </td>
                   <td className="px-4 py-2 text-center">
-                    <button onClick={()=>{const n=[...velActive];n[i]=!n[i];setVelActive(n);}}
+                    <button onClick={()=>{
+                        const n=[...velActive];n[i]=!n[i];setVelActive(n);
+                        if(!n[i]&&velCommitted[i]){const c2=[...velCommitted];c2[i]=false;setVelCommitted(c2);}
+                      }}
                       className={`rounded-full px-3 py-0.5 text-xs font-bold ${velActive[i]?"text-white":"border border-border text-muted-foreground"}`}
-                      style={velActive[i]?{backgroundColor:"#10B981"}:{}}>
-                      {velActive[i]?"SI":"NO"}
+                      style={velActive[i]?{backgroundColor:velCommitted[i]?"#1C2340":"#10B981"}:{}}>
+                      {velCommitted[i]?"ON":velActive[i]?"SI":"NO"}
                     </button>
+                  </td>
+                  <td className="px-4 py-2 text-center">
+                    <SetButton active={velActive[i]} committed={velCommitted[i]}
+                      onToggle={()=>toggleArr(velCommitted,i,setVelCommitted)}/>
                   </td>
                 </tr>
               );
@@ -601,7 +664,7 @@ function SimuladorTab({onConfigChange,velChains}:{onConfigChange:(cfg:any)=>void
       </div>
 
       {/* Bloque 2 — New retailers */}
-      <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+      <div className={card}>
         <div className="px-5 py-3 border-b border-border bg-muted/30">
           <p className="text-sm font-bold" style={{color:"#1C2340"}}>Block 2 — New retailers</p>
           <p className="text-xs text-muted-foreground">Automatic ramp-up: month 1 = 40% · month 2 = 70% · month 3+ = 100%</p>
@@ -616,13 +679,14 @@ function SimuladorTab({onConfigChange,velChains}:{onConfigChange:(cfg:any)=>void
               <th className="px-4 py-2.5 text-right">Δ estabilizado</th>
               <th className="px-4 py-2.5 text-left">Notas</th>
               <th className="px-4 py-2.5 text-center">Activar</th>
+              <th className="px-4 py-2.5 text-center">Set</th>
             </tr>
           </thead>
           <tbody>
             {NEW_RETAILERS.map((r,i)=>{
               const delta=Math.round(retStores[i]*retVel[i]*WEEKS_PER_MONTH/UNITS_PER_CASE);
               return (
-                <tr key={i} className={`border-t border-border/60 ${retActive[i]?"bg-orange-50/20":""}`}>
+                <tr key={i} className={`border-t border-border/60 ${rowClass(retActive[i],retCommitted[i],"bg-orange-50/20")}`}>
                   <td className="px-4 py-1.5 font-semibold">{r.name}</td>
                   <td className="px-4 py-1.5 text-right">
                     <input type="number" min={0} value={retStores[i]}
@@ -645,11 +709,18 @@ function SimuladorTab({onConfigChange,velChains}:{onConfigChange:(cfg:any)=>void
                   </td>
                   <td className="px-4 py-1.5 text-xs text-muted-foreground">{r.note}</td>
                   <td className="px-4 py-1.5 text-center">
-                    <button onClick={()=>{const n=[...retActive];n[i]=!n[i];setRetActive(n);}}
+                    <button onClick={()=>{
+                        const n=[...retActive];n[i]=!n[i];setRetActive(n);
+                        if(!n[i]&&retCommitted[i]){const c2=[...retCommitted];c2[i]=false;setRetCommitted(c2);}
+                      }}
                       className={`rounded-full px-3 py-0.5 text-xs font-bold ${retActive[i]?"text-white":"border border-border text-muted-foreground"}`}
-                      style={retActive[i]?{backgroundColor:"#A3224A"}:{}}>
-                      {retActive[i]?"SI":"NO"}
+                      style={retActive[i]?{backgroundColor:retCommitted[i]?"#1C2340":"#10B981"}:{}}>
+                      {retCommitted[i]?"ON":retActive[i]?"SI":"NO"}
                     </button>
+                  </td>
+                  <td className="px-4 py-1.5 text-center">
+                    <SetButton active={retActive[i]} committed={retCommitted[i]}
+                      onToggle={()=>toggleArr(retCommitted,i,setRetCommitted)}/>
                   </td>
                 </tr>
               );
@@ -657,6 +728,173 @@ function SimuladorTab({onConfigChange,velChains}:{onConfigChange:(cfg:any)=>void
           </tbody>
         </table>
       </div>
+
+      {/* Bloque 3 — New SKUs */}
+      <div className={card}>
+        <div className="px-5 py-3 border-b border-border bg-muted/30">
+          <p className="text-sm font-bold" style={{color:"#1C2340"}}>Block 3 — New SKUs</p>
+          <p className="text-xs text-muted-foreground">Fully incremental · 0% cannibalization · ramp-up: month 1=40% · month 2=70% · month 3+=100%</p>
+        </div>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
+              <th className="px-4 py-2.5 text-left">SKU name</th>
+              <th className="px-4 py-2.5 text-right">Stores</th>
+              <th className="px-4 py-2.5 text-right">Vel. (u/s/w)</th>
+              <th className="px-4 py-2.5 text-right">Entry month</th>
+              <th className="px-4 py-2.5 text-right">Δ stabilized</th>
+              <th className="px-4 py-2.5 text-center">Activate</th>
+              <th className="px-4 py-2.5 text-center">Set</th>
+              <th className="px-2 py-2.5"/>
+            </tr>
+          </thead>
+          <tbody>
+            {newSkus.map((s,i)=>{
+              const delta=Math.round(s.stores*s.vel*WEEKS_PER_MONTH/UNITS_PER_CASE);
+              return (
+                <tr key={i} className={`border-t border-border/60 ${rowClass(s.active,skuCommitted[i],"bg-pink-50/30")}`}>
+                  <td className="px-4 py-1.5">
+                    <input type="text" value={s.name} onChange={e=>patchSku(i,{name:e.target.value})}
+                      className={`${inp} w-44 font-semibold`}/>
+                  </td>
+                  <td className="px-4 py-1.5 text-right">
+                    <input type="number" min={0} value={s.stores} onChange={e=>patchSku(i,{stores:parseInt(e.target.value)||0})}
+                      className={`${inp} w-20 text-right font-mono`}/>
+                  </td>
+                  <td className="px-4 py-1.5 text-right">
+                    <input type="number" step="0.1" min={0} value={s.vel} onChange={e=>patchSku(i,{vel:parseFloat(e.target.value)||0})}
+                      className={`${inp} w-16 text-right font-mono`}/>
+                  </td>
+                  <td className="px-4 py-1.5 text-right">
+                    <select value={s.entry} onChange={e=>patchSku(i,{entry:parseInt(e.target.value)})} className={`${inp} w-24`}>
+                      {MONTH_LABELS.map((m,j)=><option key={j} value={j+1}>{j+1} — {m}</option>)}
+                    </select>
+                  </td>
+                  <td className="px-4 py-1.5 text-right font-mono font-semibold" style={{color:s.active?"#A3224A":"#6B7280"}}>
+                    {s.active?`+${delta.toLocaleString()}`:"—"}
+                  </td>
+                  <td className="px-4 py-1.5 text-center">
+                    <button onClick={()=>{
+                        patchSku(i,{active:!s.active});
+                        if(s.active&&skuCommitted[i]){const c2=[...skuCommitted];c2[i]=false;setSkuCommitted(c2);}
+                      }}
+                      className={`rounded-full px-3 py-0.5 text-xs font-bold ${s.active?"text-white":"border border-border text-muted-foreground"}`}
+                      style={s.active?{backgroundColor:skuCommitted[i]?"#1C2340":"#10B981"}:{}}>
+                      {skuCommitted[i]?"ON":s.active?"SI":"NO"}
+                    </button>
+                  </td>
+                  <td className="px-4 py-1.5 text-center">
+                    <SetButton active={s.active} committed={!!skuCommitted[i]}
+                      onToggle={()=>toggleArr(skuCommitted,i,setSkuCommitted)}/>
+                  </td>
+                  <td className="px-2 py-1.5 text-center">
+                    <button disabled={newSkus.length<=1}
+                      onClick={()=>{
+                        setNewSkus(newSkus.filter((_x,j)=>j!==i));
+                        setSkuCommitted(skuCommitted.filter((_x,j)=>j!==i));
+                      }}
+                      className={`text-xs ${newSkus.length<=1?"text-gray-300 cursor-not-allowed":"text-muted-foreground hover:text-red-500"}`}>×</button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        <div className="px-4 py-3 border-t border-border">
+          <button onClick={()=>{
+              setNewSkus([...newSkus,{name:"New SKU",stores:50,vel:1.0,entry:1,active:false,committed:false}]);
+              setSkuCommitted([...skuCommitted,false]);
+            }}
+            className="rounded-full border border-border px-3 py-1 text-xs font-semibold text-muted-foreground hover:text-foreground">
+            + Add SKU
+          </button>
+        </div>
+      </div>
+
+      {/* Bloque 4 — SKU mix override */}
+      <div className={card}>
+        <div className="px-5 py-3 border-b border-border bg-muted/30 flex items-center justify-between gap-4 flex-wrap">
+          <div>
+            <p className="text-sm font-bold" style={{color:"#1C2340"}}>Block 4 — SKU Mix override</p>
+            <p className="text-xs text-muted-foreground">Override the default mix per month. Use for promos or seasonal launches.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={()=>{
+                const next=!mixOverrideActive;setMixOverrideActive(next);
+                if(!next) setMixCommitted(false);
+              }}
+              className={`rounded-full px-3 py-0.5 text-xs font-bold ${mixOverrideActive?"text-white":"border border-border text-muted-foreground"}`}
+              style={mixOverrideActive?{backgroundColor:mixCommitted?"#1C2340":"#10B981"}:{}}>
+              {mixOverrideActive?"ON":"OFF"}
+            </button>
+            <button onClick={()=>setMixOverrides({})}
+              className="rounded-full border border-border px-3 py-0.5 text-xs font-semibold text-muted-foreground hover:text-foreground">
+              Reset all to default
+            </button>
+            <button onClick={applyDefaultAll}
+              className="rounded-full border border-border px-3 py-0.5 text-xs font-semibold text-muted-foreground hover:text-foreground">
+              Apply default to all months
+            </button>
+            <SetButton active={mixOverrideActive} committed={mixCommitted} onToggle={()=>setMixCommitted(!mixCommitted)}/>
+          </div>
+        </div>
+        {mixOverrideActive && (
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm min-w-max">
+                <thead>
+                  <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
+                    <th className="px-4 py-2.5 text-left">Month</th>
+                    {MIX_SKUS.map(s=><th key={s} className="px-3 py-2.5 text-right">{s} %</th>)}
+                    <th className="px-4 py-2.5 text-right">Sum</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {FORECAST_MONTHS.map(m=>{
+                    const mix=mixFor(m.label);
+                    const sum=MIX_SKUS.reduce((s,k)=>s+(mix[k]??0),0);
+                    const ok=Math.round(sum)===100;
+                    return (
+                      <tr key={m.label} className="border-t border-border/60">
+                        <td className="px-4 py-1.5 font-semibold">{m.label}</td>
+                        {MIX_SKUS.map(k=>{
+                          const v=mix[k]??0;
+                          const changed=v!==DEFAULT_MIX_PCT[k];
+                          return (
+                            <td key={k} className={`px-3 py-1.5 text-right ${changed?"bg-amber-50":""}`}>
+                              <input type="number" min={0} max={100} step={1} value={v}
+                                onChange={e=>setMixCell(m.label,k,parseFloat(e.target.value)||0)}
+                                className={`${inp} w-16 text-right font-mono`}/>
+                            </td>
+                          );
+                        })}
+                        <td className="px-4 py-1.5 text-right">
+                          <span title={ok?"":"Must sum to 100%"}
+                            className={`inline-block rounded-lg px-2 py-0.5 font-mono text-xs font-semibold ${ok?"text-emerald-600":"border border-red-500 text-red-600"}`}>
+                            {ok?`✓ ${Math.round(sum)}%`:`${Math.round(sum)}%`}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <p className="px-4 py-3 text-xs text-muted-foreground border-t border-border">
+              Tip: To model an August XD promo, increase XD% for Aug 2026 and reduce other SKUs proportionally to keep the row at 100%.
+            </p>
+          </>
+        )}
+      </div>
+
+      {lockedCount>0 && (
+        <div className="rounded-xl border border-border bg-muted/30 px-5 py-3">
+          <p className="text-sm font-semibold" style={{color:"#1C2340"}}>📦 Committed case requirements are now the input for Operations → Procurement Planning.</p>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            New SKUs flagged for production: {committedSkuNames.length?committedSkuNames.join(", "):"none"}.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
