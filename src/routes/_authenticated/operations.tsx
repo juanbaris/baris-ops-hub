@@ -964,15 +964,16 @@ function calcCOGSFull(prices: Record<string,number>, costs: typeof DEFAULT_PROD_
   }));
 }
 
-function calcProdSchedule(stockBySku:Record<string,number>, orders:any[], safetyWoh:number, minRun:number, freqMonths:number, FORECAST_SKU_OPS:Record<string,number[]>) {
+function calcProdSchedule(stockBySku:Record<string,number>, orders:any[], safetyWoh:number, minRun:number, freqMonths:number, FORECAST_SKU_OPS:Record<string,number[]>, wipBySku:Record<string,number>={}) {
   const SK: Record<string,string>={XD:"xd_cases",PW:"pw_cases",HM:"hm_cases",WM:"wm_cases",WD:"wd_cases",Matcha:"matcha_cases"};
   const committed: Record<string,number>={};
   for(const sku of SKUS) committed[sku]=orders.reduce((s,o)=>s+(Number(o[SK[sku]])||0),0);
   const plan: Record<string,number[]>={};
   const stockProj: Record<string,number[]>={};
   const ingNeeded: Record<string,number>={};
+  const ingByMonth: Record<string,number[]>={};
   for(const sku of SKUS) {
-    let running=Math.max(0,(stockBySku[sku]??0)-(committed[sku]??0));
+    let running=Math.max(0,(stockBySku[sku]??0)-(committed[sku]??0))+(wipBySku[sku]??0);
     plan[sku]=[]; stockProj[sku]=[];
     for(let i=0;i<FORECAST_MONTHS_OPS.length;i++) {
       const fcst=FORECAST_SKU_OPS[sku]?.[i]??0;
@@ -998,12 +999,15 @@ function calcProdSchedule(stockBySku:Record<string,number>, orders:any[], safety
           const lbs=(pct/100)*LBS_PER_CASE_BOM*produce;
           const isR=ing==="IQF Raspberry";
           const isC=["RASG Dark 72%","Corinthian White","Valcour Milk","Duluth Dark"].includes(ing);
-          ingNeeded[ing]=(ingNeeded[ing]??0)+lbs*(isR?1.10:isC?1.08:1);
+          const qty=lbs*(isR?1.10:isC?1.08:1);
+          ingNeeded[ing]=(ingNeeded[ing]??0)+qty;
+          if(!ingByMonth[ing]) ingByMonth[ing]=FORECAST_MONTHS_OPS.map(()=>0);
+          ingByMonth[ing][i]+=qty;
         }
       }
     }
   }
-  return {plan,stockProj,ingNeeded};
+  return {plan,stockProj,ingNeeded,ingByMonth};
 }
 
 function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any[] }) {
