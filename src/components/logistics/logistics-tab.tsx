@@ -388,14 +388,20 @@ function RateCards({ book, orders, reload }: { book: RateBook; orders: Order[]; 
 
   const unmapped = useMemo(() => {
     const known = new Set(book.mapping.map(m => norm(m.raw_customer_name)));
-    const counts = new Map<string, number>();
+    const counts = new Map<string, { n: number; last: string }>();
     for (const o of orders) {
       if (o.distributor === "Direct" || o.distributor === "Other") continue;
       const key = (o.customer ?? "").trim();
       if (!key || known.has(norm(key))) continue;
-      counts.set(key, (counts.get(key) ?? 0) + 1);
+      const prev = counts.get(key) ?? { n: 0, last: "" };
+      const d = o.po_date ?? "";
+      counts.set(key, { n: prev.n + 1, last: d > prev.last ? d : prev.last });
     }
-    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+    // Only ask to map customers with at least one PO from 2025 onward.
+    return [...counts.entries()]
+      .filter(([, v]) => v.last.slice(0, 4) >= "2025")
+      .map(([raw, v]) => [raw, v.n] as [string, number])
+      .sort((a, b) => b[1] - a[1]);
   }, [book.mapping, orders]);
 
   const dcOptions = useMemo(() => [
