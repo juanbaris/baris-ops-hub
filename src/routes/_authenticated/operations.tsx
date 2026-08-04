@@ -22,6 +22,9 @@ const FP_CONCEPTS: FPConcept[] = ["Production","Sale","Sample","Damage","Transfe
 const IP_CONCEPTS: IPConcept[] = ["Procurement","Consumption","Damage","Transfer"];
 const FACILITIES: Facility[] = ["Heinlein","Empire","OOE"];
 
+import { FPSummaryTab } from "@/components/fp/fp-summary-tab";
+import { LotMasterTab } from "@/components/fp/lot-master-tab";
+
 type OpsTab = "stock" | "fp" | "ip" | "production" | "cogs" | "procurement" | "summary" | "lots";
 
 function ymd(d = new Date()) { return d.toISOString().slice(0,10); }
