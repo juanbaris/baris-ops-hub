@@ -938,6 +938,9 @@ function IPSummaryTab({ movements }: { movements: IPRow[] }) {
           </tfoot>
         </table>
       </div>
+
+      {/* Historical inventory over time */}
+      <IPHistoryTable movements={movements} />
     </div>
   );
 }
@@ -1161,8 +1164,6 @@ function FPTransferForm({ fpMovements, onAdded }: { fpMovements: FPRow[]; onAdde
         style={{ backgroundColor:"#1C2340" }}>
         {saving ? "Saving…" : `→ Transfer ${form.cases || "?"} cases ${form.sku} · ${form.from_wh} → ${form.to_wh}`}
       </button>
-      {/* Historical inventory over time */}
-      <IPHistoryTable movements={movements} />
     </div>
   );
 }
