@@ -811,6 +811,7 @@ export type Database = {
         | "Transfer"
         | "Free"
         | "Historical"
+        | "Balance correction"
       ip_concept: "Procurement" | "Consumption" | "Damage" | "Transfer"
       movement_type: "In" | "Out"
       order_status:
@@ -822,7 +823,17 @@ export type Database = {
         | "Sent to 3PL"
         | "BOL Confirmed"
       sku: "XD" | "PW" | "HM" | "WM" | "WD" | "Matcha"
-      warehouse: "Lineage Newark" | "Cold Chain" | "Empire" | "Heinlein" | "OOE"
+      warehouse:
+        | "Lineage Newark"
+        | "Cold Chain"
+        | "Empire"
+        | "Heinlein"
+        | "OOE"
+        | "FreezPak"
+        | "PermaFrost"
+        | "Pod Chicago"
+        | "Pod MidAtlantic"
+        | "Pod Texas"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -961,6 +972,7 @@ export const Constants = {
         "Transfer",
         "Free",
         "Historical",
+        "Balance correction",
       ],
       ip_concept: ["Procurement", "Consumption", "Damage", "Transfer"],
       movement_type: ["In", "Out"],
@@ -974,7 +986,18 @@ export const Constants = {
         "BOL Confirmed",
       ],
       sku: ["XD", "PW", "HM", "WM", "WD", "Matcha"],
-      warehouse: ["Lineage Newark", "Cold Chain", "Empire", "Heinlein", "OOE"],
+      warehouse: [
+        "Lineage Newark",
+        "Cold Chain",
+        "Empire",
+        "Heinlein",
+        "OOE",
+        "FreezPak",
+        "PermaFrost",
+        "Pod Chicago",
+        "Pod MidAtlantic",
+        "Pod Texas",
+      ],
     },
   },
 } as const
