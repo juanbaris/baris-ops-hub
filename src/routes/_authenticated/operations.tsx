@@ -174,6 +174,8 @@ function FPInputTab({ movements, loading, onAdded }: { movements: FPRow[]; loadi
     cogs_per_case: "", po_number_ref: "", notes: "",
   });
   const [saving, setSaving] = useState(false);
+  const [editingFP, setEditingFP] = useState<FPRow | null>(null);
+  const [confirmFPId, setConfirmFPId] = useState<string | null>(null);
   const [filterSku, setFilterSku] = useState<string>("all");
   const [filterType, setFilterType] = useState<string>("all");
   const [sortDir, setSortDir] = useState<"asc"|"desc">("desc");
@@ -198,8 +200,42 @@ function FPInputTab({ movements, loading, onAdded }: { movements: FPRow[]; loadi
     });
     setSaving(false);
     if (error) { toast.error(error.message); return; }
-    toast.success(`FP movement added: ${form.type} ${form.cases} cases ${form.sku}`);
+    const res = editingFP
+      ? await supabase.from("fp_movements").update(payload).eq("id", editingFP.id)
+      : await supabase.from("fp_movements").insert(payload);
+    setSaving(false);
+    if (res.error) { toast.error(res.error.message); return; }
+    toast.success(editingFP ? "Movement updated" : `FP movement added: ${form.type} ${form.cases} cases ${form.sku}`);
+    setEditingFP(null);
     setForm(f => ({ ...f, cases: "", lot_number: "", cogs_per_case: "", po_number_ref: "", notes: "" }));
+    onAdded();
+  }
+
+  function startEditFP(r: FPRow) {
+    setEditingFP(r);
+    const rr = r as any;
+    setForm({
+      movement_date: r.movement_date,
+      type: r.type as MoveType,
+      sku: r.sku as SKU,
+      cases: String(r.cases),
+      warehouse: r.warehouse as Warehouse,
+      lot_number: r.lot_number ?? "",
+      concept: r.concept as FPConcept,
+      cogs_per_case: rr.cogs_per_case != null ? String(rr.cogs_per_case) : "",
+      po_number_ref: rr.po_number_ref ?? "",
+      notes: r.notes ?? "",
+    });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function cancelEditFP() { setEditingFP(null); }
+
+  async function removeFP(id: string) {
+    const { error } = await supabase.from("fp_movements").delete().eq("id", id);
+    if (error) { toast.error(error.message); return; }
+    setConfirmFPId(null);
+    toast.success("Movement deleted");
     onAdded();
   }
 
@@ -215,7 +251,15 @@ function FPInputTab({ movements, loading, onAdded }: { movements: FPRow[]; loadi
     <div className="space-y-5">
       {/* Form */}
       <div className="rounded-2xl border border-border bg-card shadow-sm p-5">
-        <h3 className="text-sm font-bold mb-4" style={{color:"#1C2340"}}>New FP Movement</h3>
+        {editingFP && (
+          <div className="mb-3 rounded-xl border px-4 py-2 text-sm font-semibold"
+            style={{borderColor:"#A3224A",color:"#A3224A",backgroundColor:"#A3224A10"}}>
+            Editing movement — {editingFP.lot_number || "(no lot)"} · {editingFP.sku}
+          </div>
+        )}
+        <h3 className="text-sm font-bold mb-4" style={{color:"#1C2340"}}>
+          {editingFP ? "Edit FP Movement" : "New FP Movement"}
+        </h3>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
           <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Date</label>
             <input type="date" className={`${inp} mt-1`} value={form.movement_date} onChange={e => set("movement_date", e.target.value)} /></div>
@@ -258,8 +302,11 @@ function FPInputTab({ movements, loading, onAdded }: { movements: FPRow[]; loadi
         <button onClick={save} disabled={saving}
           className="rounded-lg px-5 py-2 text-sm font-semibold text-white disabled:opacity-50"
           style={{backgroundColor:"#A3224A"}}>
-          {saving ? "Saving…" : `+ Add ${form.type} · ${form.cases || "?"} cases ${form.sku}`}
+          {saving ? "Saving…" : editingFP ? "Update movement" : `+ Add ${form.type} · ${form.cases || "?"} cases ${form.sku}`}
         </button>
+        {editingFP && (
+          <button onClick={cancelEditFP} className="rounded-lg border border-border px-4 py-2 text-sm font-semibold hover:bg-muted">Cancel</button>
+        )}
       </div>
 
       {/* Movements table */}
@@ -295,11 +342,12 @@ function FPInputTab({ movements, loading, onAdded }: { movements: FPRow[]; loadi
               <th className="px-4 py-2.5 text-left">Lot</th>
               <th className="px-4 py-2.5 text-left">Concept</th>
               <th className="px-4 py-2.5 text-left">Notes</th>
+              <th className="px-4 py-2.5 text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {loading ? <tr><td colSpan={8} className="p-8 text-center text-muted-foreground">Loading…</td></tr>
-              : filtered.length === 0 ? <tr><td colSpan={8} className="p-8 text-center text-muted-foreground">No movements match filters</td></tr>
+            {loading ? <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">Loading…</td></tr>
+              : filtered.length === 0 ? <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">No movements match filters</td></tr>
               : filtered.map(r => (
                 <tr key={r.id} className="border-t border-border/60 hover:bg-muted/20">
                   <td className="px-4 py-1.5 font-mono text-xs">{r.movement_date}</td>
@@ -1099,6 +1147,119 @@ function FPTransferForm({ fpMovements, onAdded }: { fpMovements: FPRow[]; onAdde
         style={{ backgroundColor:"#1C2340" }}>
         {saving ? "Saving…" : `→ Transfer ${form.cases || "?"} cases ${form.sku} · ${form.from_wh} → ${form.to_wh}`}
       </button>
+      {/* Historical inventory over time */}
+      <IPHistoryTable movements={movements} />
+    </div>
+  );
+}
+
+// ─── IP Historical Inventory ─────────────────────────────────────────────────
+function IPHistoryTable({ movements }: { movements: IPRow[] }) {
+  const [viewMode, setViewMode] = useState<"units"|"value">("units");
+  const [filterMaterial, setFilterMaterial] = useState("all");
+
+  const materials = useMemo(() => [...new Set(movements.map(r => r.material))].sort(), [movements]);
+
+  const { monthList, history } = useMemo(() => {
+    const mList = [...new Set(movements.map(m => m.movement_date.slice(0,7)))].sort();
+    const shown = filterMaterial === "all" ? materials : [filterMaterial];
+    const balance: Record<string, number> = {};
+    const valueBalance: Record<string, number> = {};
+    shown.forEach(s => { balance[s] = 0; valueBalance[s] = 0; });
+
+    const sorted = [...movements].sort((a,b) => a.movement_date.localeCompare(b.movement_date));
+    let mi = 0;
+    const snaps: { month: string; units: Record<string, number>; value: Record<string, number> }[] = [];
+
+    for (const mv of sorted) {
+      if (!shown.includes(mv.material)) continue;
+      const mo = mv.movement_date.slice(0,7);
+      while (mi < mList.length && mList[mi] < mo) {
+        snaps.push({ month: mList[mi], units: {...balance}, value: {...valueBalance} });
+        mi++;
+      }
+      const delta = mv.type === "In" ? Number(mv.quantity) : -Number(mv.quantity);
+      balance[mv.material] = (balance[mv.material] || 0) + delta;
+      const cogs = (mv as any).cogs_per_unit;
+      if (cogs) valueBalance[mv.material] = (valueBalance[mv.material] || 0) + delta * cogs;
+    }
+    if (mi < mList.length) {
+      snaps.push({ month: mList[mi] ?? "", units: {...balance}, value: {...valueBalance} });
+    }
+    return { monthList: snaps.map(s => s.month), history: snaps };
+  }, [movements, filterMaterial, materials]);
+
+  const shownMaterials = filterMaterial === "all" ? materials : [filterMaterial];
+
+  return (
+    <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+      <div className="px-5 py-3 border-b border-border bg-muted/30 flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <p className="text-sm font-bold" style={{color:"#1C2340"}}>Inventory history — closing stock by month</p>
+          <p className="text-xs text-muted-foreground">End-of-month balance from all I&P movements</p>
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          <select value={filterMaterial} onChange={e => setFilterMaterial(e.target.value)}
+            className="rounded-lg border border-border bg-background px-2 py-1 text-xs focus:outline-none">
+            <option value="all">All materials</option>
+            {materials.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+          <div className="flex gap-1 rounded-xl bg-muted p-1">
+            {(["units","value"] as const).map(m => (
+              <button key={m} onClick={() => setViewMode(m)}
+                className={`rounded-lg px-3 py-1 text-xs font-semibold transition-colors ${viewMode===m ? "text-white shadow-sm" : "text-muted-foreground"}`}
+                style={viewMode===m ? {backgroundColor:"#1C2340"} : {}}>
+                {m === "units" ? "Units" : "$ Value"}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs min-w-max">
+          <thead>
+            <tr className="text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
+              <th className="px-4 py-2 text-left sticky left-0 bg-muted/20">Material</th>
+              {monthList.map(m => (
+                <th key={m} className="px-3 py-2 text-right whitespace-nowrap">{m.slice(2).replace("-","/")}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {shownMaterials.map(mat => (
+              <tr key={mat} className="border-t border-border/40 hover:bg-muted/20">
+                <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{mat}</td>
+                {history.map(snap => {
+                  const val = viewMode === "units" ? snap.units[mat] || 0 : snap.value[mat] || 0;
+                  return (
+                    <td key={snap.month} className={`px-3 py-1.5 text-right font-mono ${val < 0 ? "text-red-600 font-semibold" : ""}`}>
+                      {viewMode === "units"
+                        ? (val || 0).toLocaleString()
+                        : val ? `$${Math.round(val).toLocaleString()}` : "—"
+                      }
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+          {filterMaterial === "all" && (
+            <tfoot>
+              <tr style={{backgroundColor:"#1C2340", color:"#fff"}}>
+                <td className="px-4 py-2 font-semibold text-xs sticky left-0" style={{backgroundColor:"#1C2340"}}>TOTAL VALUE</td>
+                {history.map(snap => {
+                  const total = materials.reduce((s, m) => s + (snap.value[m] || 0), 0);
+                  return (
+                    <td key={snap.month} className="px-3 py-2 text-right font-mono font-bold text-emerald-400">
+                      {total ? `$${Math.round(total).toLocaleString()}` : "—"}
+                    </td>
+                  );
+                })}
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
     </div>
   );
 }
@@ -1118,6 +1279,60 @@ function ProductionTab({ fpMovements, ipMovements, onAdded }: {
   const [saving, setSaving] = useState(false);
   const [editingRun, setEditingRun] = useState<any | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [parsingReport, setParsingReport] = useState(false);
+
+  async function parseProductionReport(file: File) {
+    setParsingReport(true);
+    try {
+      const base64 = await new Promise<string>((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res((r.result as string).split(',')[1]);
+        r.onerror = rej;
+        r.readAsDataURL(file);
+      });
+      const mediaType = file.name.endsWith('.pdf') ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      const resp = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: 1000,
+          messages: [{
+            role: "user",
+            content: [
+              { type: "document", source: { type: "base64", media_type: mediaType, data: base64 } },
+              { type: "text", text: `Extract production run data from this Heinlein production report. Return ONLY JSON (no markdown):
+{
+  "run_date": "YYYY-MM-DD",
+  "sku": "XD|PW|HM|WM|WD|Matcha",
+  "cases_produced": <number>,
+  "lot_number": "<lot code>",
+  "cogs_per_case": <number or null if not available>,
+  "notes": "<any relevant notes or null>"
+}` }
+            ]
+          }]
+        })
+      });
+      const data = await resp.json();
+      const text = data.content?.find((c: any) => c.type === 'text')?.text ?? '';
+      const parsed = JSON.parse(text.replace(/\`\`\`json|\`\`\`/g, '').trim());
+      setForm(f => ({
+        ...f,
+        run_date: parsed.run_date || f.run_date,
+        sku: (parsed.sku || f.sku) as SKU,
+        cases_produced: parsed.cases_produced ? String(parsed.cases_produced) : f.cases_produced,
+        lot_number: parsed.lot_number || f.lot_number,
+        override_cogs: parsed.cogs_per_case ? String(parsed.cogs_per_case) : f.override_cogs,
+        notes: parsed.notes || f.notes,
+      }));
+      toast.success("Report parsed — review fields and save");
+    } catch (e: any) {
+      toast.error("Could not parse report: " + e.message);
+    } finally {
+      setParsingReport(false);
+    }
+  }
 
   useEffect(() => { loadRuns(); }, []);
 
@@ -1240,11 +1455,33 @@ function ProductionTab({ fpMovements, ipMovements, onAdded }: {
   }
 
   async function removeRun(id: string) {
+    // Find the run first so we can delete linked movements
+    const runToDelete = runs.find(r => r.id === id);
+    if (!runToDelete) { toast.error("Run not found"); return; }
+
+    // Delete linked FP IN movement (same lot, date, sku, concept=Production)
+    await supabase.from("fp_movements")
+      .delete()
+      .eq("lot_number", runToDelete.lot_number)
+      .eq("concept", "Production")
+      .eq("sku", runToDelete.sku)
+      .eq("movement_date", runToDelete.run_date)
+      .eq("type", "In");
+
+    // Delete linked IP OUT movements (same run date, concept=Consumption, notes contain lot)
+    await supabase.from("ip_movements")
+      .delete()
+      .eq("concept", "Consumption")
+      .eq("movement_date", runToDelete.run_date)
+      .ilike("notes", `%${runToDelete.lot_number}%`);
+
+    // Delete the run itself
     const { error } = await supabase.from("production_runs").delete().eq("id", id);
     if (error) { toast.error(error.message); return; }
     setConfirmId(null);
-    toast.success("Production run deleted — linked FP/IP movements were NOT auto-deleted");
+    toast.success(`Production run deleted · FP movement and IP consumptions removed`);
     loadRuns();
+    onAdded(); // reload FP and IP movements
   }
 
   const inp = "rounded-lg border border-border bg-background px-3 py-1.5 text-sm w-full focus:outline-none focus:ring-2 focus:ring-primary/30";
@@ -1433,7 +1670,7 @@ function ProductionTab({ fpMovements, ipMovements, onAdded }: {
                   <td className="px-4 py-1.5 text-right">
                     {confirmId === r.id ? (
                       <span className="flex flex-col items-end gap-1">
-                        <span className="text-[10px] text-amber-600 font-semibold">⚠ FP/IP movements NOT deleted</span>
+                        <span className="text-[10px] text-amber-600 font-semibold">⚠ Also deletes linked FP + IP movements</span>
                         <span className="flex items-center gap-1.5 text-xs">
                           Delete?
                           <button onClick={() => removeRun(r.id)}
