@@ -880,112 +880,524 @@ function IPSummaryTab({ movements }: { movements: IPRow[] }) {
   );
 }
 
-// ─── Production Tab ───────────────────────────────────────────────────────────
-function ProductionTab({ onAdded }: { onAdded: () => void }) {
-  const [runs, setRuns] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+// ─── BOM constants (from COGS Simulator · Source: Super BOM Consolidado) ─────
+// Weight per unit ≈ 0.344 lbs (5.5oz), 8 units/case → ~2.75 lbs of ingredients/case
+const UNITS_PER_CASE = 8;
+const LBS_PER_UNIT = 0.344; // ≈ 5.5oz, derived from COGS Simulator
+const SCRAP: Record<string, number> = { rasp: 0.10, choc: 0.08, other: 0 };
+
+// BOM: pct by weight in final product per SKU
+// materials: IQFRasp, RASGDark72, CorinthianWhite, ValcourMilk, PistachioPaste,
+//            HazelnutPaste, MatchaPowder, Spirulina, CocoaButter, SoyLecithin, SeaSalt,
+//            CupED/PW/HM/WM/WD/Matcha, LidED/PW/HM/WM/WD/Matcha, Sealer, Case
+type BomLine = {
+  material: string; // matches ip_movements.material
+  unit: "lbs" | "Piece" | "cases";
+  pct?: number;      // % by weight (for bulk ingredients, lbs)
+  perCase?: number;  // fixed qty per case (for packaging)
+  scrapGroup: "rasp" | "choc" | "other";
+};
+const BOM: Record<string, BomLine[]> = {
+  XD: [
+    { material: "IQF Rasp",      unit: "lbs",  pct: 0.45, scrapGroup: "rasp" },
+    { material: "Choc Ex Dark",  unit: "lbs",  pct: 0.55, scrapGroup: "choc" },
+    { material: "Cocoa Butter",  unit: "lbs",  pct: 0.00, scrapGroup: "other" },
+    { material: "Soy Lecithin",  unit: "lbs",  pct: 0.00, scrapGroup: "other" },
+    { material: "Cup ED",        unit: "Piece", perCase: UNITS_PER_CASE, scrapGroup: "other" },
+    { material: "Lid ED",        unit: "Piece", perCase: UNITS_PER_CASE, scrapGroup: "other" },
+    { material: "Sealers",       unit: "Piece", perCase: 1, scrapGroup: "other" },
+    { material: "Cases",         unit: "Piece", perCase: 1, scrapGroup: "other" },
+  ],
+  PW: [
+    { material: "IQF Rasp",        unit: "lbs",  pct: 0.33, scrapGroup: "rasp" },
+    { material: "Corinthian White", unit: "lbs",  pct: 0.571, scrapGroup: "choc" },
+    { material: "Pistachio Paste",  unit: "lbs",  pct: 0.08, scrapGroup: "other" },
+    { material: "Cocoa Butter",     unit: "lbs",  pct: 0.017, scrapGroup: "other" },
+    { material: "Sea Salt",         unit: "lbs",  pct: 0.001, scrapGroup: "other" },
+    { material: "Spirulina",        unit: "lbs",  pct: 0.001, scrapGroup: "other" },
+    { material: "Soy Lecithin",     unit: "lbs",  pct: 0.001, scrapGroup: "other" },
+    { material: "Cup P&W",          unit: "Piece", perCase: UNITS_PER_CASE, scrapGroup: "other" },
+    { material: "Lid P&W",          unit: "Piece", perCase: UNITS_PER_CASE, scrapGroup: "other" },
+    { material: "Sealers",          unit: "Piece", perCase: 1, scrapGroup: "other" },
+    { material: "Cases",            unit: "Piece", perCase: 1, scrapGroup: "other" },
+  ],
+  HM: [
+    { material: "IQF Rasp",         unit: "lbs",  pct: 0.33, scrapGroup: "rasp" },
+    { material: "Corinthian White",  unit: "lbs",  pct: 0.229, scrapGroup: "choc" },
+    { material: "Valcour Milk",      unit: "lbs",  pct: 0.33, scrapGroup: "choc" },
+    { material: "Hazelnut Butter",   unit: "lbs",  pct: 0.10, scrapGroup: "other" },
+    { material: "Cocoa Butter",      unit: "lbs",  pct: 0.009, scrapGroup: "other" },
+    { material: "Sea Salt",          unit: "lbs",  pct: 0.001, scrapGroup: "other" },
+    { material: "Soy Lecithin",      unit: "lbs",  pct: 0.001, scrapGroup: "other" },
+    { material: "Cup H&M",           unit: "Piece", perCase: UNITS_PER_CASE, scrapGroup: "other" },
+    { material: "Lid H&M",           unit: "Piece", perCase: UNITS_PER_CASE, scrapGroup: "other" },
+    { material: "Sealers",           unit: "Piece", perCase: 1, scrapGroup: "other" },
+    { material: "Cases",             unit: "Piece", perCase: 1, scrapGroup: "other" },
+  ],
+  WM: [
+    { material: "IQF Rasp",         unit: "lbs",  pct: 0.30, scrapGroup: "rasp" },
+    { material: "Corinthian White",  unit: "lbs",  pct: 0.388, scrapGroup: "choc" },
+    { material: "Valcour Milk",      unit: "lbs",  pct: 0.30, scrapGroup: "choc" },
+    { material: "Cocoa Butter",      unit: "lbs",  pct: 0.012, scrapGroup: "other" },
+    { material: "Soy Lecithin",      unit: "lbs",  pct: 0.001, scrapGroup: "other" },
+    { material: "Cup W&M",           unit: "Piece", perCase: UNITS_PER_CASE, scrapGroup: "other" },
+    { material: "Lid W&M",           unit: "Piece", perCase: UNITS_PER_CASE, scrapGroup: "other" },
+    { material: "Sealers",           unit: "Piece", perCase: 1, scrapGroup: "other" },
+    { material: "Cases",             unit: "Piece", perCase: 1, scrapGroup: "other" },
+  ],
+  WD: [
+    { material: "IQF Rasp",         unit: "lbs",  pct: 0.30, scrapGroup: "rasp" },
+    { material: "RASG Dark 72%",     unit: "lbs",  pct: 0.30, scrapGroup: "choc" },
+    { material: "Corinthian White",  unit: "lbs",  pct: 0.388, scrapGroup: "choc" },
+    { material: "Cocoa Butter",      unit: "lbs",  pct: 0.012, scrapGroup: "other" },
+    { material: "Soy Lecithin",      unit: "lbs",  pct: 0.001, scrapGroup: "other" },
+    { material: "Cup W&D",           unit: "Piece", perCase: UNITS_PER_CASE, scrapGroup: "other" },
+    { material: "Lid W&D",           unit: "Piece", perCase: UNITS_PER_CASE, scrapGroup: "other" },
+    { material: "Sealers",           unit: "Piece", perCase: 1, scrapGroup: "other" },
+    { material: "Cases",             unit: "Piece", perCase: 1, scrapGroup: "other" },
+  ],
+  Matcha: [
+    { material: "IQF Rasp",         unit: "lbs",  pct: 0.45, scrapGroup: "rasp" },
+    { material: "Corinthian White",  unit: "lbs",  pct: 0.529, scrapGroup: "choc" },
+    { material: "Matcha",            unit: "lbs",  pct: 0.009, scrapGroup: "other" },
+    { material: "Cocoa Butter",      unit: "lbs",  pct: 0.01, scrapGroup: "other" },
+    { material: "Sea Salt",          unit: "lbs",  pct: 0.001, scrapGroup: "other" },
+    { material: "Soy Lecithin",      unit: "lbs",  pct: 0.001, scrapGroup: "other" },
+    { material: "Cup Matcha",        unit: "Piece", perCase: UNITS_PER_CASE, scrapGroup: "other" },
+    { material: "Lid Matcha",        unit: "Piece", perCase: UNITS_PER_CASE, scrapGroup: "other" },
+    { material: "Sealers",           unit: "Piece", perCase: 1, scrapGroup: "other" },
+    { material: "Cases",             unit: "Piece", perCase: 1, scrapGroup: "other" },
+  ],
+};
+
+// Calculate qty needed from BOM for a given number of cases
+function calcBomQty(line: BomLine, cases: number): number {
+  if (line.perCase !== undefined) return line.perCase * cases;
+  const baseQty = (line.pct ?? 0) * cases * UNITS_PER_CASE * LBS_PER_UNIT;
+  return baseQty / (1 - SCRAP[line.scrapGroup]);
+}
+
+// ─── FP Transfer Form ─────────────────────────────────────────────────────────
+function FPTransferForm({ fpMovements, onAdded }: { fpMovements: FPRow[]; onAdded: () => void }) {
   const [form, setForm] = useState({
-    run_date: ymd(), facility: "Heinlein" as Facility, sku: "XD" as SKU,
-    cases_produced: "", cogs_per_case: "", lot_number: "", notes: "",
+    date: ymd(), sku: "XD" as SKU, lot: "", cases: "",
+    from_wh: "Heinlein", to_wh: "Lineage Newark", freight_per_case: "", notes: "",
   });
   const [saving, setSaving] = useState(false);
+  const inp = "rounded-lg border border-border bg-background px-3 py-1.5 text-sm w-full focus:outline-none focus:ring-2 focus:ring-primary/30";
+  const Lbl = ({ children }: { children: React.ReactNode }) => (
+    <label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">{children}</label>
+  );
+
+  // Look up COGS from existing FP movements for selected lot
+  const lotCogs = useMemo(() => {
+    if (!form.lot) return null;
+    const match = fpMovements.find(m => m.lot_number === form.lot && m.type === "In");
+    return (match as any)?.cogs_per_case ?? null;
+  }, [form.lot, fpMovements]);
+
+  const freight = parseFloat(form.freight_per_case) || 0;
+  const newCogs = lotCogs != null ? lotCogs + freight : null;
+
+  async function save() {
+    if (!form.sku || !form.cases || !form.lot) { toast.error("SKU, lot and cases required"); return; }
+    if (!form.from_wh || !form.to_wh) { toast.error("From and To warehouses required"); return; }
+    if (form.from_wh === form.to_wh) { toast.error("From and To warehouses must be different"); return; }
+    setSaving(true);
+
+    const cases = Number(form.cases);
+    const noteBase = `Transfer ${form.from_wh} → ${form.to_wh}${form.notes ? " · " + form.notes : ""}`;
+
+    // OUT from source warehouse
+    const { error: e1 } = await supabase.from("fp_movements").insert({
+      movement_date: form.date,
+      type: "Out" as const,
+      sku: form.sku,
+      cases,
+      warehouse: form.from_wh as Warehouse,
+      lot_number: form.lot,
+      concept: "Transfer" as const,
+      cogs_per_case: lotCogs ?? null,
+      notes: noteBase,
+    });
+    if (e1) { toast.error(e1.message); setSaving(false); return; }
+
+    // IN to destination warehouse (COGS = original + freight)
+    const { error: e2 } = await supabase.from("fp_movements").insert({
+      movement_date: form.date,
+      type: "In" as const,
+      sku: form.sku,
+      cases,
+      warehouse: form.to_wh as Warehouse,
+      lot_number: form.lot,
+      concept: "Transfer" as const,
+      cogs_per_case: newCogs ?? lotCogs ?? null,
+      notes: noteBase + (freight > 0 ? ` · freight $${freight.toFixed(2)}/case` : ""),
+    });
+    if (e2) { toast.error(e2.message); setSaving(false); return; }
+
+    setSaving(false);
+    toast.success(`Transfer saved · ${cases} cases ${form.sku} · ${form.from_wh} → ${form.to_wh}`);
+    setForm(f => ({ ...f, lot: "", cases: "", freight_per_case: "", notes: "" }));
+    onAdded();
+  }
+
+  const FP_WAREHOUSES_ALL = ["Heinlein","Lineage Newark","Cold Chain","Empire","OOE","FreezPak"];
+
+  return (
+    <div className="rounded-2xl border border-border bg-card shadow-sm p-5">
+      <h3 className="text-sm font-bold mb-1" style={{ color:"#1C2340" }}>FP Transfer between warehouses</h3>
+      <p className="text-xs text-muted-foreground mb-4">Creates one OUT + one IN movement · COGS carries over (+ freight if entered)</p>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+        <div><Lbl>Date</Lbl>
+          <input type="date" className={`${inp} mt-1`} value={form.date}
+            onChange={e => setForm(f => ({ ...f, date: e.target.value }))} /></div>
+        <div><Lbl>SKU</Lbl>
+          <select className={`${inp} mt-1`} value={form.sku}
+            onChange={e => setForm(f => ({ ...f, sku: e.target.value as SKU, lot: "" }))}>
+            {SKUS.map(s => <option key={s} value={s}>{s}</option>)}
+          </select></div>
+        <div><Lbl>Lot #</Lbl>
+          <input className={`${inp} mt-1 font-mono`} value={form.lot}
+            onChange={e => setForm(f => ({ ...f, lot: e.target.value }))}
+            placeholder="Type or paste lot" /></div>
+        <div><Lbl>Cases *</Lbl>
+          <input type="number" className={`${inp} mt-1 font-mono`} value={form.cases}
+            onChange={e => setForm(f => ({ ...f, cases: e.target.value }))} /></div>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+        <div><Lbl>From warehouse</Lbl>
+          <select className={`${inp} mt-1`} value={form.from_wh}
+            onChange={e => setForm(f => ({ ...f, from_wh: e.target.value }))}>
+            {FP_WAREHOUSES_ALL.map(w => <option key={w} value={w}>{w}</option>)}
+          </select></div>
+        <div><Lbl>To warehouse</Lbl>
+          <select className={`${inp} mt-1`} value={form.to_wh}
+            onChange={e => setForm(f => ({ ...f, to_wh: e.target.value }))}>
+            {FP_WAREHOUSES_ALL.map(w => <option key={w} value={w}>{w}</option>)}
+          </select></div>
+        <div><Lbl>Freight/case ($) · optional</Lbl>
+          <input type="number" step="0.01" className={`${inp} mt-1 font-mono`}
+            value={form.freight_per_case} placeholder="0.00"
+            onChange={e => setForm(f => ({ ...f, freight_per_case: e.target.value }))} /></div>
+        <div><Lbl>Notes</Lbl>
+          <input className={`${inp} mt-1`} value={form.notes}
+            onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="Optional" /></div>
+      </div>
+      {/* COGS preview */}
+      {form.lot && (
+        <div className="mb-4 rounded-xl bg-muted/30 border border-border px-4 py-2.5 flex gap-6 text-xs">
+          <span>Source COGS: <span className="font-mono font-bold" style={{ color:"#1C2340" }}>
+            {lotCogs != null ? `$${lotCogs.toFixed(2)}/case` : "—"}
+          </span></span>
+          {freight > 0 && <span>+ Freight: <span className="font-mono font-bold text-orange-600">${freight.toFixed(2)}/case</span></span>}
+          {newCogs != null && <span className="ml-auto font-semibold">COGS at destination: <span className="font-mono text-emerald-700">${newCogs.toFixed(2)}/case</span></span>}
+        </div>
+      )}
+      <button onClick={save} disabled={saving}
+        className="rounded-lg px-5 py-2 text-sm font-semibold text-white disabled:opacity-50"
+        style={{ backgroundColor:"#1C2340" }}>
+        {saving ? "Saving…" : `→ Transfer ${form.cases || "?"} cases ${form.sku} · ${form.from_wh} → ${form.to_wh}`}
+      </button>
+    </div>
+  );
+}
+
+// ─── Production Tab ───────────────────────────────────────────────────────────
+function ProductionTab({ fpMovements, ipMovements, onAdded }: {
+  fpMovements: FPRow[]; ipMovements: IPRow[]; onAdded: () => void;
+}) {
+  const [activeForm, setActiveForm] = useState<"production"|"transfer">("production");
+  const [runs, setRuns] = useState<any[]>([]);
+  const [loadingRuns, setLoadingRuns] = useState(true);
+  const [form, setForm] = useState({
+    run_date: ymd(), facility: "Heinlein" as Facility, sku: "XD" as SKU,
+    cases_produced: "", lot_number: "", notes: "",
+    override_cogs: "",   // if blank → auto-calculated
+  });
+  const [saving, setSaving] = useState(false);
+  const [editingRun, setEditingRun] = useState<any | null>(null);
+  const [confirmId, setConfirmId] = useState<string | null>(null);
 
   useEffect(() => { loadRuns(); }, []);
 
   async function loadRuns() {
     const { data } = await supabase.from("production_runs").select("*").order("run_date", { ascending: false });
     setRuns(data ?? []);
-    setLoading(false);
+    setLoadingRuns(false);
   }
 
   function set(k: string, v: string) { setForm(f => ({ ...f, [k]: v })); }
 
+  const cases = Number(form.cases_produced) || 0;
+  const bom = BOM[form.sku] ?? [];
+
+  // IP stock available: build lot → qty + cogs map
+  const ipStock = useMemo(() => {
+    const map = new Map<string, { material: string; lot: string; qty: number; cogs: number | null; unit: string }>();
+    for (const r of ipMovements) {
+      const rr = r as any;
+      const key = `${r.material}|${r.lot_number ?? "—"}`;
+      const cur = map.get(key) ?? { material: r.material, lot: r.lot_number ?? "—", qty: 0, cogs: null, unit: r.unit ?? "lbs" };
+      cur.qty += r.type === "In" ? Number(r.quantity) : -Number(r.quantity);
+      if (cur.cogs == null && rr.cogs_per_unit) cur.cogs = rr.cogs_per_unit;
+      map.set(key, cur);
+    }
+    return map;
+  }, [ipMovements]);
+
+  // BOM lines with calculated quantities and COGS
+  const bomLines = useMemo(() => {
+    if (cases <= 0) return bom.map(line => ({ ...line, qty: 0, cogsContrib: 0, availableLots: [] as any[] }));
+    return bom.filter(l => (l.pct ?? 0) > 0 || (l.perCase ?? 0) > 0).map(line => {
+      const qty = calcBomQty(line, cases);
+      // Find available lots for this material
+      const availableLots = [...ipStock.entries()]
+        .filter(([, v]) => v.material === line.material && v.qty > 0)
+        .map(([, v]) => v)
+        .sort((a, b) => a.lot.localeCompare(b.lot));
+      // Use first available lot for COGS estimate
+      const cogs = availableLots[0]?.cogs ?? null;
+      const cogsContrib = cogs != null ? qty * cogs : 0;
+      return { ...line, qty, cogsContrib, availableLots, cogs };
+    });
+  }, [bom, cases, ipStock]);
+
+  // Auto-calculate COGS/case from BOM
+  const tolling = 0.65;
+  const autoCogs = useMemo(() => {
+    if (cases <= 0) return 0;
+    const ingredientCogs = bomLines.reduce((s, l) => s + l.cogsContrib, 0);
+    return (ingredientCogs / cases) + tolling;
+  }, [bomLines, cases]);
+
+  const finalCogs = form.override_cogs ? Number(form.override_cogs) : autoCogs;
+
   async function save() {
-    if (!form.cases_produced || Number(form.cases_produced) <= 0) { toast.error("Cases produced required"); return; }
-    if (!form.lot_number) { toast.error("Lot number required for production runs"); return; }
-    if (!form.cogs_per_case) { toast.error("COGS/case required"); return; }
+    if (!form.cases_produced || cases <= 0) { toast.error("Cases produced required"); return; }
+    if (!form.lot_number) { toast.error("Lot number required"); return; }
+    if (finalCogs <= 0) { toast.error("COGS could not be calculated — enter override COGS manually"); return; }
     setSaving(true);
 
-    // Insert production run
-    const { data: runData, error } = await supabase.from("production_runs").insert({
-      run_date: form.run_date,
-      facility: form.facility,
-      sku: form.sku,
-      cases_produced: Number(form.cases_produced),
-      cogs_per_case: Number(form.cogs_per_case),
-      lot_number: form.lot_number,
-      notes: form.notes || null,
-    }).select().single();
+    const runPayload = {
+      run_date: form.run_date, facility: form.facility, sku: form.sku,
+      cases_produced: cases, cogs_per_case: finalCogs,
+      lot_number: form.lot_number, notes: form.notes || null,
+    };
 
-    if (error || !runData) { toast.error(error?.message ?? "Failed"); setSaving(false); return; }
+    if (editingRun) {
+      const { error } = await supabase.from("production_runs").update(runPayload).eq("id", editingRun.id);
+      if (error) { toast.error(error.message); setSaving(false); return; }
+      toast.success("Production run updated");
+    } else {
+      // 1. Insert production run
+      const { data: runData, error: runErr } = await supabase
+        .from("production_runs").insert(runPayload).select().single();
+      if (runErr || !runData) { toast.error(runErr?.message ?? "Failed"); setSaving(false); return; }
 
-    // Auto-create fp_movements In record
-    const fpWh: Warehouse = form.facility === "Heinlein" ? "Heinlein" : form.facility === "Empire" ? "Empire" : "OOE";
-    await supabase.from("fp_movements").insert({
-      movement_date: form.run_date,
-      type: "In" as const,
-      sku: form.sku,
-      cases: Number(form.cases_produced),
-      warehouse: fpWh,
-      lot_number: form.lot_number,
-      concept: "Production" as const,
-      cogs_per_case: Number(form.cogs_per_case),
-      notes: `Production run · ${form.facility} · ${form.run_date}`,
-    });
+      // 2. FP IN at Heinlein
+      const fpWh: Warehouse = form.facility === "Heinlein" ? "Heinlein" : form.facility === "Empire" ? "Empire" : "OOE";
+      await supabase.from("fp_movements").insert({
+        movement_date: form.run_date, type: "In" as const,
+        sku: form.sku, cases, warehouse: fpWh,
+        lot_number: form.lot_number, concept: "Production" as const,
+        cogs_per_case: finalCogs,
+        notes: `Production run · ${form.facility} · ${form.run_date}`,
+      });
+
+      // 3. IP OUT for each BOM ingredient (use first available lot per material)
+      for (const line of bomLines) {
+        if (line.qty <= 0) continue;
+        const lot = line.availableLots[0];
+        await supabase.from("ip_movements").insert({
+          movement_date: form.run_date, type: "Out" as const,
+          material: line.material, quantity: Math.round(line.qty * 100) / 100,
+          unit: line.unit, lot_number: lot?.lot ?? null,
+          concept: "Consumption" as const,
+          cogs_per_unit: lot?.cogs ?? null,
+          notes: `BOM consumption · ${form.sku} · ${cases} cases · lot ${form.lot_number}`,
+        });
+      }
+
+      toast.success(`Production run saved · ${cases} cases ${form.sku} · ${bomLines.length} IP movements created`);
+    }
 
     setSaving(false);
-    toast.success(`Production run saved · ${form.cases_produced} cases ${form.sku} · FP stock updated`);
-    setForm(f => ({ ...f, cases_produced: "", cogs_per_case: "", lot_number: "", notes: "" }));
+    setEditingRun(null);
+    setForm(f => ({ ...f, cases_produced: "", lot_number: "", notes: "", override_cogs: "" }));
     loadRuns();
     onAdded();
   }
 
+  function startEdit(r: any) {
+    setEditingRun(r);
+    setForm({
+      run_date: r.run_date, facility: r.facility as Facility, sku: r.sku as SKU,
+      cases_produced: String(r.cases_produced), lot_number: r.lot_number ?? "",
+      notes: r.notes ?? "", override_cogs: String(r.cogs_per_case),
+    });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function removeRun(id: string) {
+    const { error } = await supabase.from("production_runs").delete().eq("id", id);
+    if (error) { toast.error(error.message); return; }
+    setConfirmId(null);
+    toast.success("Production run deleted — linked FP/IP movements were NOT auto-deleted");
+    loadRuns();
+  }
+
   const inp = "rounded-lg border border-border bg-background px-3 py-1.5 text-sm w-full focus:outline-none focus:ring-2 focus:ring-primary/30";
+  const Lbl = ({ children }: { children: React.ReactNode }) => (
+    <label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">{children}</label>
+  );
 
   return (
     <div className="space-y-5">
-      {/* Form */}
-      <div className="rounded-2xl border border-border bg-card shadow-sm p-5">
-        <h3 className="text-sm font-bold mb-4" style={{color:"#1C2340"}}>New Production Run</h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-          <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Run Date</label>
-            <input type="date" className={`${inp} mt-1`} value={form.run_date} onChange={e => set("run_date", e.target.value)} /></div>
-          <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Facility</label>
-            <select className={`${inp} mt-1`} value={form.facility} onChange={e => set("facility", e.target.value)}>
-              {FACILITIES.map(f => <option key={f} value={f}>{f}</option>)}
-            </select></div>
-          <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">SKU</label>
-            <select className={`${inp} mt-1`} value={form.sku} onChange={e => set("sku", e.target.value)}>
-              {SKUS.map(s => <option key={s} value={s}>{s} ({SKU_ITEMS[s as SKU]})</option>)}
-            </select></div>
-          <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Cases Produced *</label>
-            <input type="number" className={`${inp} mt-1 font-mono`} value={form.cases_produced} min={1}
-              onChange={e => set("cases_produced", e.target.value)} /></div>
-        </div>
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
-          <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">COGS/case ($) *</label>
-            <input type="number" className={`${inp} mt-1 font-mono`} value={form.cogs_per_case}
-              onChange={e => set("cogs_per_case", e.target.value)} step="0.01" placeholder="e.g. 3.21" /></div>
-          <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Lot # *</label>
-            <input className={`${inp} mt-1 font-mono`} value={form.lot_number} onChange={e => set("lot_number", e.target.value)}
-              placeholder="e.g. HEI-2026-07" /></div>
-          <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Notes</label>
-            <input className={`${inp} mt-1`} value={form.notes} onChange={e => set("notes", e.target.value)} /></div>
-        </div>
-        <div className="flex items-center gap-3">
-          <button onClick={save} disabled={saving}
-            className="rounded-lg px-5 py-2 text-sm font-semibold text-white disabled:opacity-50"
-            style={{backgroundColor:"#A3224A"}}>
-            {saving ? "Saving…" : `+ Save Run · ${form.cases_produced || "?"} cases ${form.sku}`}
+      {/* Mode toggle */}
+      <div className="flex gap-1 rounded-xl bg-muted p-1 w-fit">
+        {(["production","transfer"] as const).map(m => (
+          <button key={m} onClick={() => setActiveForm(m)}
+            className={`rounded-lg px-4 py-1.5 text-xs font-semibold transition-colors ${activeForm===m ? "text-white shadow-sm" : "text-muted-foreground"}`}
+            style={activeForm===m ? { backgroundColor: m==="production" ? "#A3224A" : "#1C2340" } : {}}>
+            {m === "production" ? "Production run" : "Warehouse transfer"}
           </button>
-          <p className="text-xs text-muted-foreground">↳ Auto-creates FP movement In on save</p>
-        </div>
+        ))}
       </div>
 
-      {/* Production runs table */}
+      {/* ── Transfer form ── */}
+      {activeForm === "transfer" && (
+        <FPTransferForm fpMovements={fpMovements} onAdded={onAdded} />
+      )}
+
+      {/* ── Production form ── */}
+      {activeForm === "production" && (
+        <div className="rounded-2xl border border-border bg-card shadow-sm p-5">
+          {editingRun && (
+            <div className="mb-3 rounded-xl border px-4 py-2 text-sm font-semibold"
+              style={{ borderColor:"#A3224A", color:"#A3224A", backgroundColor:"#A3224A10" }}>
+              Editing run — {editingRun.lot_number}
+            </div>
+          )}
+          <h3 className="text-sm font-bold mb-4" style={{ color:"#1C2340" }}>
+            {editingRun ? "Edit Production Run" : "New Production Run"}
+          </h3>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+            <div><Lbl>Run Date</Lbl>
+              <input type="date" className={`${inp} mt-1`} value={form.run_date}
+                onChange={e => set("run_date", e.target.value)} /></div>
+            <div><Lbl>Facility</Lbl>
+              <select className={`${inp} mt-1`} value={form.facility} onChange={e => set("facility", e.target.value)}>
+                {FACILITIES.map(f => <option key={f} value={f}>{f}</option>)}
+              </select></div>
+            <div><Lbl>SKU</Lbl>
+              <select className={`${inp} mt-1`} value={form.sku} onChange={e => set("sku", e.target.value)}>
+                {SKUS.map(s => <option key={s} value={s}>{s} ({SKU_ITEMS[s as SKU]})</option>)}
+              </select></div>
+            <div><Lbl>Cases Produced *</Lbl>
+              <input type="number" className={`${inp} mt-1 font-mono`} value={form.cases_produced}
+                min={1} onChange={e => set("cases_produced", e.target.value)} /></div>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
+            <div><Lbl>Lot # *</Lbl>
+              <input className={`${inp} mt-1 font-mono`} value={form.lot_number}
+                onChange={e => set("lot_number", e.target.value)} placeholder="e.g. HEI-2026-07" /></div>
+            <div>
+              <Lbl>COGS override ($) · leave blank = auto</Lbl>
+              <input type="number" step="0.01" className={`${inp} mt-1 font-mono`}
+                value={form.override_cogs} placeholder={autoCogs > 0 ? `Auto: $${autoCogs.toFixed(2)}` : "—"}
+                onChange={e => set("override_cogs", e.target.value)} />
+            </div>
+            <div><Lbl>Notes</Lbl>
+              <input className={`${inp} mt-1`} value={form.notes} onChange={e => set("notes", e.target.value)} /></div>
+          </div>
+
+          {/* BOM preview */}
+          {cases > 0 && (
+            <div className="rounded-xl border border-border bg-muted/20 p-3 mb-4">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2">
+                BOM · {cases} cases of {form.sku} — auto-generated IP OUT movements on save
+              </p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-[10px] uppercase tracking-wide text-muted-foreground border-b border-border/60">
+                      <th className="pb-1.5 text-left">Material</th>
+                      <th className="pb-1.5 text-right">Qty needed</th>
+                      <th className="pb-1.5 text-left pl-3">Available lot</th>
+                      <th className="pb-1.5 text-right">Available qty</th>
+                      <th className="pb-1.5 text-right">COGS/unit</th>
+                      <th className="pb-1.5 text-right">COGS contrib.</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bomLines.map(line => {
+                      const firstLot = line.availableLots[0];
+                      const enough = firstLot ? firstLot.qty >= line.qty : false;
+                      return (
+                        <tr key={line.material} className={`border-t border-border/40 ${!enough ? "bg-red-50/30" : ""}`}>
+                          <td className="py-1 font-semibold" style={{ color:"#1C2340" }}>{line.material}</td>
+                          <td className="py-1 text-right font-mono">
+                            {line.qty.toFixed(1)} {line.unit}
+                          </td>
+                          <td className="py-1 pl-3 font-mono text-muted-foreground text-[10px]">
+                            {firstLot ? firstLot.lot : <span className="text-red-600 font-semibold">⚠ no stock</span>}
+                          </td>
+                          <td className="py-1 text-right font-mono text-muted-foreground">
+                            {firstLot ? `${firstLot.qty.toLocaleString()} ${line.unit}` : "—"}
+                            {!enough && firstLot && <span className="ml-1 text-red-600 font-semibold">⚠</span>}
+                          </td>
+                          <td className="py-1 text-right font-mono text-muted-foreground">
+                            {line.cogs != null ? `$${line.cogs.toFixed(4)}` : "—"}
+                          </td>
+                          <td className="py-1 text-right font-mono font-semibold" style={{ color:"#A3224A" }}>
+                            {line.cogsContrib > 0 ? `$${line.cogsContrib.toFixed(2)}` : "—"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    <tr className="border-t-2 border-border font-semibold bg-muted/10">
+                      <td className="py-1.5" colSpan={5} style={{ color:"#1C2340" }}>
+                        Ingredients + Tolling (${tolling.toFixed(2)}/case)
+                      </td>
+                      <td className="py-1.5 text-right font-mono text-emerald-700">
+                        {finalCogs > 0 ? `$${finalCogs.toFixed(2)}/case` : "—"}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              {form.override_cogs && (
+                <p className="mt-2 text-[10px] text-orange-600 font-semibold">
+                  ⚠ Using manual COGS override of ${Number(form.override_cogs).toFixed(2)}/case instead of calculated ${autoCogs.toFixed(2)}/case
+                </p>
+              )}
+            </div>
+          )}
+
+          <div className="flex gap-2">
+            <button onClick={save} disabled={saving}
+              className="rounded-lg px-5 py-2 text-sm font-semibold text-white disabled:opacity-50"
+              style={{ backgroundColor:"#A3224A" }}>
+              {saving ? "Saving…"
+                : editingRun ? "Update run"
+                : `+ Save · ${cases || "?"} cases ${form.sku} · COGS $${finalCogs > 0 ? finalCogs.toFixed(2) : "?"}`}
+            </button>
+            {editingRun && (
+              <button onClick={() => { setEditingRun(null); setForm(f => ({ ...f, cases_produced:"", lot_number:"", notes:"", override_cogs:"" })); }}
+                className="rounded-lg border border-border px-4 py-2 text-sm font-semibold hover:bg-muted">Cancel</button>
+            )}
+            {!editingRun && <p className="text-xs text-muted-foreground self-center">↳ Creates FP IN + {bomLines.length} IP OUT movements</p>}
+          </div>
+        </div>
+      )}
+
+      {/* Production history */}
       <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
         <div className="px-5 py-3 border-b border-border bg-muted/30">
-          <p className="text-sm font-semibold" style={{color:"#1C2340"}}>Production History</p>
+          <p className="text-sm font-semibold" style={{ color:"#1C2340" }}>Production History</p>
         </div>
         <table className="w-full text-sm">
           <thead>
@@ -998,26 +1410,45 @@ function ProductionTab({ onAdded }: { onAdded: () => void }) {
               <th className="px-4 py-2.5 text-right">Total COGS</th>
               <th className="px-4 py-2.5 text-left">Lot #</th>
               <th className="px-4 py-2.5 text-left">Notes</th>
+              <th className="px-4 py-2.5 text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {loading ? <tr><td colSpan={8} className="p-8 text-center text-muted-foreground">Loading…</td></tr>
-              : runs.length === 0 ? (
-                <tr><td colSpan={8} className="p-8 text-center text-muted-foreground">
-                  No production runs yet — add your first run above
-                </td></tr>
-              ) : runs.map(r => (
+            {loadingRuns
+              ? <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">Loading…</td></tr>
+              : runs.length === 0
+              ? <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">No production runs yet</td></tr>
+              : runs.map(r => (
                 <tr key={r.id} className="border-t border-border/60 hover:bg-muted/20">
                   <td className="px-4 py-1.5 font-mono text-xs">{r.run_date}</td>
-                  <td className="px-4 py-1.5">{r.facility}</td>
-                  <td className="px-4 py-1.5 font-semibold" style={{color:"#1C2340"}}>{r.sku}</td>
+                  <td className="px-4 py-1.5 text-xs">{r.facility}</td>
+                  <td className="px-4 py-1.5 font-semibold" style={{ color:"#1C2340" }}>{r.sku}</td>
                   <td className="px-4 py-1.5 text-right font-mono font-semibold">{Number(r.cases_produced).toLocaleString()}</td>
                   <td className="px-4 py-1.5 text-right font-mono text-muted-foreground">${Number(r.cogs_per_case).toFixed(2)}</td>
                   <td className="px-4 py-1.5 text-right font-mono text-emerald-600">
                     ${Math.round(Number(r.cases_produced) * Number(r.cogs_per_case)).toLocaleString()}
                   </td>
-                  <td className="px-4 py-1.5 font-mono text-xs" style={{color:"#A3224A"}}>{r.lot_number}</td>
+                  <td className="px-4 py-1.5 font-mono text-xs" style={{ color:"#A3224A" }}>{r.lot_number}</td>
                   <td className="px-4 py-1.5 text-xs text-muted-foreground">{r.notes ?? "—"}</td>
+                  <td className="px-4 py-1.5 text-right">
+                    {confirmId === r.id ? (
+                      <span className="flex flex-col items-end gap-1">
+                        <span className="text-[10px] text-amber-600 font-semibold">⚠ FP/IP movements NOT deleted</span>
+                        <span className="flex items-center gap-1.5 text-xs">
+                          Delete?
+                          <button onClick={() => removeRun(r.id)}
+                            className="rounded bg-red-600 px-2 py-0.5 text-[10px] font-semibold text-white">Confirm</button>
+                          <button onClick={() => setConfirmId(null)}
+                            className="rounded border border-border px-2 py-0.5 text-[10px]">Cancel</button>
+                        </span>
+                      </span>
+                    ) : (
+                      <span className="flex justify-end gap-2">
+                        <button onClick={() => startEdit(r)} className="text-muted-foreground hover:text-foreground">✎</button>
+                        <button onClick={() => setConfirmId(r.id)} className="text-muted-foreground hover:text-red-600">🗑</button>
+                      </span>
+                    )}
+                  </td>
                 </tr>
               ))}
           </tbody>
@@ -1985,7 +2416,7 @@ function OperationsPage() {
       {tab === "fp"          && <FPInputTab movements={fpMovementsAll} loading={loading} onAdded={loadAll} />}
       {tab === "ip"          && <IPInputTab movements={ipMovements} loading={loading} onAdded={loadAll} />}
       {tab === "ipsummary"   && <IPSummaryTab movements={ipMovements} />}
-      {tab === "production"  && <ProductionTab onAdded={loadAll} />}
+      {tab === "production"  && <ProductionTab fpMovements={fpMovementsAll} ipMovements={ipMovements} onAdded={loadAll} />}
       {tab === "procurement" && <ProcurementTab movements={fpMovements} orders={orders} />}
       {tab === "cogs"        && <COGSSimulatorTab />}
       {tab === "summary"     && <FPSummaryTab />}
