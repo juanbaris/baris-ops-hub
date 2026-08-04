@@ -174,6 +174,42 @@ export default function LogisticsTab({ orders }: { orders: Order[] }) {
 
 type Priced = { order: Order; cost: LogisticsCost };
 
+const UNMAPPED = "Sin DC identificado";
+
+const PIPELINE_COLS = [
+  { key: "po_number", label: "PO #" },
+  { key: "po_date", label: "PO date" },
+  { key: "distributor", label: "Distributor" },
+  { key: "customer", label: "Customer" },
+  { key: "dc", label: "DC" },
+  { key: "status", label: "Status" },
+  { key: "cases", label: "Cases" },
+  { key: "pallets", label: "Pallets" },
+  { key: "freight", label: "Freight" },
+  { key: "noFreight", label: "Non-freight" },
+  { key: "total", label: "Total" },
+  { key: "payer", label: "Freight payer" },
+] as const;
+
+function sortValue(p: Priced, key: string): string | number {
+  const { order: o, cost: c } = p;
+  switch (key) {
+    case "po_number": return o.po_number ?? "";
+    case "po_date": return o.po_date ?? "";
+    case "distributor": return o.distributor ?? "";
+    case "customer": return o.customer ?? "";
+    case "dc": return c.canonicalDc ?? "zzz";
+    case "status": return o.status ?? "";
+    case "cases": return c.totalCases;
+    case "pallets": return c.pallets ?? -1;
+    case "freight": return c.flete ?? -1;
+    case "noFreight": return c.noFlete ?? -1;
+    case "total": return c.total ?? -1;
+    case "payer": return c.payer ?? "";
+    default: return "";
+  }
+}
+
 // ─── a) Pipeline ──────────────────────────────────────────────────────────────
 function PipelineView({ priced }: { priced: Priced[] }) {
   const [dateFilter, setDateFilter] = useState("all");
