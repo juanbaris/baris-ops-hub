@@ -301,6 +301,7 @@ export type Database = {
           movement_date: string
           notes: string | null
           po_number_ref: string | null
+          po_ref: string | null
           sku: Database["public"]["Enums"]["sku"]
           type: Database["public"]["Enums"]["movement_type"]
           updated_at: string
@@ -317,6 +318,7 @@ export type Database = {
           movement_date: string
           notes?: string | null
           po_number_ref?: string | null
+          po_ref?: string | null
           sku: Database["public"]["Enums"]["sku"]
           type: Database["public"]["Enums"]["movement_type"]
           updated_at?: string
@@ -333,6 +335,7 @@ export type Database = {
           movement_date?: string
           notes?: string | null
           po_number_ref?: string | null
+          po_ref?: string | null
           sku?: Database["public"]["Enums"]["sku"]
           type?: Database["public"]["Enums"]["movement_type"]
           updated_at?: string
@@ -643,6 +646,48 @@ export type Database = {
         }
         Relationships: []
       }
+      lot_master: {
+        Row: {
+          cases_initial: number | null
+          cogs_per_case: number | null
+          cogs_status: string | null
+          created_at: string | null
+          expiry_date: string | null
+          id: string
+          lineage_item_code: string | null
+          lot_number: string
+          notes: string | null
+          sku: string
+          updated_at: string | null
+        }
+        Insert: {
+          cases_initial?: number | null
+          cogs_per_case?: number | null
+          cogs_status?: string | null
+          created_at?: string | null
+          expiry_date?: string | null
+          id?: string
+          lineage_item_code?: string | null
+          lot_number: string
+          notes?: string | null
+          sku: string
+          updated_at?: string | null
+        }
+        Update: {
+          cases_initial?: number | null
+          cogs_per_case?: number | null
+          cogs_status?: string | null
+          created_at?: string | null
+          expiry_date?: string | null
+          id?: string
+          lineage_item_code?: string | null
+          lot_number?: string
+          notes?: string | null
+          sku?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       production_runs: {
         Row: {
           cases_produced: number
@@ -766,6 +811,7 @@ export type Database = {
         | "Transfer"
         | "Free"
         | "Historical"
+        | "Balance correction"
       ip_concept: "Procurement" | "Consumption" | "Damage" | "Transfer"
       movement_type: "In" | "Out"
       order_status:
@@ -777,7 +823,17 @@ export type Database = {
         | "Sent to 3PL"
         | "BOL Confirmed"
       sku: "XD" | "PW" | "HM" | "WM" | "WD" | "Matcha"
-      warehouse: "Lineage Newark" | "Cold Chain" | "Empire" | "Heinlein" | "OOE"
+      warehouse:
+        | "Lineage Newark"
+        | "Cold Chain"
+        | "Empire"
+        | "Heinlein"
+        | "OOE"
+        | "FreezPak"
+        | "PermaFrost"
+        | "Pod Chicago"
+        | "Pod MidAtlantic"
+        | "Pod Texas"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -916,6 +972,7 @@ export const Constants = {
         "Transfer",
         "Free",
         "Historical",
+        "Balance correction",
       ],
       ip_concept: ["Procurement", "Consumption", "Damage", "Transfer"],
       movement_type: ["In", "Out"],
@@ -929,7 +986,18 @@ export const Constants = {
         "BOL Confirmed",
       ],
       sku: ["XD", "PW", "HM", "WM", "WD", "Matcha"],
-      warehouse: ["Lineage Newark", "Cold Chain", "Empire", "Heinlein", "OOE"],
+      warehouse: [
+        "Lineage Newark",
+        "Cold Chain",
+        "Empire",
+        "Heinlein",
+        "OOE",
+        "FreezPak",
+        "PermaFrost",
+        "Pod Chicago",
+        "Pod MidAtlantic",
+        "Pod Texas",
+      ],
     },
   },
 } as const

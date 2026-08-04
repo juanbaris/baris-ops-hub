@@ -22,7 +22,10 @@ const FP_CONCEPTS: FPConcept[] = ["Production","Sale","Sample","Damage","Transfe
 const IP_CONCEPTS: IPConcept[] = ["Procurement","Consumption","Damage","Transfer"];
 const FACILITIES: Facility[] = ["Heinlein","Empire","OOE"];
 
-type OpsTab = "stock" | "fp" | "ip" | "production" | "cogs" | "procurement";
+import { FPSummaryTab } from "@/components/fp/fp-summary-tab";
+import { LotMasterTab } from "@/components/fp/lot-master-tab";
+
+type OpsTab = "stock" | "fp" | "ip" | "production" | "cogs" | "procurement" | "summary" | "lots";
 
 function ymd(d = new Date()) { return d.toISOString().slice(0,10); }
 
@@ -1537,7 +1540,9 @@ function OperationsPage() {
     { id:"production",  label:"Production" },
     { id:"procurement", label:"Procurement Planning" },
     { id:"cogs",        label:"COGS Simulator" },
+    { id:"summary",     label:"FP Summary" },
   ];
+  const refTabs: { id: OpsTab; label: string }[] = [{ id: "lots", label: "Lot Master" }];
 
   return (
     <>
@@ -1551,6 +1556,14 @@ function OperationsPage() {
             {t.label}
           </button>
         ))}
+        <div className="mx-2 my-1.5 w-px self-stretch bg-border" />
+        {refTabs.map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            className="border-b-2 px-4 py-2 text-sm font-semibold transition-colors"
+            style={tab === t.id ? { borderColor: "#6B7280", color: "#6B7280" } : { borderColor: "transparent", color: "#9CA3AF" }}>
+            {t.label}
+          </button>
+        ))}
       </div>
 
       {tab === "stock"       && <FPStockTab movements={fpMovements} orders={orders} loading={loading} />}
@@ -1559,6 +1572,8 @@ function OperationsPage() {
       {tab === "production"  && <ProductionTab onAdded={loadAll} />}
       {tab === "procurement" && <ProcurementTab movements={fpMovements} orders={orders} />}
       {tab === "cogs"        && <COGSSimulatorTab />}
+      {tab === "summary"     && <FPSummaryTab />}
+      {tab === "lots"        && <LotMasterTab />}
     </>
   );
 }
