@@ -42,7 +42,7 @@ function Collections() {
               <th className="px-3 py-2 text-left font-medium">Distributor</th>
               <th className="px-3 py-2 text-left font-medium">PO #</th>
               <th className="px-3 py-2 text-left font-medium">Invoice Date</th>
-              <th className="px-3 py-2 text-right font-medium">Net Sales</th>
+              <th className="px-3 py-2 text-right font-medium">Gross Sales</th>
             </tr>
           </thead>
           <tbody>
@@ -58,7 +58,7 @@ function Collections() {
                   <td className="px-3 py-2">{r.distributor}</td>
                   <td className="px-3 py-2">{r.po_number}</td>
                   <td className="px-3 py-2">{r.invoice_date ?? "—"}</td>
-                  <td className="px-3 py-2 text-right font-mono">{fmtMoney(r.net_sales)}</td>
+                  <td className="px-3 py-2 text-right font-mono">{fmtMoney(r.gross_sales)}</td>
                 </tr>
               ))
             )}
