@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/app-shell";
 import { supabase } from "@/integrations/supabase/client";
@@ -25,7 +25,7 @@ const FACILITIES: Facility[] = ["Heinlein","Empire","OOE"];
 import { FPSummaryTab } from "@/components/fp/fp-summary-tab";
 import { LotMasterTab } from "@/components/fp/lot-master-tab";
 
-type OpsTab = "stock" | "fp" | "ip" | "production" | "cogs" | "procurement" | "summary" | "lots";
+type OpsTab = "stock" | "fp" | "ip" | "production" | "cogs" | "procurement" | "summary" | "lots" | "ipsummary";
 
 function ymd(d = new Date()) { return d.toISOString().slice(0,10); }
 
@@ -328,19 +328,35 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
   const [form, setForm] = useState({
     movement_date: ymd(), material: "", vendor: "",
     type: "In" as MoveType, quantity: "", unit: "lbs",
-    lot_number: "", concept: "Procurement" as IPConcept, notes: "",
+    lot_number: "", concept: "Procurement" as IPConcept,
+    warehouse: "Heinlein",
+    total_price: "", shipping_price: "", other_costs: "",
+    estimated_receive_date: "", estimated_payment_date: "",
+    notes: "",
   });
   const [saving, setSaving] = useState(false);
-  const [filterConcept, setFilterConcept] = useState<string>("all");
-  const [filterType, setFilterType] = useState<string>("all");
+  const [editing, setEditing] = useState<IPRow | null>(null);
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [filterConcept, setFilterConcept] = useState("all");
+  const [filterType, setFilterType] = useState("all");
+  const [filterMaterial, setFilterMaterial] = useState("all");
+  const [sortCol, setSortCol] = useState<"date"|"material"|"qty">("date");
+  const [sortDir, setSortDir] = useState<"asc"|"desc">("desc");
 
   function set(k: string, v: string) { setForm(f => ({ ...f, [k]: v })); }
+
+  const qty   = parseFloat(form.quantity)       || 0;
+  const total = parseFloat(form.total_price)    || 0;
+  const ship  = parseFloat(form.shipping_price) || 0;
+  const other = parseFloat(form.other_costs)    || 0;
+  const pricePerUnit = qty > 0 ? total / qty : 0;
+  const cogsPerUnit  = qty > 0 ? (total + ship + other) / qty : 0;
 
   async function save() {
     if (!form.material) { toast.error("Material required"); return; }
     if (!form.quantity || Number(form.quantity) === 0) { toast.error("Quantity required"); return; }
     setSaving(true);
-    const { error } = await supabase.from("ip_movements").insert({
+    const payload: any = {
       movement_date: form.movement_date,
       material: form.material,
       vendor: form.vendor || null,
@@ -350,116 +366,514 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
       lot_number: form.lot_number || null,
       concept: form.concept,
       notes: form.notes || null,
-    });
+      warehouse: form.warehouse || null,
+      total_price: total || null,
+      shipping_price: ship || null,
+      other_costs: other || null,
+      price_per_unit: pricePerUnit || null,
+      cogs_per_unit: cogsPerUnit || null,
+      estimated_receive_date: form.estimated_receive_date || null,
+      estimated_payment_date: form.estimated_payment_date || null,
+    };
+    const res = editing
+      ? await supabase.from("ip_movements").update(payload).eq("id", editing.id)
+      : await supabase.from("ip_movements").insert(payload);
     setSaving(false);
-    if (error) { toast.error(error.message); return; }
-    toast.success(`I&P movement added: ${form.type} ${form.quantity} ${form.unit} ${form.material}`);
-    setForm(f => ({ ...f, quantity: "", lot_number: "", notes: "" }));
+    if (res.error) { toast.error(res.error.message); return; }
+    toast.success(editing ? "I&P movement updated" : `Added: ${form.type} ${form.quantity} ${form.unit} ${form.material}`);
+    setEditing(null);
+    setForm(f => ({
+      ...f, quantity: "", lot_number: "", notes: "",
+      total_price: "", shipping_price: "", other_costs: "",
+      estimated_receive_date: "", estimated_payment_date: "",
+    }));
     onAdded();
   }
 
+  function startEdit(r: IPRow) {
+    setEditing(r);
+    const rr = r as any;
+    setForm({
+      movement_date: r.movement_date,
+      material: r.material,
+      vendor: r.vendor ?? "",
+      type: r.type as MoveType,
+      quantity: String(r.quantity),
+      unit: r.unit ?? "lbs",
+      lot_number: r.lot_number ?? "",
+      concept: r.concept as IPConcept,
+      warehouse: rr.warehouse ?? "Heinlein",
+      total_price: rr.total_price != null ? String(rr.total_price) : "",
+      shipping_price: rr.shipping_price != null ? String(rr.shipping_price) : "",
+      other_costs: rr.other_costs != null ? String(rr.other_costs) : "",
+      estimated_receive_date: rr.estimated_receive_date ?? "",
+      estimated_payment_date: rr.estimated_payment_date ?? "",
+      notes: r.notes ?? "",
+    });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function cancelEdit() { setEditing(null); }
+
+  async function remove(id: string) {
+    const { error } = await supabase.from("ip_movements").delete().eq("id", id);
+    if (error) { toast.error(error.message); return; }
+    setConfirmId(null);
+    toast.success("Movement deleted");
+    onAdded();
+  }
+
+  async function toggleFlag(r: IPRow, flag: "received" | "paid") {
+    const rr = r as any;
+    const current: boolean = rr[flag] ?? false;
+    const dateCol = flag === "received" ? "actual_receive_date" : "actual_payment_date";
+    const patch: any = { [flag]: !current };
+    if (!current) patch[dateCol] = ymd();
+    else patch[dateCol] = null;
+    const { error } = await supabase.from("ip_movements").update(patch).eq("id", r.id);
+    if (error) toast.error(error.message);
+    else onAdded();
+  }
+
+  function dateIndicator(estDate: string | null | undefined, done: boolean, actualDate: string | null | undefined) {
+    if (done) return { color: "text-emerald-600", bg: "bg-emerald-50", label: actualDate ? actualDate.slice(5) : "✓" };
+    if (!estDate) return { color: "text-muted-foreground", bg: "", label: "—" };
+    const days = Math.ceil((new Date(estDate).getTime() - Date.now()) / 86400000);
+    if (days < 0)  return { color: "text-red-600",    bg: "bg-red-50",    label: `${Math.abs(days)}d late` };
+    if (days <= 7) return { color: "text-orange-600", bg: "bg-orange-50", label: `${days}d` };
+    return              { color: "text-emerald-600", bg: "", label: estDate.slice(5) };
+  }
+
+  const materials = useMemo(() => [...new Set(movements.map(r => r.material))].sort(), [movements]);
+
   const filtered = useMemo(() => {
     return [...movements]
-      .filter(r => (filterConcept === "all" || r.concept === filterConcept) && (filterType === "all" || r.type === filterType))
-      .sort((a,b) => a.movement_date < b.movement_date ? 1 : -1);
-  }, [movements, filterConcept, filterType]);
+      .filter(r =>
+        (filterConcept  === "all" || r.concept  === filterConcept) &&
+        (filterType     === "all" || r.type     === filterType) &&
+        (filterMaterial === "all" || r.material === filterMaterial)
+      )
+      .sort((a, b) => {
+        let cmp = 0;
+        if (sortCol === "date")     cmp = a.movement_date.localeCompare(b.movement_date);
+        if (sortCol === "material") cmp = a.material.localeCompare(b.material);
+        if (sortCol === "qty")      cmp = Number(a.quantity) - Number(b.quantity);
+        return sortDir === "asc" ? cmp : -cmp;
+      });
+  }, [movements, filterConcept, filterType, filterMaterial, sortCol, sortDir]);
 
+  function toggleSort(col: "date"|"material"|"qty") {
+    if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc");
+    else { setSortCol(col); setSortDir("desc"); }
+  }
+
+  const IP_WAREHOUSES = ["Heinlein","Empire","Lineage Newark","Long Grove","FreezPak","OOE"];
   const inp = "rounded-lg border border-border bg-background px-3 py-1.5 text-sm w-full focus:outline-none focus:ring-2 focus:ring-primary/30";
+  const Lbl = ({ children }: { children: React.ReactNode }) => (
+    <label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">{children}</label>
+  );
+  const SortTh = ({ col, label }: { col: "date"|"material"|"qty"; label: string }) => (
+    <th className="px-3 py-2.5 text-left cursor-pointer select-none hover:text-foreground"
+      onClick={() => toggleSort(col)}>
+      <span className="flex items-center gap-1">
+        {label}
+        <span className="text-[10px]">{sortCol === col ? (sortDir === "desc" ? "↓" : "↑") : "↕"}</span>
+      </span>
+    </th>
+  );
 
   return (
     <div className="space-y-5">
-      {/* Form */}
+      {/* ── Form ── */}
       <div className="rounded-2xl border border-border bg-card shadow-sm p-5">
-        <h3 className="text-sm font-bold mb-4" style={{color:"#1C2340"}}>New I&P Movement</h3>
+        {editing && (
+          <div className="mb-3 rounded-xl border px-4 py-2 text-sm font-semibold"
+            style={{ borderColor:"#A3224A", color:"#A3224A", backgroundColor:"#A3224A10" }}>
+            Editing: {editing.material} — {editing.movement_date}
+          </div>
+        )}
+        <h3 className="text-sm font-bold mb-4" style={{ color:"#1C2340" }}>
+          {editing ? "Edit I&P Movement" : "New I&P Movement"}
+        </h3>
+
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-          <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Date</label>
-            <input type="date" className={`${inp} mt-1`} value={form.movement_date} onChange={e => set("movement_date", e.target.value)} /></div>
-          <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Type</label>
+          <div><Lbl>Date</Lbl>
+            <input type="date" className={`${inp} mt-1`} value={form.movement_date}
+              onChange={e => set("movement_date", e.target.value)} /></div>
+          <div><Lbl>Type</Lbl>
             <select className={`${inp} mt-1`} value={form.type} onChange={e => set("type", e.target.value)}>
               <option value="In">In</option><option value="Out">Out</option>
             </select></div>
-          <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Concept</label>
+          <div><Lbl>Concept</Lbl>
             <select className={`${inp} mt-1`} value={form.concept} onChange={e => set("concept", e.target.value)}>
               {IP_CONCEPTS.map(c => <option key={c} value={c}>{c}</option>)}
             </select></div>
-          <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Material *</label>
-            <input className={`${inp} mt-1`} value={form.material} onChange={e => set("material", e.target.value)}
-              placeholder="e.g. IQF Rasp, Choc Dark" /></div>
+          <div><Lbl>Material *</Lbl>
+            <input className={`${inp} mt-1`} value={form.material}
+              onChange={e => set("material", e.target.value)} placeholder="e.g. IQF Rasp" /></div>
         </div>
+
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-          <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Vendor</label>
-            <input className={`${inp} mt-1`} value={form.vendor} onChange={e => set("vendor", e.target.value)} placeholder="e.g. Blommer" /></div>
-          <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Quantity *</label>
-            <input type="number" className={`${inp} mt-1 font-mono`} value={form.quantity} onChange={e => set("quantity", e.target.value)} /></div>
-          <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Unit</label>
+          <div><Lbl>Quantity *</Lbl>
+            <input type="number" className={`${inp} mt-1 font-mono`} value={form.quantity}
+              onChange={e => set("quantity", e.target.value)} /></div>
+          <div><Lbl>Unit</Lbl>
             <select className={`${inp} mt-1`} value={form.unit} onChange={e => set("unit", e.target.value)}>
               {["lbs","kg","Piece","cases","units"].map(u => <option key={u} value={u}>{u}</option>)}
             </select></div>
-          <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Lot #</label>
-            <input className={`${inp} mt-1 font-mono`} value={form.lot_number} onChange={e => set("lot_number", e.target.value)} /></div>
+          <div><Lbl>Vendor</Lbl>
+            <input className={`${inp} mt-1`} value={form.vendor}
+              onChange={e => set("vendor", e.target.value)} placeholder="e.g. Blommer" /></div>
+          <div><Lbl>Warehouse</Lbl>
+            <select className={`${inp} mt-1`} value={form.warehouse} onChange={e => set("warehouse", e.target.value)}>
+              {IP_WAREHOUSES.map(w => <option key={w} value={w}>{w}</option>)}
+            </select></div>
         </div>
-        <div className="mb-4">
-          <label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Notes</label>
-          <input className={`${inp} mt-1`} value={form.notes} onChange={e => set("notes", e.target.value)} placeholder="Optional" />
-        </div>
-        <button onClick={save} disabled={saving}
-          className="rounded-lg px-5 py-2 text-sm font-semibold text-white disabled:opacity-50"
-          style={{backgroundColor:"#A3224A"}}>
-          {saving ? "Saving…" : `+ Add ${form.type} · ${form.quantity || "?"} ${form.unit} ${form.material || "?"}`}
-        </button>
-      </div>
 
-      {/* Movements table */}
-      <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
-        <div className="px-5 py-3 border-b border-border bg-muted/30 flex items-center justify-between gap-3 flex-wrap">
-          <p className="text-sm font-semibold" style={{color:"#1C2340"}}>I&P Movements <span className="text-muted-foreground font-normal text-xs">({filtered.length} records)</span></p>
-          <div className="flex gap-2">
-            <select value={filterType} onChange={e => setFilterType(e.target.value)}
-              className="rounded-lg border border-border bg-background px-2 py-1 text-xs focus:outline-none">
-              <option value="all">In + Out</option>
-              <option value="In">In only</option>
-              <option value="Out">Out only</option>
-            </select>
-            <select value={filterConcept} onChange={e => setFilterConcept(e.target.value)}
-              className="rounded-lg border border-border bg-background px-2 py-1 text-xs focus:outline-none">
-              <option value="all">All concepts</option>
-              {IP_CONCEPTS.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+          <div><Lbl>Lot #</Lbl>
+            <input className={`${inp} mt-1 font-mono`} value={form.lot_number}
+              onChange={e => set("lot_number", e.target.value)} /></div>
+        </div>
+
+        <div className="rounded-xl border border-border bg-muted/20 p-3 mb-3">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2">Pricing</p>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <div><label className="text-[10px] text-muted-foreground">Total price ($)</label>
+              <input type="number" step="0.01" className={`${inp} mt-1 font-mono`}
+                value={form.total_price} onChange={e => set("total_price", e.target.value)} placeholder="0.00" /></div>
+            <div><label className="text-[10px] text-muted-foreground">Shipping ($)</label>
+              <input type="number" step="0.01" className={`${inp} mt-1 font-mono`}
+                value={form.shipping_price} onChange={e => set("shipping_price", e.target.value)} placeholder="0.00" /></div>
+            <div><label className="text-[10px] text-muted-foreground">Other costs ($)</label>
+              <input type="number" step="0.01" className={`${inp} mt-1 font-mono`}
+                value={form.other_costs} onChange={e => set("other_costs", e.target.value)} placeholder="0.00" /></div>
+            <div className="rounded-lg bg-card border border-border p-2">
+              <label className="text-[10px] text-muted-foreground">Price / unit</label>
+              <p className="font-mono font-semibold text-sm mt-0.5" style={{ color:"#1C2340" }}>
+                {pricePerUnit > 0 ? `$${pricePerUnit.toFixed(4)}` : "—"}
+              </p>
+              <p className="text-[9px] text-muted-foreground">total ÷ qty</p>
+            </div>
+            <div className="rounded-lg border-2 border-emerald-200 bg-emerald-50 p-2">
+              <label className="text-[10px] text-emerald-700 font-semibold">COGS / unit</label>
+              <p className="font-mono font-bold text-sm mt-0.5 text-emerald-700">
+                {cogsPerUnit > 0 ? `$${cogsPerUnit.toFixed(4)}` : "—"}
+              </p>
+              <p className="text-[9px] text-emerald-600">(total+ship+other)÷qty</p>
+            </div>
           </div>
         </div>
-        <table className="w-full text-sm">
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+          <div><Lbl>Est. receive date</Lbl>
+            <input type="date" className={`${inp} mt-1`} value={form.estimated_receive_date}
+              onChange={e => set("estimated_receive_date", e.target.value)} /></div>
+          <div><Lbl>Est. payment date</Lbl>
+            <input type="date" className={`${inp} mt-1`} value={form.estimated_payment_date}
+              onChange={e => set("estimated_payment_date", e.target.value)} /></div>
+          <div className="md:col-span-2"><Lbl>Notes</Lbl>
+            <input className={`${inp} mt-1`} value={form.notes}
+              onChange={e => set("notes", e.target.value)} placeholder="Optional" /></div>
+        </div>
+
+        <div className="flex gap-2">
+          <button onClick={save} disabled={saving}
+            className="rounded-lg px-5 py-2 text-sm font-semibold text-white disabled:opacity-50"
+            style={{ backgroundColor:"#A3224A" }}>
+            {saving ? "Saving…" : editing ? "Update movement"
+              : `+ Add ${form.type} · ${form.quantity || "?"} ${form.unit} ${form.material || "?"}`}
+          </button>
+          {editing && (
+            <button onClick={cancelEdit}
+              className="rounded-lg border border-border px-4 py-2 text-sm font-semibold hover:bg-muted">
+              Cancel
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* ── Filters ── */}
+      <div className="flex flex-wrap items-center gap-2">
+        <select value={filterType} onChange={e => setFilterType(e.target.value)}
+          className="rounded-lg border border-border bg-background px-2 py-1 text-xs focus:outline-none">
+          <option value="all">In + Out</option>
+          <option value="In">In only</option>
+          <option value="Out">Out only</option>
+        </select>
+        <select value={filterConcept} onChange={e => setFilterConcept(e.target.value)}
+          className="rounded-lg border border-border bg-background px-2 py-1 text-xs focus:outline-none">
+          <option value="all">All concepts</option>
+          {IP_CONCEPTS.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+        <select value={filterMaterial} onChange={e => setFilterMaterial(e.target.value)}
+          className="rounded-lg border border-border bg-background px-2 py-1 text-xs focus:outline-none">
+          <option value="all">All materials</option>
+          {materials.map(m => <option key={m} value={m}>{m}</option>)}
+        </select>
+        <span className="rounded-full bg-muted px-2.5 py-1 font-mono text-[11px] text-muted-foreground">
+          {filtered.length} records
+        </span>
+      </div>
+
+      {/* ── Table ── */}
+      <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
+        <table className="w-full text-xs min-w-max">
           <thead>
             <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
-              <th className="px-4 py-2.5 text-left">Date</th>
-              <th className="px-4 py-2.5 text-left">Type</th>
-              <th className="px-4 py-2.5 text-left">Concept</th>
-              <th className="px-4 py-2.5 text-left">Material</th>
-              <th className="px-4 py-2.5 text-right">Qty</th>
-              <th className="px-4 py-2.5 text-left">Unit</th>
-              <th className="px-4 py-2.5 text-left">Vendor</th>
-              <th className="px-4 py-2.5 text-left">Lot</th>
+              <SortTh col="date" label="Date" />
+              <th className="px-3 py-2.5 text-left">Type</th>
+              <SortTh col="material" label="Material" />
+              <SortTh col="qty" label="Qty" />
+              <th className="px-3 py-2.5 text-left">Unit</th>
+              <th className="px-3 py-2.5 text-left">Vendor</th>
+              <th className="px-3 py-2.5 text-left">Lot</th>
+              <th className="px-3 py-2.5 text-left">Warehouse</th>
+              <th className="px-3 py-2.5 text-right">Total ($)</th>
+              <th className="px-3 py-2.5 text-right">COGS/unit</th>
+              <th className="px-3 py-2.5 text-center">Received</th>
+              <th className="px-3 py-2.5 text-center">Paid</th>
+              <th className="px-3 py-2.5 text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {loading ? <tr><td colSpan={8} className="p-8 text-center text-muted-foreground">Loading…</td></tr>
-              : filtered.length === 0 ? <tr><td colSpan={8} className="p-8 text-center text-muted-foreground">No movements match filters</td></tr>
-              : filtered.map(r => (
-                <tr key={r.id} className="border-t border-border/60 hover:bg-muted/20">
-                  <td className="px-4 py-1.5 font-mono text-xs">{r.movement_date}</td>
-                  <td className="px-4 py-1.5">
-                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${r.type === "In" ? "bg-emerald-100 text-emerald-700" : "bg-orange-100 text-orange-700"}`}>
-                      {r.type}
-                    </span>
-                  </td>
-                  <td className="px-4 py-1.5 text-xs">{r.concept}</td>
-                  <td className="px-4 py-1.5 font-semibold text-xs" style={{color:"#1C2340"}}>{r.material}</td>
-                  <td className="px-4 py-1.5 text-right font-mono text-xs">{Number(r.quantity).toLocaleString()}</td>
-                  <td className="px-4 py-1.5 text-xs text-muted-foreground">{r.unit}</td>
-                  <td className="px-4 py-1.5 text-xs" style={{color:"#A3224A"}}>{r.vendor ?? "—"}</td>
-                  <td className="px-4 py-1.5 font-mono text-xs text-muted-foreground">{r.lot_number ?? "—"}</td>
-                </tr>
-              ))}
+            {loading
+              ? <tr><td colSpan={13} className="p-8 text-center text-muted-foreground">Loading…</td></tr>
+              : filtered.length === 0
+              ? <tr><td colSpan={13} className="p-8 text-center text-muted-foreground">No movements match filters</td></tr>
+              : filtered.map(r => {
+                const rr = r as any;
+                const recv = dateIndicator(rr.estimated_receive_date, rr.received ?? false, rr.actual_receive_date);
+                const paid = dateIndicator(rr.estimated_payment_date, rr.paid ?? false, rr.actual_payment_date);
+                return (
+                  <tr key={r.id} className="border-t border-border/60 hover:bg-muted/20">
+                    <td className="px-3 py-1.5 font-mono">{r.movement_date}</td>
+                    <td className="px-3 py-1.5">
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold
+                        ${r.type === "In" ? "bg-emerald-100 text-emerald-700" : "bg-orange-100 text-orange-700"}`}>
+                        {r.type}
+                      </span>
+                    </td>
+                    <td className="px-3 py-1.5 font-semibold" style={{ color:"#1C2340" }}>{r.material}</td>
+                    <td className="px-3 py-1.5 text-right font-mono">{Number(r.quantity).toLocaleString()}</td>
+                    <td className="px-3 py-1.5 text-muted-foreground">{r.unit}</td>
+                    <td className="px-3 py-1.5" style={{ color:"#A3224A" }}>{r.vendor ?? "—"}</td>
+                    <td className="px-3 py-1.5 font-mono text-muted-foreground">{r.lot_number ?? "—"}</td>
+                    <td className="px-3 py-1.5 text-muted-foreground">{rr.warehouse ?? "—"}</td>
+                    <td className="px-3 py-1.5 text-right font-mono">
+                      {rr.total_price ? `$${Number(rr.total_price).toLocaleString()}` : "—"}
+                    </td>
+                    <td className="px-3 py-1.5 text-right font-mono font-semibold text-emerald-700">
+                      {rr.cogs_per_unit ? `$${Number(rr.cogs_per_unit).toFixed(4)}` : "—"}
+                    </td>
+                    <td className={`px-3 py-1.5 text-center ${recv.bg}`}>
+                      <div className="flex flex-col items-center gap-0.5">
+                        <input type="checkbox" checked={rr.received ?? false}
+                          onChange={() => toggleFlag(r, "received")}
+                          className="h-3.5 w-3.5 cursor-pointer accent-emerald-600" />
+                        <span className={`text-[9px] font-semibold ${recv.color}`}>{recv.label}</span>
+                      </div>
+                    </td>
+                    <td className={`px-3 py-1.5 text-center ${paid.bg}`}>
+                      <div className="flex flex-col items-center gap-0.5">
+                        <input type="checkbox" checked={rr.paid ?? false}
+                          onChange={() => toggleFlag(r, "paid")}
+                          className="h-3.5 w-3.5 cursor-pointer accent-emerald-600" />
+                        <span className={`text-[9px] font-semibold ${paid.color}`}>{paid.label}</span>
+                      </div>
+                    </td>
+                    <td className="px-3 py-1.5 text-right">
+                      {confirmId === r.id ? (
+                        <span className="flex flex-col items-end gap-1">
+                          <span className="flex items-center gap-1.5 text-xs">
+                            Delete?
+                            <button onClick={() => remove(r.id)}
+                              className="rounded bg-red-600 px-2 py-0.5 text-[10px] font-semibold text-white">Confirm</button>
+                            <button onClick={() => setConfirmId(null)}
+                              className="rounded border border-border px-2 py-0.5 text-[10px]">Cancel</button>
+                          </span>
+                        </span>
+                      ) : (
+                        <span className="flex justify-end gap-2">
+                          <button onClick={() => startEdit(r)} className="text-muted-foreground hover:text-foreground">✎</button>
+                          <button onClick={() => setConfirmId(r.id)} className="text-muted-foreground hover:text-red-600">🗑</button>
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
           </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ─── I&P Summary Tab ──────────────────────────────────────────────────────────
+function IPSummaryTab({ movements }: { movements: IPRow[] }) {
+  const [filterMaterial, setFilterMaterial] = useState("all");
+
+  const materials = useMemo(
+    () => [...new Set(movements.map(r => r.material))].sort(),
+    [movements]
+  );
+
+  const inventory = useMemo(() => {
+    const map = new Map<string, {
+      material: string;
+      inQty: number; outQty: number; inValue: number;
+      unit: string;
+      lots: Map<string, { qty: number; cogs: number | null; unit: string }>;
+    }>();
+
+    for (const r of movements) {
+      const rr = r as any;
+      const qty   = Number(r.quantity);
+      const delta = r.type === "In" ? qty : -qty;
+      const cogs: number | null = rr.cogs_per_unit ?? null;
+      const lot = r.lot_number ?? "—";
+
+      if (!map.has(r.material)) {
+        map.set(r.material, {
+          material: r.material, inQty: 0, outQty: 0,
+          inValue: 0, unit: r.unit ?? "lbs", lots: new Map(),
+        });
+      }
+      const cur = map.get(r.material)!;
+      if (r.type === "In") {
+        cur.inQty += qty;
+        if (cogs) cur.inValue += qty * cogs;
+      } else {
+        cur.outQty += qty;
+      }
+
+      const lotCur = cur.lots.get(lot) ?? { qty: 0, cogs: null, unit: r.unit ?? "lbs" };
+      lotCur.qty += delta;
+      if (lotCur.cogs == null && cogs != null) lotCur.cogs = cogs;
+      cur.lots.set(lot, lotCur);
+    }
+
+    return [...map.values()]
+      .map(m => ({ ...m, netQty: m.inQty - m.outQty }))
+      .filter(m => m.netQty > 0)
+      .sort((a, b) => a.material.localeCompare(b.material));
+  }, [movements]);
+
+  const shown = filterMaterial === "all"
+    ? inventory
+    : inventory.filter(m => m.material === filterMaterial);
+
+  const totalValue = shown.reduce((s, m) => {
+    const avgCogs = m.inQty > 0 ? m.inValue / m.inQty : 0;
+    return s + m.netQty * avgCogs;
+  }, 0);
+
+  const totalIn  = movements.filter(r => r.type === "In").length;
+  const totalOut = movements.filter(r => r.type === "Out").length;
+
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Active materials</p>
+          <p className="text-2xl font-bold font-mono" style={{ color:"#1C2340" }}>{inventory.length}</p>
+        </div>
+        <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Total movements</p>
+          <p className="text-2xl font-bold font-mono" style={{ color:"#1C2340" }}>{movements.length.toLocaleString()}</p>
+          <p className="text-[10px] text-muted-foreground">{totalIn} in · {totalOut} out</p>
+        </div>
+        <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Pending received</p>
+          <p className="text-2xl font-bold font-mono text-orange-600">
+            {movements.filter(r => !(r as any).received && (r as any).estimated_receive_date).length}
+          </p>
+          <p className="text-[10px] text-muted-foreground">with est. date, not yet ticked</p>
+        </div>
+        <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Inventory value (est.)</p>
+          <p className="text-2xl font-bold font-mono" style={{ color:"#A3224A" }}>
+            ${Math.round(totalValue).toLocaleString()}
+          </p>
+          <p className="text-[10px] text-muted-foreground">where COGS available</p>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <select value={filterMaterial} onChange={e => setFilterMaterial(e.target.value)}
+          className="rounded-lg border border-border bg-background px-2 py-1 text-xs focus:outline-none">
+          <option value="all">All materials</option>
+          {materials.map(m => <option key={m} value={m}>{m}</option>)}
+        </select>
+        <span className="text-xs text-muted-foreground">{shown.length} materials with stock</span>
+      </div>
+
+      <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
+        <div className="px-5 py-3 border-b border-border bg-muted/30">
+          <p className="text-sm font-bold" style={{ color:"#1C2340" }}>I&P Inventory — current stock by material & lot</p>
+          <p className="text-xs text-muted-foreground">Net balance from all movements · COGS = weighted average of In movements</p>
+        </div>
+        <table className="w-full text-xs min-w-max">
+          <thead>
+            <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
+              <th className="px-4 py-2.5 text-left">Material</th>
+              <th className="px-4 py-2.5 text-left">Lot #</th>
+              <th className="px-4 py-2.5 text-right">Net qty</th>
+              <th className="px-4 py-2.5 text-left">Unit</th>
+              <th className="px-4 py-2.5 text-right">COGS / unit</th>
+              <th className="px-4 py-2.5 text-right">Inventory value</th>
+            </tr>
+          </thead>
+          <tbody>
+            {shown.length === 0 ? (
+              <tr><td colSpan={6} className="p-8 text-center text-muted-foreground">No stock data yet</td></tr>
+            ) : shown.map(m => {
+              const avgCogs = m.inQty > 0 ? m.inValue / m.inQty : 0;
+              const value   = m.netQty * avgCogs;
+              const lots    = [...m.lots.entries()].filter(([, v]) => v.qty > 0);
+              return (
+                <React.Fragment key={m.material}>
+                  <tr className="border-t-2 border-border bg-muted/10 font-semibold">
+                    <td className="px-4 py-2" style={{ color:"#1C2340" }}>{m.material}</td>
+                    <td className="px-4 py-2 text-muted-foreground text-[10px]">
+                      {lots.length} lot{lots.length !== 1 ? "s" : ""}
+                    </td>
+                    <td className="px-4 py-2 text-right font-mono">{m.netQty.toLocaleString()}</td>
+                    <td className="px-4 py-2 text-muted-foreground">{m.unit}</td>
+                    <td className="px-4 py-2 text-right font-mono">
+                      {avgCogs > 0 ? `$${avgCogs.toFixed(4)}` : "—"}
+                    </td>
+                    <td className="px-4 py-2 text-right font-mono font-bold" style={{ color:"#A3224A" }}>
+                      {value > 0 ? `$${Math.round(value).toLocaleString()}` : "—"}
+                    </td>
+                  </tr>
+                  {lots.map(([lot, v]) => (
+                    <tr key={`${m.material}|${lot}`} className="border-t border-border/40 hover:bg-muted/20">
+                      <td className="px-4 py-1.5 text-muted-foreground pl-8 text-[10px]">↳</td>
+                      <td className="px-4 py-1.5 font-mono" style={{ color:"#A3224A" }}>{lot}</td>
+                      <td className="px-4 py-1.5 text-right font-mono">{v.qty.toLocaleString()}</td>
+                      <td className="px-4 py-1.5 text-muted-foreground">{v.unit}</td>
+                      <td className="px-4 py-1.5 text-right font-mono text-muted-foreground">
+                        {v.cogs ? `$${v.cogs.toFixed(4)}` : "—"}
+                      </td>
+                      <td className="px-4 py-1.5 text-right font-mono text-muted-foreground">
+                        {v.cogs ? `$${Math.round(v.qty * v.cogs).toLocaleString()}` : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+          <tfoot>
+            <tr style={{ backgroundColor:"#1C2340", color:"#fff" }}>
+              <td className="px-4 py-2 font-semibold text-xs" colSpan={5}>TOTAL INVENTORY VALUE</td>
+              <td className="px-4 py-2 text-right font-mono font-bold text-emerald-400">
+                ${Math.round(totalValue).toLocaleString()}
+              </td>
+            </tr>
+          </tfoot>
         </table>
       </div>
     </div>
@@ -1537,6 +1951,7 @@ function OperationsPage() {
     { id:"stock",       label:"FP Stock" },
     { id:"fp",          label:"FP Input" },
     { id:"ip",          label:"I&P Input" },
+    { id:"ipsummary",   label:"I&P Summary" },
     { id:"production",  label:"Production" },
     { id:"procurement", label:"Procurement Planning" },
     { id:"cogs",        label:"COGS Simulator" },
@@ -1569,6 +1984,7 @@ function OperationsPage() {
       {tab === "stock"       && <FPStockTab movements={fpMovements} orders={orders} loading={loading} />}
       {tab === "fp"          && <FPInputTab movements={fpMovementsAll} loading={loading} onAdded={loadAll} />}
       {tab === "ip"          && <IPInputTab movements={ipMovements} loading={loading} onAdded={loadAll} />}
+      {tab === "ipsummary"   && <IPSummaryTab movements={ipMovements} />}
       {tab === "production"  && <ProductionTab onAdded={loadAll} />}
       {tab === "procurement" && <ProcurementTab movements={fpMovements} orders={orders} />}
       {tab === "cogs"        && <COGSSimulatorTab />}
