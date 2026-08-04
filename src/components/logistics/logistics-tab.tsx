@@ -174,6 +174,42 @@ export default function LogisticsTab({ orders }: { orders: Order[] }) {
 
 type Priced = { order: Order; cost: LogisticsCost };
 
+const UNMAPPED = "Sin DC identificado";
+
+const PIPELINE_COLS = [
+  { key: "po_number", label: "PO #" },
+  { key: "po_date", label: "PO date" },
+  { key: "distributor", label: "Distributor" },
+  { key: "customer", label: "Customer" },
+  { key: "dc", label: "DC" },
+  { key: "status", label: "Status" },
+  { key: "cases", label: "Cases" },
+  { key: "pallets", label: "Pallets" },
+  { key: "freight", label: "Freight" },
+  { key: "noFreight", label: "Non-freight" },
+  { key: "total", label: "Total" },
+  { key: "payer", label: "Freight payer" },
+] as const;
+
+function sortValue(p: Priced, key: string): string | number {
+  const { order: o, cost: c } = p;
+  switch (key) {
+    case "po_number": return o.po_number ?? "";
+    case "po_date": return o.po_date ?? "";
+    case "distributor": return o.distributor ?? "";
+    case "customer": return o.customer ?? "";
+    case "dc": return c.canonicalDc ?? "zzz";
+    case "status": return o.status ?? "";
+    case "cases": return c.totalCases;
+    case "pallets": return c.pallets ?? -1;
+    case "freight": return c.flete ?? -1;
+    case "noFreight": return c.noFlete ?? -1;
+    case "total": return c.total ?? -1;
+    case "payer": return c.payer ?? "";
+    default: return "";
+  }
+}
+
 // ─── a) Pipeline ──────────────────────────────────────────────────────────────
 function PipelineView({ priced }: { priced: Priced[] }) {
   const [dateFilter, setDateFilter] = useState("all");
@@ -183,9 +219,11 @@ function PipelineView({ priced }: { priced: Priced[] }) {
   const [selDc, setSelDc] = useState<Set<string>>(new Set());
   const [selStatus, setSelStatus] = useState<Set<string>>(new Set());
   const [onlyCosted, setOnlyCosted] = useState(false);
+  const [sortKey, setSortKey] = useState<string>("po_date");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
   const dcOptions = useMemo(
-    () => [...new Set(priced.map(p => p.cost.canonicalDc).filter(Boolean) as string[])].sort(),
+    () => [UNMAPPED, ...[...new Set(priced.map(p => p.cost.canonicalDc).filter(Boolean) as string[])].sort()],
     [priced],
   );
 
@@ -208,12 +246,18 @@ function PipelineView({ priced }: { priced: Priced[] }) {
     const o = p.order, c = p.cost;
     if (selDist.size && !selDist.has(o.distributor)) return false;
     if (selStatus.size && !selStatus.has(o.status)) return false;
-    if (selDc.size && !(c.canonicalDc && selDc.has(c.canonicalDc))) return false;
+    if (selDc.size && !selDc.has(c.canonicalDc ?? UNMAPPED)) return false;
     if (onlyCosted && c.total == null) return false;
     if (range.from && (o.po_date ?? "") < range.from) return false;
     if (range.to && (o.po_date ?? "") > range.to) return false;
     return true;
-  }).sort((a, b) => (b.order.po_date ?? "").localeCompare(a.order.po_date ?? "")), [priced, selDist, selStatus, selDc, onlyCosted, range]);
+  }).sort((a, b) => {
+    const va = sortValue(a, sortKey), vb = sortValue(b, sortKey);
+    let cmp: number;
+    if (typeof va === "number" && typeof vb === "number") cmp = va - vb;
+    else cmp = String(va).localeCompare(String(vb));
+    return sortDir === "asc" ? cmp : -cmp;
+  }), [priced, selDist, selStatus, selDc, onlyCosted, range, sortKey, sortDir]);
 
   const k = useMemo(() => {
     const cases = rows.reduce((s, r) => s + r.cost.totalCases, 0);
@@ -258,8 +302,18 @@ function PipelineView({ priced }: { priced: Priced[] }) {
         <table className="w-full min-w-max text-sm">
           <thead>
             <tr className="bg-muted/60 text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
-              {["PO #", "PO date", "Distributor", "Customer", "DC", "Status", "Cases", "Pallets", "Freight", "Non-freight", "Total", "Freight payer"].map((h, i) => (
-                <th key={h} className={`px-3 py-2.5 font-semibold ${i >= 6 && i <= 10 ? "text-right" : "text-left"}`}>{h}</th>
+              {PIPELINE_COLS.map((col, i) => (
+                <th
+                  key={col.key}
+                  onClick={() => {
+                    if (sortKey === col.key) setSortDir(d => (d === "asc" ? "desc" : "asc"));
+                    else { setSortKey(col.key); setSortDir(col.key === "po_date" ? "desc" : "asc"); }
+                  }}
+                  className={`cursor-pointer select-none px-3 py-2.5 font-semibold hover:text-foreground ${i >= 6 && i <= 10 ? "text-right" : "text-left"}`}
+                >
+                  {col.label}
+                  <span className="ml-1 text-[9px]">{sortKey === col.key ? (sortDir === "asc" ? "▲" : "▼") : "↕"}</span>
+                </th>
               ))}
             </tr>
           </thead>
