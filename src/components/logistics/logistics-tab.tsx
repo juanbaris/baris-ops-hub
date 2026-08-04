@@ -5,6 +5,8 @@ import {
 } from "recharts";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
+import LogisticsForecastTab, { ForecastRateCards, SpendByMonthChart } from "./logistics-forecast-tab";
+import { useLogisticsForecast } from "@/hooks/use-logistics-forecast";
 import {
   calcLogistics, norm, PALLET_COLS,
   type Accessorial, type DcMapping, type KeheRate, type LineageTariff, type LogisticsCost,
@@ -120,7 +122,7 @@ function TextInput({ value, onSave, width = "w-48", placeholder }: { value: stri
 
 // ─── main ─────────────────────────────────────────────────────────────────────
 export default function LogisticsTab({ orders }: { orders: Order[] }) {
-  const [sub, setSub] = useState<"pipeline" | "rates" | "dashboard">("pipeline");
+  const [sub, setSub] = useState<"pipeline" | "rates" | "dashboard" | "forecast">("pipeline");
   const [book, setBook] = useState<RateBook>({ mapping: [], tariffs: [], surcharges: null, kehe: [], accessorial: null });
   const [loading, setLoading] = useState(true);
 
@@ -150,6 +152,7 @@ export default function LogisticsTab({ orders }: { orders: Order[] }) {
     { id: "pipeline", label: "Pipeline" },
     { id: "rates", label: "Rate Cards" },
     { id: "dashboard", label: "Dashboard" },
+    { id: "forecast", label: "Logistics Forecast" },
   ] as const;
 
   return (
@@ -166,7 +169,8 @@ export default function LogisticsTab({ orders }: { orders: Order[] }) {
 
       {loading ? <p className="p-8 text-center text-muted-foreground">Loading rates…</p>
         : sub === "pipeline" ? <PipelineView priced={priced} />
-        : sub === "rates" ? <RateCards book={book} orders={orders} reload={reload} />
+        : sub === "rates" ? <RateCards book={book} orders={orders} reload={reload} priced={priced} />
+        : sub === "forecast" ? <LogisticsForecastTab priced={priced} />
         : <DashboardView priced={priced} />}
     </div>
   );
@@ -371,7 +375,7 @@ function Card({ title, subtitle, children }: { title: string; subtitle?: string;
   );
 }
 
-function RateCards({ book, orders, reload }: { book: RateBook; orders: Order[]; reload: () => Promise<void> }) {
+function RateCards({ book, orders, reload, priced }: { book: RateBook; orders: Order[]; reload: () => Promise<void>; priced: Priced[] }) {
   const [busy, setBusy] = useState(false);
 
   async function save<T extends "logistics_dc_mapping" | "logistics_lineage_tariff" | "logistics_lineage_surcharges" | "logistics_kehe_rate" | "logistics_accessorial_rates">(
@@ -571,6 +575,8 @@ function RateCards({ book, orders, reload }: { book: RateBook; orders: Order[]; 
           </div>
         )}
       </Card>
+
+      <ForecastRateCards priced={priced} />
     </div>
   );
 }
@@ -578,6 +584,7 @@ function RateCards({ book, orders, reload }: { book: RateBook; orders: Order[]; 
 // ─── c) Dashboard ─────────────────────────────────────────────────────────────
 function DashboardView({ priced }: { priced: Priced[] }) {
   const costed = useMemo(() => priced.filter(p => p.cost.total != null), [priced]);
+  const { series } = useLogisticsForecast(priced);
 
   const kpis = useMemo(() => {
     const cases = costed.reduce((s, r) => s + r.cost.totalCases, 0);
@@ -590,16 +597,6 @@ function DashboardView({ priced }: { priced: Priced[] }) {
     for (const r of costed) m.set(r.cost.totalCases, (m.get(r.cost.totalCases) ?? 0) + 1);
     return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10)
       .map(([cases, count]) => ({ cases: String(cases), count }));
-  }, [costed]);
-
-  const byMonth = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const r of costed) {
-      const key = (r.order.po_date ?? "").slice(0, 7);
-      if (!key) continue;
-      m.set(key, (m.get(key) ?? 0) + (r.cost.total ?? 0));
-    }
-    return [...m.entries()].sort().map(([month, spend]) => ({ month, spend: Math.round(spend) }));
   }, [costed]);
 
   const byYear = useMemo(() => {
@@ -690,18 +687,8 @@ function DashboardView({ priced }: { priced: Priced[] }) {
         </div>
       </Card>
 
-      <Card title="Logistics spend by month">
-        <div className="h-72">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={byMonth}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="month" tick={{ fontSize: 10 }} />
-              <YAxis tick={{ fontSize: 11 }} />
-              <Tooltip formatter={(v: number) => money(v)} />
-              <Bar dataKey="spend" fill={NAVY} radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
+      <Card title="Logistics spend by month" subtitle="Jan 2026 onward — real POs up to today, Sales-driven forecast afterwards.">
+        <SpendByMonthChart series={series} height={288} />
       </Card>
 
       <Card title="Spend by distributor and year">
