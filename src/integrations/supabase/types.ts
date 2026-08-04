@@ -301,6 +301,7 @@ export type Database = {
           movement_date: string
           notes: string | null
           po_number_ref: string | null
+          po_ref: string | null
           sku: Database["public"]["Enums"]["sku"]
           type: Database["public"]["Enums"]["movement_type"]
           updated_at: string
@@ -317,6 +318,7 @@ export type Database = {
           movement_date: string
           notes?: string | null
           po_number_ref?: string | null
+          po_ref?: string | null
           sku: Database["public"]["Enums"]["sku"]
           type: Database["public"]["Enums"]["movement_type"]
           updated_at?: string
@@ -333,6 +335,7 @@ export type Database = {
           movement_date?: string
           notes?: string | null
           po_number_ref?: string | null
+          po_ref?: string | null
           sku?: Database["public"]["Enums"]["sku"]
           type?: Database["public"]["Enums"]["movement_type"]
           updated_at?: string
@@ -640,6 +643,48 @@ export type Database = {
           plt_9?: number
           state?: string | null
           updated_at?: string
+        }
+        Relationships: []
+      }
+      lot_master: {
+        Row: {
+          cases_initial: number | null
+          cogs_per_case: number | null
+          cogs_status: string | null
+          created_at: string | null
+          expiry_date: string | null
+          id: string
+          lineage_item_code: string | null
+          lot_number: string
+          notes: string | null
+          sku: string
+          updated_at: string | null
+        }
+        Insert: {
+          cases_initial?: number | null
+          cogs_per_case?: number | null
+          cogs_status?: string | null
+          created_at?: string | null
+          expiry_date?: string | null
+          id?: string
+          lineage_item_code?: string | null
+          lot_number: string
+          notes?: string | null
+          sku: string
+          updated_at?: string | null
+        }
+        Update: {
+          cases_initial?: number | null
+          cogs_per_case?: number | null
+          cogs_status?: string | null
+          created_at?: string | null
+          expiry_date?: string | null
+          id?: string
+          lineage_item_code?: string | null
+          lot_number?: string
+          notes?: string | null
+          sku?: string
+          updated_at?: string | null
         }
         Relationships: []
       }
