@@ -451,6 +451,90 @@ export type Database = {
         }
         Relationships: []
       }
+      logistics_forecast_dc_mix: {
+        Row: {
+          canonical_dc: string
+          created_at: string
+          distributor: string
+          id: string
+          mix_pct: number
+          updated_at: string
+        }
+        Insert: {
+          canonical_dc: string
+          created_at?: string
+          distributor: string
+          id?: string
+          mix_pct?: number
+          updated_at?: string
+        }
+        Update: {
+          canonical_dc?: string
+          created_at?: string
+          distributor?: string
+          id?: string
+          mix_pct?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      logistics_forecast_distributor_mix: {
+        Row: {
+          created_at: string
+          distributor: string
+          id: string
+          mix_pct: number
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          distributor: string
+          id?: string
+          mix_pct?: number
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          distributor?: string
+          id?: string
+          mix_pct?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      logistics_forecast_shipment_profile: {
+        Row: {
+          avg_cases_per_shipment: number
+          avg_cost_per_shipment: number
+          canonical_dc: string
+          created_at: string
+          flete_pct: number
+          id: string
+          shipment_sample: number
+          updated_at: string
+        }
+        Insert: {
+          avg_cases_per_shipment?: number
+          avg_cost_per_shipment?: number
+          canonical_dc: string
+          created_at?: string
+          flete_pct?: number
+          id?: string
+          shipment_sample?: number
+          updated_at?: string
+        }
+        Update: {
+          avg_cases_per_shipment?: number
+          avg_cost_per_shipment?: number
+          canonical_dc?: string
+          created_at?: string
+          flete_pct?: number
+          id?: string
+          shipment_sample?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       logistics_kehe_rate: {
         Row: {
           canonical_dc: string
