@@ -407,9 +407,19 @@ function PNLTab({ m, realMonths, actuals }: { m: typeof D; realMonths: number; a
     const period = PERIODS[idx];
     const isActual = !!actuals[period]?.pnl_detail;
 
+    // Special case: NET INCOME = NOI + Other Income
+    if (row.id === "t-netincome") {
+      const noi = getValue(PL_ROWS.find(r => r.id === "t-noi")!, idx) ?? 0;
+      const other = getValue(PL_ROWS.find(r => r.id === "t-9000")!, idx) ?? 0;
+      return noi + other;
+    }
+
     if (row.kind === "total" || row.kind === "pct") {
-      // Compute from children if expanded, else use forecastFn
-      const children = (childMap[row.id] || []).map(cid => PL_ROWS.find(r => r.id === cid)!).filter(Boolean);
+      // Only sum ITEM and GROUP children (skip other totals to avoid double-counting)
+      const children = (childMap[row.id] || [])
+        .map(cid => PL_ROWS.find(r => r.id === cid)!)
+        .filter(Boolean)
+        .filter(c => c.kind !== "total");  // exclude sub-totals
       if (children.length > 0) {
         const childSum = children.reduce((s, c) => {
           const cv = getValue(c, idx);
@@ -427,6 +437,19 @@ function PNLTab({ m, realMonths, actuals }: { m: typeof D; realMonths: number; a
         return childSum;
       }
       // No children or total with forecastFn
+      if (row.forecastFn) return row.forecastFn(m, idx);
+      return null;
+    }
+
+    if (row.kind === "group") {
+      // Group shows the sum of its direct item/group children (not totals)
+      const children = (childMap[row.id] || [])
+        .map(cid => PL_ROWS.find(r => r.id === cid)!)
+        .filter(Boolean)
+        .filter(c => c.kind !== "total");
+      if (children.length > 0) {
+        return children.reduce((s, c) => s + (getValue(c, idx) ?? 0), 0);
+      }
       if (row.forecastFn) return row.forecastFn(m, idx);
       return null;
     }
@@ -478,7 +501,9 @@ function PNLTab({ m, realMonths, actuals }: { m: typeof D; realMonths: number; a
                   </div>
                 </th>
               ))}
-              <th className="text-right px-2 py-2.5 text-[10px] uppercase text-muted-foreground w-14">FY</th>
+              <th className="text-right px-2 py-2.5 text-[10px] uppercase text-muted-foreground w-14">
+                {fyActualOnly ? `H1'26` : "FY"}
+              </th>
               <th className="text-right px-2 py-2.5 text-[10px] uppercase text-muted-foreground w-12">% GS</th>
             </tr>
           </thead>
@@ -494,24 +519,39 @@ function PNLTab({ m, realMonths, actuals }: { m: typeof D; realMonths: number; a
               const isOpen = !collapsed.has(row.id);
               const isTotal = row.kind === "total" || row.kind === "pct";
               const vals = MONTHS.map((_, i) => row.kind === "pct" ? getGPPct(i) : getValue(row, i));
-              const fy = row.kind === "pct" ? vals.reduce((s,v)=>(s??0)+(v??0),0)!/12 : vals.reduce((s,v)=>(s??0)+(v??0),0)!;
+              const fySlice = fyActualOnly ? vals.slice(0, realMonths) : vals;
+              const fy = row.kind === "pct" ? (fySlice.reduce((s,v)=>(s??0)+(v??0),0)!/(fyActualOnly ? realMonths : 12)) : fySlice.reduce((s,v)=>(s??0)+(v??0),0)!;
               const pctGS = gs_fy ? `${(Math.abs(fy!/1000 > 1 ? fy! : fy!*1000)/gs_fy*100).toFixed(1)}%` : "—";
 
-              return (
-                <tr key={row.id} className={`border-t border-border/40 hover:bg-muted/20
-                  ${row.bold || isTotal ? "font-semibold" : ""}
-                  ${row.kind==="total" && row.indent===0 ? "bg-muted/10" : ""}
-                  ${row.id==="t-netincome" ? "border-t-2 border-border" : ""}
-                `}>
+                // Clicking a total row toggles its parent group
+                const parentGroupId = (row.kind === "total" && row.parentId) ? row.parentId : null;
+                const parentIsGroup = parentGroupId ? PL_ROWS.find(r => r.id === parentGroupId)?.kind === "group" : false;
+                const parentIsOpen = parentGroupId ? !collapsed.has(parentGroupId) : false;
+
+                return (
+                <tr key={row.id}
+                  className={`border-t border-border/40 hover:bg-muted/20
+                    ${row.bold || isTotal ? "font-semibold" : ""}
+                    ${row.kind==="total" && row.indent===0 ? "bg-muted/10" : ""}
+                    ${row.id==="t-netincome" ? "border-t-2 border-border" : ""}
+                    ${parentIsGroup ? "cursor-pointer select-none" : ""}
+                  `}
+                  onClick={parentIsGroup ? () => toggle(parentGroupId!) : undefined}
+                >
                   <td className="px-4 py-1.5" style={{paddingLeft: `${16+indentPx[row.indent]}px`, color:"#1C2340"}}>
                     <span className="flex items-center gap-1.5">
                       {isExp && (
-                        <button onClick={() => toggle(row.id)}
+                        <button onClick={(e) => { e.stopPropagation(); toggle(row.id); }}
                           className="text-muted-foreground hover:text-foreground flex-shrink-0 w-4 text-center font-mono text-[10px]">
                           {isOpen ? "▾" : "▸"}
                         </button>
                       )}
-                      {!isExp && <span className="w-4 flex-shrink-0"/>}
+                      {!isExp && parentIsGroup && (
+                        <span className="text-muted-foreground w-4 text-center font-mono text-[10px] flex-shrink-0">
+                          {parentIsOpen ? "▾" : "▸"}
+                        </span>
+                      )}
+                      {!isExp && !parentIsGroup && <span className="w-4 flex-shrink-0"/>}
                       <span className={`${isTotal ? "" : row.indent > 0 ? "text-muted-foreground" : ""}`}>{row.label}</span>
                     </span>
                   </td>
@@ -627,80 +667,92 @@ function CashFlowTab({ refMonth, m, realMonths }: { refMonth: number; m: typeof 
 }
 
 // ─── Balance Sheet Tab ────────────────────────────────────────────────────────
+// BS section definition – flat, with explicit parent IDs
 type BSNode = {
   id: string; parentId?: string; label: string;
   kind: "section"|"group"|"item"|"total";
-  actualKey?: string;  // key in bs_detail JSONB (Jun only)
+  actualKey?: string;
   forecastFn?: (m: typeof D, i: number) => number;
   indent: 0|1|2|3;
 };
 
 const BS_ROWS: BSNode[] = [
+  // ── ASSETS ──────────────────────────────────────────────────────────────────
   {id:"s-assets",label:"ASSETS",kind:"section",indent:0},
-  {id:"g-current",label:"Current Assets",kind:"group",indent:0},
-    {id:"g-bank",parentId:"g-current",label:"Bank Accounts",kind:"group",indent:1},
-      {id:"bofa_x6854",parentId:"g-bank",label:"1001 BOFA x6854",kind:"item",indent:2,actualKey:"bofa_x6854"},
-      {id:"citi_bank",parentId:"g-bank",label:"Citi Bank",kind:"item",indent:2,actualKey:"citi_bank"},
-      {id:"mercury_checking",parentId:"g-bank",label:"Mercury Checking",kind:"item",indent:2,actualKey:"mercury_checking"},
-      {id:"mercury_treasury",parentId:"g-bank",label:"Mercury Treasury",kind:"item",indent:2,actualKey:"mercury_treasury"},
-      {id:"t-bank",parentId:"g-bank",label:"Total Bank Accounts",kind:"total",indent:2,forecastFn:(m,i)=>m.cash_eop[i]},
-    {id:"g-ar",parentId:"g-current",label:"Accounts Receivable",kind:"group",indent:1},
-      {id:"accounts_receivable",parentId:"g-ar",label:"1100 Accounts receivable (A/R)",kind:"item",indent:2,actualKey:"accounts_receivable",forecastFn:(m,i)=>m.ar[i]},
-      {id:"t-ar",parentId:"g-ar",label:"Total Accounts Receivable",kind:"total",indent:2,forecastFn:(m,i)=>m.ar[i]},
-    {id:"g-other-curr",parentId:"g-current",label:"Other Current Assets",kind:"group",indent:1},
-      {id:"g-inv",parentId:"g-other-curr",label:"1400 Inventory",kind:"group",indent:2},
-        {id:"finished_goods",parentId:"g-inv",label:"1401 Finished Goods",kind:"item",indent:3,actualKey:"finished_goods"},
-        {id:"raw_materials_packaging",parentId:"g-inv",label:"1410 Raw Materials & Packaging",kind:"item",indent:3,actualKey:"raw_materials_packaging"},
-        {id:"t-inv",parentId:"g-inv",label:"Total Inventory",kind:"total",indent:3,forecastFn:(m,i)=>m.inventory[i]},
-      {id:"loans_to_shareholders",parentId:"g-other-curr",label:"Loans to Shareholders",kind:"item",indent:2,actualKey:"loans_to_shareholders",forecastFn:()=>0},
-      {id:"t-other-curr",parentId:"g-other-curr",label:"Total Other Current Assets",kind:"total",indent:2},
-    {id:"t-current",parentId:"g-current",label:"Total Current Assets",kind:"total",indent:1},
-  {id:"g-fixed",label:"Fixed Assets",kind:"group",indent:0},
-    {id:"g-1200",parentId:"g-fixed",label:"1200 Fixed Assets",kind:"group",indent:1},
-      {id:"equipment",parentId:"g-1200",label:"1201 Equipment",kind:"item",indent:2,actualKey:"equipment",forecastFn:()=>11.19},
-      {id:"accumulated_depreciation",parentId:"g-1200",label:"1220 Accumulated Depreciation",kind:"item",indent:2,actualKey:"accumulated_depreciation",forecastFn:()=>-4.93},
-      {id:"t-1200",parentId:"g-1200",label:"Total 1200 Fixed Assets",kind:"total",indent:2},
-    {id:"t-fixed",parentId:"g-fixed",label:"Total Fixed Assets",kind:"total",indent:1},
-  {id:"g-other-assets",label:"Other Assets",kind:"group",indent:0},
-    {id:"due_from_shareholders",parentId:"g-other-assets",label:"Due from Shareholders",kind:"item",indent:1,actualKey:"due_from_shareholders",forecastFn:()=>1.0},
-    {id:"t-other-assets",parentId:"g-other-assets",label:"Total Other Assets",kind:"total",indent:1},
+  {id:"g-bank",label:"Bank Accounts",kind:"group",indent:0},
+    {id:"bofa",parentId:"g-bank",label:"1001 BOFA x6854",kind:"item",indent:1,actualKey:"bofa_x6854",forecastFn:()=>0},
+    {id:"citi_b",parentId:"g-bank",label:"Citi Bank",kind:"item",indent:1,actualKey:"citi_bank",forecastFn:()=>0},
+    {id:"merc_chk",parentId:"g-bank",label:"Mercury Checking",kind:"item",indent:1,actualKey:"mercury_checking",forecastFn:()=>0},
+    {id:"merc_trs",parentId:"g-bank",label:"Mercury Treasury",kind:"item",indent:1,actualKey:"mercury_treasury",forecastFn:()=>0},
+  {id:"t-bank",label:"Total Bank Accounts",kind:"total",indent:0,forecastFn:(m,i)=>m.cash_eop[i]},
+  {id:"g-ar",label:"Accounts Receivable",kind:"group",indent:0},
+    {id:"ar_item",parentId:"g-ar",label:"1100 Accounts receivable (A/R)",kind:"item",indent:1,actualKey:"accounts_receivable",forecastFn:(m,i)=>m.ar[i]},
+  {id:"t-ar",label:"Total Accounts Receivable",kind:"total",indent:0,forecastFn:(m,i)=>m.ar[i]},
+  {id:"g-inv",label:"1400 Inventory",kind:"group",indent:0},
+    {id:"fin_goods",parentId:"g-inv",label:"1401 Finished Goods",kind:"item",indent:1,actualKey:"finished_goods",forecastFn:()=>0},
+    {id:"raw_mat",parentId:"g-inv",label:"1410 Raw Materials & Packaging",kind:"item",indent:1,actualKey:"raw_materials_packaging",forecastFn:()=>0},
+  {id:"t-inv",label:"Total Inventory",kind:"total",indent:0,forecastFn:(m,i)=>m.inventory[i]},
+  {id:"loans_sh",label:"Loans to Shareholders",kind:"item",indent:0,actualKey:"loans_to_shareholders",forecastFn:()=>12.96},
+  {id:"t-curr-assets",label:"Total Current Assets",kind:"total",indent:0,forecastFn:(m,i)=>m.cash_eop[i]+m.ar[i]+m.inventory[i]+12.96},
+  {id:"g-fixed",label:"1200 Fixed Assets",kind:"group",indent:0},
+    {id:"equip",parentId:"g-fixed",label:"1201 Equipment",kind:"item",indent:1,actualKey:"equipment",forecastFn:()=>11.19},
+    {id:"accum_dep",parentId:"g-fixed",label:"1220 Accumulated Depreciation",kind:"item",indent:1,actualKey:"accumulated_depreciation",forecastFn:()=>-4.93},
+  {id:"t-fixed",label:"Total Fixed Assets",kind:"total",indent:0,forecastFn:()=>6.26},
+  {id:"due_sh",label:"Due from Shareholders",kind:"item",indent:0,actualKey:"due_from_shareholders",forecastFn:()=>1.0},
   {id:"t-assets",label:"TOTAL ASSETS",kind:"total",indent:0,forecastFn:(m,i)=>m.total_assets[i]},
 
+  // ── LIABILITIES ─────────────────────────────────────────────────────────────
   {id:"s-liab",label:"LIABILITIES AND EQUITY",kind:"section",indent:0},
   {id:"s-liab2",label:"Liabilities",kind:"section",indent:0},
   {id:"g-cc",label:"Credit Cards",kind:"group",indent:0},
-    {id:"boa_3724",parentId:"g-cc",label:"BoA 3724",kind:"item",indent:1,actualKey:"boa_3724",forecastFn:()=>0},
-    {id:"boa_7830",parentId:"g-cc",label:"BoA 7830",kind:"item",indent:1,actualKey:"boa_7830",forecastFn:()=>0},
-    {id:"boa_8781",parentId:"g-cc",label:"BoA 8781 (2253)",kind:"item",indent:1,actualKey:"boa_8781",forecastFn:()=>0},
-    {id:"citi_credit",parentId:"g-cc",label:"Citi Credit Card -5413",kind:"item",indent:1,actualKey:"citi_credit",forecastFn:()=>0},
-    {id:"mercury_credit",parentId:"g-cc",label:"Mercury Credit",kind:"item",indent:1,actualKey:"mercury_credit",forecastFn:()=>0},
-    {id:"t-cc",parentId:"g-cc",label:"Total Credit Cards",kind:"total",indent:1},
+    {id:"boa3724",parentId:"g-cc",label:"BoA 3724",kind:"item",indent:1,actualKey:"boa_3724",forecastFn:()=>0},
+    {id:"boa7830",parentId:"g-cc",label:"BoA 7830",kind:"item",indent:1,actualKey:"boa_7830",forecastFn:()=>0},
+    {id:"boa8781",parentId:"g-cc",label:"BoA 8781 (2253)",kind:"item",indent:1,actualKey:"boa_8781",forecastFn:()=>0},
+    {id:"citi_cc",parentId:"g-cc",label:"Citi Credit Card -5413",kind:"item",indent:1,actualKey:"citi_credit",forecastFn:()=>0},
+    {id:"merc_cc",parentId:"g-cc",label:"Mercury Credit",kind:"item",indent:1,actualKey:"mercury_credit",forecastFn:()=>0},
+  {id:"t-cc",label:"Total Credit Cards",kind:"total",indent:0,forecastFn:()=>0},
   {id:"g-other-liab",label:"Other Current Liabilities",kind:"group",indent:0},
-    {id:"accrued_liabilities",parentId:"g-other-liab",label:"2010 Accrued Liabilities",kind:"item",indent:1,actualKey:"accrued_liabilities",forecastFn:()=>10.34},
-    {id:"t-other-liab",parentId:"g-other-liab",label:"Total Other Current Liabilities",kind:"total",indent:1},
+    {id:"accrued",parentId:"g-other-liab",label:"2010 Accrued Liabilities",kind:"item",indent:1,actualKey:"accrued_liabilities",forecastFn:()=>10.34},
+  {id:"t-other-liab",label:"Total Other Current Liabilities",kind:"total",indent:0,forecastFn:()=>10.34},
   {id:"t-liab",label:"Total Liabilities",kind:"total",indent:0,forecastFn:(m,i)=>m.total_liab[i]},
 
+  // ── EQUITY ──────────────────────────────────────────────────────────────────
   {id:"s-equity",label:"Equity",kind:"section",indent:0},
   {id:"g-capital",label:"3100 Capital Contributions",kind:"group",indent:0},
-    {id:"capital_1st_round",parentId:"g-capital",label:"1st Investment Round",kind:"item",indent:1,actualKey:"capital_1st_round",forecastFn:()=>225},
-    {id:"capital_2nd_round",parentId:"g-capital",label:"2nd Investment Round",kind:"item",indent:1,actualKey:"capital_2nd_round",forecastFn:()=>399.87},
-    {id:"capital_3rd_round",parentId:"g-capital",label:"3rd Investment Round",kind:"item",indent:1,actualKey:"capital_3rd_round",forecastFn:()=>685.97},
-    {id:"capital_4th_round",parentId:"g-capital",label:"4th Investment Round",kind:"item",indent:1,actualKey:"capital_4th_round",forecastFn:()=>2146.73},
-    {id:"t-capital",parentId:"g-capital",label:"Total Capital Contributions",kind:"total",indent:1,forecastFn:()=>3457.57},
+    {id:"cap1",parentId:"g-capital",label:"1st Investment Round",kind:"item",indent:1,actualKey:"capital_1st_round",forecastFn:()=>225},
+    {id:"cap2",parentId:"g-capital",label:"2nd Investment Round",kind:"item",indent:1,actualKey:"capital_2nd_round",forecastFn:()=>399.87},
+    {id:"cap3",parentId:"g-capital",label:"3rd Investment Round",kind:"item",indent:1,actualKey:"capital_3rd_round",forecastFn:()=>685.97},
+    {id:"cap4",parentId:"g-capital",label:"4th Investment Round",kind:"item",indent:1,actualKey:"capital_4th_round",forecastFn:()=>2146.73},
+  {id:"t-capital",label:"Total Capital Contributions",kind:"total",indent:0,forecastFn:()=>3457.57},
   {id:"common_stock",label:"Common Stock",kind:"item",indent:0,actualKey:"common_stock",forecastFn:()=>1.10},
-  {id:"opening_balance_equity",label:"Opening Balance Equity",kind:"item",indent:0,actualKey:"opening_balance_equity",forecastFn:()=>-1.87},
-  {id:"retained_earnings",label:"Retained Earnings",kind:"item",indent:0,actualKey:"retained_earnings",forecastFn:()=>-1548.94},
-  {id:"net_income_equity",label:"Net Income",kind:"item",indent:0,actualKey:"net_income_equity",forecastFn:(m,i)=>sum(m.ebitda,0,i+1)},
+  {id:"open_bal_eq",label:"Opening Balance Equity",kind:"item",indent:0,actualKey:"opening_balance_equity",forecastFn:()=>-1.87},
+  {id:"ret_earn",label:"Retained Earnings",kind:"item",indent:0,actualKey:"retained_earnings",forecastFn:()=>-1548.94},
+  {id:"net_inc_eq",label:"Net Income",kind:"item",indent:0,actualKey:"net_income_equity",forecastFn:(m,i)=>sum(m.ebitda,0,i+1)},
   {id:"t-equity",label:"Total Equity",kind:"total",indent:0,forecastFn:(m,i)=>m.total_equity[i]},
-
   {id:"t-liab-equity",label:"TOTAL LIABILITIES AND EQUITY",kind:"total",indent:0,forecastFn:(m,i)=>m.total_assets[i]},
 ];
 
 function BalanceTab({ m, realMonths, actuals }: { m: typeof D; realMonths: number; actuals: Record<string,any> }) {
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set(["g-bank","g-ar","g-other-curr","g-inv","g-fixed","g-1200","g-other-assets","g-cc","g-other-liab","g-capital"]));
+  const [collapsed, setCollapsed] = useState<Set<string>>(
+    new Set(["g-bank","g-ar","g-inv","g-fixed","g-cc","g-other-liab","g-capital"])
+  );
 
-  const bsChildMap = useMemo(() => {
-    const map: Record<string,string[]> = {};
+  // Latest month with bs_detail
+  const { latestBsDetail, latestBsIdx } = useMemo(() => {
+    const sorted = Object.keys(actuals)
+      .filter(p => actuals[p] && actuals[p].bs_detail)
+      .sort();
+    if (!sorted.length) return { latestBsDetail: null, latestBsIdx: -1 };
+    const last = sorted[sorted.length - 1];
+    return {
+      latestBsDetail: actuals[last].bs_detail as Record<string, number>,
+      latestBsIdx: PERIODS.indexOf(last),
+    };
+  }, [actuals]);
+
+  // Child IDs per parent (only items — groups handle themselves)
+  const childMap = useMemo(() => {
+    const map: Record<string, string[]> = {};
     for (const r of BS_ROWS) {
       if (!r.parentId) continue;
       if (!map[r.parentId]) map[r.parentId] = [];
@@ -710,56 +762,60 @@ function BalanceTab({ m, realMonths, actuals }: { m: typeof D; realMonths: numbe
   }, []);
 
   function toggle(id: string) {
-    setCollapsed(prev => { const n=new Set(prev); n.has(id)?n.delete(id):n.add(id); return n; });
+    setCollapsed(prev => {
+      const n = new Set(prev);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
   }
 
   function isVisible(row: BSNode): boolean {
     if (!row.parentId) return true;
-    if (collapsed.has(row.parentId)) return false;
-    const parent = BS_ROWS.find(r => r.id === row.parentId);
-    return parent ? isVisible(parent) : true;
+    const pid = row.parentId as string;
+    if (collapsed.has(pid)) return false;
+    // Check grandparent too
+    const parent = BS_ROWS.find(r => r.id === pid);
+    if (!parent) return true;
+    if (!parent.parentId) return true;
+    return !collapsed.has(parent.parentId);
   }
 
-  // Get Jun actual value, or forecast for other months
-  // BS detail is only available for the latest actual month (Jun 2026 = period 2026-06)
-  const latestBsActual = useMemo(() => {
-    const periods = Object.keys(actuals).filter(p => actuals[p]?.bs_detail).sort();
-    const last = periods[periods.length-1];
-    return last ? actuals[last]?.bs_detail : null;
-  }, [actuals, scenario]);
-  const latestBsIdx = useMemo(() => {
-    const periods = Object.keys(actuals).filter(p => actuals[p]?.bs_detail).sort();
-    const last = periods[periods.length-1];
-    return last ? PERIODS.indexOf(last) : -1;
-  }, [actuals]);
-
-  function getBsValue(row: BSNode, idx: number): number | null {
+  function getValue(row: BSNode, idx: number): number | null {
     if (row.kind === "section") return null;
-    const children = bsChildMap[row.id] || [];
-    if (children.length > 0) {
-      // Total node: sum children
-      const childSum = children.reduce((s, cid) => {
-        const c = BS_ROWS.find(r => r.id === cid)!;
-        return s + (getBsValue(c, idx) ?? 0);
-      }, 0);
-      return childSum || (row.forecastFn ? row.forecastFn(m, idx) : null);
+
+    // Group: sum its item children
+    if (row.kind === "group") {
+      const items = (childMap[row.id] || [])
+        .map(cid => BS_ROWS.find(r => r.id === cid))
+        .filter((r): r is BSNode => r != null);
+      const s = items.reduce((acc, r) => acc + (getValue(r, idx) ?? 0), 0);
+      return s;
     }
-    // Leaf: use actual for latest BS month, else forecast
-    if (idx === latestBsIdx && latestBsActual && row.actualKey) {
-      const val = latestBsActual[row.actualKey];
-      return val != null ? Number(val) / 1000 : null;
+
+    // Total: use forecastFn (pre-computed)
+    if (row.kind === "total") {
+      return row.forecastFn ? row.forecastFn(m, idx) : null;
+    }
+
+    // Item
+    const isActualIdx = latestBsDetail && idx === latestBsIdx;
+    if (isActualIdx && row.actualKey) {
+      const raw = latestBsDetail![row.actualKey];
+      if (raw != null) return Number(raw) / 1000;
     }
     return row.forecastFn ? row.forecastFn(m, idx) : null;
   }
 
-  const indentPx = [0,16,28,40];
+  const indentPx = [0, 16, 28, 40];
 
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <button onClick={() => setCollapsed(new Set())} className="rounded-full border border-border px-2 py-0.5 hover:bg-muted">Expand all</button>
         <button onClick={() => setCollapsed(new Set(BS_ROWS.filter(r=>r.kind==="group").map(r=>r.id)))} className="rounded-full border border-border px-2 py-0.5 hover:bg-muted">Collapse all</button>
-        {latestBsIdx >= 0 && <span className="text-muted-foreground">Balance sheet detail: {MONTHS[latestBsIdx]} 2026 (Accountfully). Other months = Best Estimate.</span>}
+        {latestBsIdx >= 0 && (
+          <span>Accountfully detail: <strong>{MONTHS[latestBsIdx]} 2026</strong> · Other months = Best Estimate</span>
+        )}
       </div>
 
       <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
@@ -767,7 +823,7 @@ function BalanceTab({ m, realMonths, actuals }: { m: typeof D; realMonths: numbe
           <thead>
             <tr className="bg-muted/50 border-b border-border">
               <th className="text-left px-4 py-2.5 font-semibold text-[10px] uppercase tracking-wide text-muted-foreground min-w-[240px]">Line</th>
-              {MONTHS.map((mo,i) => (
+              {MONTHS.map((mo, i) => (
                 <th key={mo} className="text-right px-2 py-2.5 text-[10px] uppercase tracking-wide w-12"
                   style={{color: i < realMonths ? "#1C2340" : "#9CA3AF"}}>
                   {mo}
@@ -780,32 +836,34 @@ function BalanceTab({ m, realMonths, actuals }: { m: typeof D; realMonths: numbe
             {BS_ROWS.filter(r => isVisible(r)).map(row => {
               if (row.kind === "section") return (
                 <tr key={row.id}>
-                  <td colSpan={14} className="px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-white" style={{backgroundColor:"#1C2340"}}>{row.label}</td>
+                  <td colSpan={13} className="px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-white" style={{backgroundColor:"#1C2340"}}>{row.label}</td>
                 </tr>
               );
-              const hasChildren = (bsChildMap[row.id]||[]).length > 0;
-              const isGroup = hasChildren && row.kind==="group";
-              const isOpen = !collapsed.has(row.id);
+              const isGroup = row.kind === "group";
               const isTotal = row.kind === "total";
-              const vals = MONTHS.map((_,i) => getBsValue(row,i));
+              const isOpen = !collapsed.has(row.id);
+              const vals = MONTHS.map((_, i) => getValue(row, i));
 
               return (
-                <tr key={row.id} className={`border-t border-border/40 hover:bg-muted/20 ${isTotal && row.indent===0 ? "font-semibold bg-muted/10" : ""}`}>
-                  <td className="px-4 py-1.5" style={{paddingLeft:`${16+indentPx[row.indent]}px`, color:"#1C2340"}}>
+                <tr key={row.id} className={`border-t border-border/40 hover:bg-muted/20 ${isTotal && row.indent === 0 ? "bg-muted/10 font-semibold" : ""}`}>
+                  <td className="px-4 py-1.5" style={{paddingLeft: `${16+indentPx[row.indent]}px`, color:"#1C2340"}}>
                     <span className="flex items-center gap-1.5">
                       {isGroup && (
-                        <button onClick={() => toggle(row.id)} className="text-muted-foreground hover:text-foreground w-4 text-center font-mono text-[10px]">
+                        <button onClick={() => toggle(row.id)}
+                          className="text-muted-foreground hover:text-foreground w-4 text-center font-mono text-[10px]">
                           {isOpen ? "▾" : "▸"}
                         </button>
                       )}
                       {!isGroup && <span className="w-4 inline-block"/>}
-                      <span className={isTotal ? "font-semibold" : row.indent>0 ? "text-muted-foreground" : ""}>{row.label}</span>
+                      <span className={`${isTotal ? "font-semibold" : row.indent > 0 ? "text-muted-foreground" : ""}`}>
+                        {row.label}
+                      </span>
                     </span>
                   </td>
-                  {vals.map((v,i) => (
+                  {vals.map((v, i) => (
                     <td key={i} className={`text-right px-2 py-1.5 font-mono tabular-nums ${i >= realMonths ? "opacity-60" : ""}`}
-                      style={{color:"#1C2340"}}>
-                      {v == null || v === 0 ? "—" : fmt(v,0)}
+                      style={{color: "#1C2340"}}>
+                      {v == null || v === 0 ? "—" : fmt(v, 0)}
                     </td>
                   ))}
                 </tr>
@@ -1356,7 +1414,7 @@ All monetary values in $K (divide by 1000). Use null for unavailable fields.` }
       )}
 
       {tab === "dashboard" && <DashboardTab period={period} refMonth={refMonth} m={M} realMonths={realMonths} />}
-      {tab === "pnl"       && <PNLTab m={M} realMonths={realMonths} actuals={actuals} />}
+      {tab === "pnl"       && <PNLTab m={M} realMonths={realMonths} actuals={actuals} fyActualOnly={scenario==="Actual"} />}
       {tab === "cashflow"  && <CashFlowTab refMonth={refMonth} m={M} realMonths={realMonths} />}
       {tab === "balance"   && <BalanceTab m={M} realMonths={realMonths} actuals={actuals} />}
       {tab === "runway"    && <RunwayTab />}
