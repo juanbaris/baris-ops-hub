@@ -495,16 +495,19 @@ function PNLTab({ m, realMonths, actuals, fyActualOnly }: { m: typeof D; realMon
           <thead>
             <tr className="bg-muted/50 border-b border-border">
               <th className="text-left px-4 py-2.5 font-semibold text-[10px] uppercase tracking-wide text-muted-foreground w-52 min-w-[200px]">Line</th>
-              {MONTHS.map((mo,i) => (
-                <th key={mo} className="text-right px-2 py-2.5 text-[10px] uppercase tracking-wide w-12"
-                  style={{color: i < realMonths ? "#1C2340" : "#9CA3AF"}}>
-                  {mo}
-                  <div className="text-[8px] flex items-center justify-end gap-0.5">
-                    {i < realMonths && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 inline-block"/>}
-                    {i < realMonths ? "A" : "F"}
-                  </div>
-                </th>
-              ))}
+              {MONTHS.map((mo,i) => {
+                if (fyActualOnly && i >= realMonths) return null;
+                return (
+                  <th key={mo} className="text-right px-2 py-2.5 text-[10px] uppercase tracking-wide w-12"
+                    style={{color: i < realMonths ? "#1C2340" : "#9CA3AF"}}>
+                    {mo}
+                    <div className="text-[8px] flex items-center justify-end gap-0.5">
+                      {i < realMonths && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 inline-block"/>}
+                      {i < realMonths ? "A" : "F"}
+                    </div>
+                  </th>
+                );
+              })}
               <th className="text-right px-2 py-2.5 text-[10px] uppercase text-muted-foreground w-14">
                 {fyActualOnly ? `H1'26` : "FY"}
               </th>
@@ -559,12 +562,15 @@ function PNLTab({ m, realMonths, actuals, fyActualOnly }: { m: typeof D; realMon
                       <span className={`${isTotal ? "" : row.indent > 0 ? "text-muted-foreground" : ""}`}>{row.label}</span>
                     </span>
                   </td>
-                  {vals.map((v, i) => (
-                    <td key={i} className={`text-right px-2 py-1.5 font-mono tabular-nums ${i >= realMonths ? "opacity-60" : ""}`}
-                      style={{color: row.kind==="pct" ? "#1C2340" : (v??0)<0 ? "#EF4444" : isTotal && (v??0)>0 ? "#10B981" : "#1C2340"}}>
-                      {row.kind==="pct" ? fmtPct(v??0) : (!v || v===0) ? "—" : fmt(v,0)}
-                    </td>
-                  ))}
+                  {vals.map((v, i) => {
+                    if (fyActualOnly && i >= realMonths) return null;
+                    return (
+                      <td key={i} className={`text-right px-2 py-1.5 font-mono tabular-nums ${i >= realMonths ? "opacity-60" : ""}`}
+                        style={{color: row.kind==="pct" ? "#1C2340" : (v??0)<0 ? "#EF4444" : isTotal && (v??0)>0 ? "#10B981" : "#1C2340"}}>
+                        {row.kind==="pct" ? fmtPct(v??0) : (!v || v===0) ? "—" : fmt(v,0)}
+                      </td>
+                    );
+                  })}
                   <td className="text-right px-2 py-1.5 font-mono font-semibold tabular-nums"
                     style={{color: row.kind==="pct" ? "#1C2340" : (fy??0)<0 ? "#EF4444" : "#10B981"}}>
                     {row.kind==="pct" ? fmtPct((fy??0)/12) : (!fy || fy===0) ? "—" : fmt(fy,0)}
