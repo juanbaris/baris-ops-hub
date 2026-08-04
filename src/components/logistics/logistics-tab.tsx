@@ -414,7 +414,7 @@ function RateCards({ book, orders, reload }: { book: RateBook; orders: Order[]; 
     const payer = dcOptions.find(o => o.dc === dc)?.payer ?? null;
     setBusy(true);
     const { error } = await supabase.from("logistics_dc_mapping")
-      .insert({ raw_customer_name: raw, canonical_dc: dc || null, quien_cobra_flete: dc ? payer : null });
+      .insert({ raw_customer_name: raw, canonical_dc: dc || null, quien_cobra_flete: dc ? payer : null, excluded: !dc });
     setBusy(false);
     if (error) { toast.error(error.message); return; }
     toast.success("Mapped");
