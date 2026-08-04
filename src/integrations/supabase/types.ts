@@ -425,6 +425,7 @@ export type Database = {
         Row: {
           canonical_dc: string | null
           created_at: string
+          excluded: boolean
           id: string
           quien_cobra_flete: string | null
           raw_customer_name: string
@@ -433,6 +434,7 @@ export type Database = {
         Insert: {
           canonical_dc?: string | null
           created_at?: string
+          excluded?: boolean
           id?: string
           quien_cobra_flete?: string | null
           raw_customer_name: string
@@ -441,6 +443,7 @@ export type Database = {
         Update: {
           canonical_dc?: string | null
           created_at?: string
+          excluded?: boolean
           id?: string
           quien_cobra_flete?: string | null
           raw_customer_name?: string
