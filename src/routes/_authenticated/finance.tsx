@@ -379,7 +379,7 @@ function buildChildMap(rows: PLRow[]): Record<string,string[]> {
 }
 
 // ─── P&L Table ────────────────────────────────────────────────────────────────
-function PNLTab({ m, realMonths, actuals }: { m: typeof D; realMonths: number; actuals: Record<string, any> }) {
+function PNLTab({ m, realMonths, actuals, fyActualOnly }: { m: typeof D; realMonths: number; actuals: Record<string, any>; fyActualOnly: boolean }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(
     new Set(["g-disc","g-facility","g-payroll","g-profsvcs","g-travel"])
   );
@@ -410,8 +410,12 @@ function PNLTab({ m, realMonths, actuals }: { m: typeof D; realMonths: number; a
     // Special case: NET INCOME = NOI + Other Income
     if (row.id === "t-netincome") {
       const noi = getValue(PL_ROWS.find(r => r.id === "t-noi")!, idx) ?? 0;
-      const other = getValue(PL_ROWS.find(r => r.id === "t-9000")!, idx) ?? 0;
-      return noi + other;
+      // Read other_income directly from pnl_detail for actual months
+      const period = PERIODS[idx];
+      const otherInc = actuals[period]?.pnl_detail?.other_income != null
+        ? Number(actuals[period].pnl_detail.other_income) / 1000
+        : 0;
+      return noi + otherInc;
     }
 
     if (row.kind === "total" || row.kind === "pct") {
