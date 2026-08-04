@@ -68,7 +68,7 @@ function SalesDBTab() {
 
   const casesOf=(r:any)=>DB_SKU_COLS.reduce((s,c)=>s+(Number(r[c.key])||0),0);
   const totCases=filtered.reduce((s,r)=>s+casesOf(r),0);
-  const totRev=filtered.reduce((s,r)=>s+(Number(r.net_sales??r.gross_sales)||0),0);
+  const totRev=filtered.reduce((s,r)=>s+(Number(r.gross_sales??r.net_sales)||0),0);
 
   return (
     <div className="space-y-4">
@@ -101,7 +101,7 @@ function SalesDBTab() {
               <th className="px-3 py-2.5 text-left">Status</th>
               {DB_SKU_COLS.map(c=><th key={c.key} className="px-2 py-2.5 text-right">{c.label}</th>)}
               <th className="px-3 py-2.5 text-right">Cases</th>
-              <th className="px-3 py-2.5 text-right">Net sales</th>
+              <th className="px-3 py-2.5 text-right">Gross sales</th>
             </tr>
           </thead>
           <tbody>
@@ -119,7 +119,7 @@ function SalesDBTab() {
                 </td>
                 {DB_SKU_COLS.map(c=><td key={c.key} className="px-2 py-1.5 text-right font-mono text-muted-foreground">{Number(r[c.key])||0}</td>)}
                 <td className="px-3 py-1.5 text-right font-mono font-semibold">{casesOf(r).toLocaleString()}</td>
-                <td className="px-3 py-1.5 text-right font-mono">${Math.round(Number(r.net_sales??r.gross_sales)||0).toLocaleString()}</td>
+                <td className="px-3 py-1.5 text-right font-mono">${Math.round(Number(r.gross_sales??r.net_sales)||0).toLocaleString()}</td>
               </tr>
             ))}
           </tbody>
@@ -168,7 +168,7 @@ function RealMonthlyTab({actuals,loading}:{actuals:Record<string,MonthActual>;lo
           <thead>
             <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/40 border-b border-border">
               <th className="px-3 py-2.5 text-left">Month</th>
-              <th className="px-3 py-2.5 text-right">Net sales ($)</th>
+              <th className="px-3 py-2.5 text-right">Gross sales ($)</th>
               <th className="px-3 py-2.5 text-right">XD</th><th className="px-3 py-2.5 text-right">PW</th>
               <th className="px-3 py-2.5 text-right">HM</th><th className="px-3 py-2.5 text-right">WM</th>
               <th className="px-3 py-2.5 text-right">WD</th><th className="px-3 py-2.5 text-right">Matcha</th>

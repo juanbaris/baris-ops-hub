@@ -45,10 +45,10 @@ function NavAISearch() {
       const now = new Date();
       return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
     });
-    const revenueThisMonth = invoicedThisMonth.reduce((s, o) => s + (Number(o.net_sales) || 0), 0);
+    const revenueThisMonth = invoicedThisMonth.reduce((s, o) => s + (Number(o.gross_sales) || 0), 0);
 
     const ordersContext = orders.slice(0, 50).map((o) =>
-      `PO ${o.po_number}: ${o.distributor} ${o.customer} ${o.status} net_sales=$${o.net_sales || 0} po_date=${o.po_date}`
+      `PO ${o.po_number}: ${o.distributor} ${o.customer} ${o.status} gross_sales=$${o.gross_sales || 0} po_date=${o.po_date}`
     ).join("\n");
 
     const context = `
@@ -58,7 +58,7 @@ STOCK (Lineage Newark, cases on hand):
 ${stockSummary}
 
 OPEN ORDERS (${openOrders.length} total):
-${openOrders.slice(0, 20).map((o) => `PO ${o.po_number}: ${o.distributor} ${o.customer} status=${o.status} net_sales=$${o.net_sales || 0}`).join("\n")}
+${openOrders.slice(0, 20).map((o) => `PO ${o.po_number}: ${o.distributor} ${o.customer} status=${o.status} gross_sales=$${o.gross_sales || 0}`).join("\n")}
 
 REVENUE THIS MONTH (invoiced): $${Math.round(revenueThisMonth).toLocaleString()}
 

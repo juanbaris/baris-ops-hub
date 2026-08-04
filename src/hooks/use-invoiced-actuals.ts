@@ -47,7 +47,7 @@ export function useInvoicedActuals() {
         };
         const row = acc[label];
         row.orders += 1;
-        row.revenue += Number(o.net_sales ?? o.gross_sales ?? 0) || 0;
+        row.revenue += Number(o.gross_sales ?? o.net_sales ?? 0) || 0;
         for (const s of SKU_COLS) {
           const v = Number((o as Record<string, unknown>)[`${s}_cases`] ?? 0) || 0;
           row.sku[s] += v;
