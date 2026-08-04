@@ -1,11 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useInvoicedActuals } from "@/hooks/use-invoiced-actuals";
+import { supabase } from "@/integrations/supabase/client";
 import { useSalesForecast } from "@/hooks/use-sales-forecast";
 
 // ─── Data (values in $K) ──────────────────────────────────────────────────────
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'] as const;
-const REAL_MONTHS = 6; // Jan–Jun confirmed
+const PERIODS = ['2026-01','2026-02','2026-03','2026-04','2026-05','2026-06','2026-07','2026-08','2026-09','2026-10','2026-11','2026-12'];
 
 const D = {
   gross_sales:  [138.56,203.76,196.70,112.42,278.11,163.93,183.46,168.81,147.77,195.14,183.16,145.82],
@@ -120,19 +121,19 @@ function KPI({ icon, label, value, sub, subColor, onClick }: {
 }
 
 // ─── Dashboard Tab ────────────────────────────────────────────────────────────
-function DashboardTab({ period, refMonth }: { period: Period; refMonth: number }) {
+function DashboardTab({ period, refMonth, m, realMonths }: { period: Period; refMonth: number; m: typeof D; realMonths: number }) {
   const revenue = useFinanceRevenue();
-  const rev = periodSlice(D.gross_sales, period, refMonth);
+  const rev = periodSlice(m.gross_sales, period, refMonth);
   const budgetRev = periodSlice(BUDGET.gross_sales, period, refMonth);
   const netRev = periodSlice(revenue.netSales, period, refMonth);
-  const gp = periodSlice(D.gross_margin, period, refMonth);
+  const gp = periodSlice(m.gross_margin, period, refMonth);
   const gmPct = netRev ? gp/netRev : 0;
-  const bc = periodSlice(D.business_contribution, period, refMonth);
-  const ebitda = periodSlice(D.ebitda, period, refMonth);
-  const cash = D.cash_eop[refMonth];
-  const avgBurn = (D.ebitda[Math.max(0,refMonth-2)] + D.ebitda[Math.max(0,refMonth-1)] + D.ebitda[refMonth]) / 3;
+  const bc = periodSlice(m.business_contribution, period, refMonth);
+  const ebitda = periodSlice(m.ebitda, period, refMonth);
+  const cash = m.cash_eop[refMonth];
+  const avgBurn = (m.ebitda[Math.max(0,refMonth-2)] + m.ebitda[Math.max(0,refMonth-1)] + m.ebitda[refMonth]) / 3;
   const runway = avgBurn < 0 ? cash / Math.abs(avgBurn) : 99;
-  const wc = D.ar[refMonth] + D.inventory[refMonth] - D.ap[refMonth];
+  const wc = m.ar[refMonth] + m.inventory[refMonth] - m.ap[refMonth];
   const vsB = rev - budgetRev;
   const vsBpct = budgetRev ? vsB/budgetRev : 0;
 
@@ -147,9 +148,9 @@ function DashboardTab({ period, refMonth }: { period: Period; refMonth: number }
     data: {
       labels: MONTHS,
       datasets: [
-        { label: 'Budget', data: D.gross_sales, backgroundColor: 'rgba(180,180,180,0.4)', borderRadius: 3, order: 3 },
-        { label: 'Real', data: D.gross_sales.map((v,i) => i < REAL_MONTHS ? v : null), type: 'line', borderColor: '#10B981', backgroundColor: 'transparent', tension: 0.3, pointRadius: 4, order: 1 },
-        { label: 'Forecast', data: D.gross_sales.map((v,i) => i >= REAL_MONTHS-1 ? v : null), type: 'line', borderColor: '#A3224A', backgroundColor: 'transparent', tension: 0.3, pointRadius: 4, borderDash: [4,3], order: 2 },
+        { label: 'Budget', data: m.gross_sales, backgroundColor: 'rgba(180,180,180,0.4)', borderRadius: 3, order: 3 },
+        { label: 'Real', data: m.gross_sales.map((v,i) => i < realMonths ? v : null), type: 'line', borderColor: '#10B981', backgroundColor: 'transparent', tension: 0.3, pointRadius: 4, order: 1 },
+        { label: 'Forecast', data: m.gross_sales.map((v,i) => i >= realMonths-1 ? v : null), type: 'line', borderColor: '#A3224A', backgroundColor: 'transparent', tension: 0.3, pointRadius: 4, borderDash: [4,3], order: 2 },
       ]
     },
     options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{ position:'bottom', labels:{ boxWidth:12, font:{ size:11 } } } }, scales:{ y:{ ticks:{ callback:(v:number) => '$'+v+'K' } } } }
@@ -161,7 +162,7 @@ function DashboardTab({ period, refMonth }: { period: Period; refMonth: number }
       labels: MONTHS,
       datasets: [{
         label: 'GM %',
-        data: D.gm_pct.map(v => +(v*100).toFixed(1)),
+        data: m.gm_pct.map(v => +(v*100).toFixed(1)),
         borderColor: '#A3224A',
         backgroundColor: 'rgba(163,34,74,0.08)',
         tension: 0.4, fill: true, pointRadius: 4,
@@ -176,7 +177,7 @@ function DashboardTab({ period, refMonth }: { period: Period; refMonth: number }
       labels: MONTHS,
       datasets: [{
         label: 'Cash EOP',
-        data: D.cash_eop,
+        data: m.cash_eop,
         borderColor: '#1C2340',
         backgroundColor: 'rgba(28,35,64,0.1)',
         tension: 0.3, fill: true, pointRadius: 4,
@@ -187,9 +188,9 @@ function DashboardTab({ period, refMonth }: { period: Period; refMonth: number }
 
   // Waterfall FY totals
   const wfLabels = ['Gross Sales','Ded.','Net Sales','COGS','Fulfillment','GM','SG&A','EBITDA'];
-  const gs = sum(D.gross_sales); const ded = sum(D.trade_spend)+sum(D.distr_fees); const ns = sum(revenue.netSales);
-  const cogs = -sum(D.cogs); const ful = -(sum(D.storage)+sum(D.freight_out)); const gm = sum(D.gross_margin);
-  const sga = sum(D.selling_exp)+sum(D.mkt_trade)+sum(D.team)+sum(D.gen_exp); const eb = sum(D.ebitda);
+  const gs = sum(m.gross_sales); const ded = sum(m.trade_spend)+sum(m.distr_fees); const ns = sum(revenue.netSales);
+  const cogs = -sum(m.cogs); const ful = -(sum(m.storage)+sum(m.freight_out)); const gm = sum(m.gross_margin);
+  const sga = sum(m.selling_exp)+sum(m.mkt_trade)+sum(m.team)+sum(m.gen_exp); const eb = sum(m.ebitda);
   const wfData = [gs, ded, ns, cogs, ful, gm, sga, eb];
   const wfColors = wfData.map(v => v >= 0 ? '#1C2340' : '#A3224A');
 
@@ -266,32 +267,32 @@ function DashboardTab({ period, refMonth }: { period: Period; refMonth: number }
 }
 
 // ─── P&L Table ────────────────────────────────────────────────────────────────
-function PNLTab() {
+function PNLTab({ m, realMonths }: { m: typeof D; realMonths: number }) {
   const revenue = useFinanceRevenue();
   type RowType = 'header'|'total'|'sub'|'pct';
   const rows: { name: string; type: RowType; data?: number[] }[] = [
     { name: 'GROSS SALES', type: 'header' },
-    { name: 'Gross Sales', type: 'total', data: D.gross_sales },
+    { name: 'Gross Sales', type: 'total', data: m.gross_sales },
     { name: 'SALES DEDUCTIONS', type: 'header' },
-    { name: 'Trade spend', type: 'sub', data: D.trade_spend },
-    { name: 'Distributor fees', type: 'sub', data: D.distr_fees },
+    { name: 'Trade spend', type: 'sub', data: m.trade_spend },
+    { name: 'Distributor fees', type: 'sub', data: m.distr_fees },
     { name: 'Net Sales', type: 'total', data: revenue.netSales },
     { name: 'COGS & FULFILLMENT', type: 'header' },
-    { name: 'COGS', type: 'sub', data: D.cogs.map(v=>-v) },
-    { name: 'Storage', type: 'sub', data: D.storage.map(v=>-v) },
-    { name: 'Freight out', type: 'sub', data: D.freight_out.map(v=>-v) },
-    { name: 'Gross Margin', type: 'total', data: D.gross_margin },
-    { name: 'Gross Margin %', type: 'pct', data: D.gm_pct },
-    { name: 'Business Contribution', type: 'total', data: D.business_contribution },
+    { name: 'COGS', type: 'sub', data: m.cogs.map(v=>-v) },
+    { name: 'Storage', type: 'sub', data: m.storage.map(v=>-v) },
+    { name: 'Freight out', type: 'sub', data: m.freight_out.map(v=>-v) },
+    { name: 'Gross Margin', type: 'total', data: m.gross_margin },
+    { name: 'Gross Margin %', type: 'pct', data: m.gm_pct },
+    { name: 'Business Contribution', type: 'total', data: m.business_contribution },
     { name: 'SG&A EXPENSES', type: 'header' },
-    { name: 'Selling expenses', type: 'sub', data: D.selling_exp },
-    { name: 'Marketing & Trade', type: 'sub', data: D.mkt_trade },
-    { name: 'Team', type: 'sub', data: D.team },
-    { name: 'General expenses', type: 'sub', data: D.gen_exp },
-    { name: 'EBITDA', type: 'total', data: D.ebitda },
+    { name: 'Selling expenses', type: 'sub', data: m.selling_exp },
+    { name: 'Marketing & Trade', type: 'sub', data: m.mkt_trade },
+    { name: 'Team', type: 'sub', data: m.team },
+    { name: 'General expenses', type: 'sub', data: m.gen_exp },
+    { name: 'EBITDA', type: 'total', data: m.ebitda },
   ];
 
-  const gs_fy = sum(D.gross_sales);
+  const gs_fy = sum(m.gross_sales);
 
   return (
     <div className="space-y-2">
@@ -337,7 +338,7 @@ function PNLTab() {
               <tr key={ri} className={`border-t border-border/40 hover:bg-muted/20 ${isTotal ? "font-semibold bg-muted/10" : ""}`}>
                 <td className={`px-4 py-1.5 ${isTotal ? "font-semibold" : "pl-6 text-muted-foreground"}`} style={{color:"#1C2340"}}>{row.name}</td>
                 {row.data!.map((v,i) => (
-                  <td key={i} className={`text-right px-2 py-1.5 font-mono tabular-nums ${i >= REAL_MONTHS ? "opacity-60" : ""}`}
+                  <td key={i} className={`text-right px-2 py-1.5 font-mono tabular-nums ${i >= realMonths ? "opacity-60" : ""}`}
                     style={{color: isPct ? "#1C2340" : v < 0 ? "#EF4444" : isTotal ? "#10B981" : "#1C2340"}}>
                     {isPct ? fmtPct(v) : v === 0 ? "—" : fmt(v,0)}
                   </td>
@@ -360,17 +361,17 @@ function PNLTab() {
 }
 
 // ─── Cash Flow Tab ────────────────────────────────────────────────────────────
-function CashFlowTab({ refMonth }: { refMonth: number }) {
+function CashFlowTab({ refMonth, m, realMonths }: { refMonth: number; m: typeof D; realMonths: number }) {
   const cashCanvas = useRef<HTMLCanvasElement>(null);
-  const avgBurn = (D.ebitda[Math.max(0,refMonth-2)] + D.ebitda[Math.max(0,refMonth-1)] + D.ebitda[refMonth]) / 3;
-  const runway = avgBurn < 0 ? D.cash_eop[refMonth] / Math.abs(avgBurn) : 99;
+  const avgBurn = (m.ebitda[Math.max(0,refMonth-2)] + m.ebitda[Math.max(0,refMonth-1)] + m.ebitda[refMonth]) / 3;
+  const runway = avgBurn < 0 ? m.cash_eop[refMonth] / Math.abs(avgBurn) : 99;
 
   useChart(cashCanvas, () => ({
     type: 'line',
     data: {
       labels: MONTHS,
       datasets: [
-        { label: 'Cash EOP', data: D.cash_eop, borderColor:'#1C2340', backgroundColor:'rgba(28,35,64,0.1)', tension:0.3, fill:true, pointRadius:5 },
+        { label: 'Cash EOP', data: m.cash_eop, borderColor:'#1C2340', backgroundColor:'rgba(28,35,64,0.1)', tension:0.3, fill:true, pointRadius:5 },
         { label: 'Runway = 0', data: MONTHS.map(()=>0), borderColor:'#DC2626', borderDash:[5,5], pointRadius:0, fill:false }
       ]
     },
@@ -379,25 +380,25 @@ function CashFlowTab({ refMonth }: { refMonth: number }) {
 
   type CFRow = { name: string; type?: string; data: (number|null)[] };
   const cfRows: CFRow[] = [
-    { name: 'EBITDA',                      data: D.ebitda },
-    { name: 'Changes in Working Capital',  data: D.chg_wc },
-    { name: '  · AR',                      data: D.chg_ar },
-    { name: '  · Inventory',               data: D.chg_inventory },
-    { name: '  · AP',                      data: D.chg_ap },
-    { name: 'Cash from Operations',        type: 'total', data: D.cash_from_ops },
-    { name: 'Capital contributions',       data: D.capital_contrib },
-    { name: 'Investing Cash Flow',         type: 'total', data: D.capital_contrib },
-    { name: 'Cash BOP',                    data: D.cash_bop },
-    { name: 'Change in cash',              data: D.chg_cash },
-    { name: 'Cash EOP',                    type: 'total', data: D.cash_eop },
+    { name: 'EBITDA',                      data: m.ebitda },
+    { name: 'Changes in Working Capital',  data: m.chg_wc },
+    { name: '  · AR',                      data: m.chg_ar },
+    { name: '  · Inventory',               data: m.chg_inventory },
+    { name: '  · AP',                      data: m.chg_ap },
+    { name: 'Cash from Operations',        type: 'total', data: m.cash_from_ops },
+    { name: 'Capital contributions',       data: m.capital_contrib },
+    { name: 'Investing Cash Flow',         type: 'total', data: m.capital_contrib },
+    { name: 'Cash BOP',                    data: m.cash_bop },
+    { name: 'Change in cash',              data: m.chg_cash },
+    { name: 'Cash EOP',                    type: 'total', data: m.cash_eop },
   ];
 
   return (
     <div className="space-y-5">
       <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm flex items-center gap-4 flex-wrap">
-        <span>💰 <strong>Cash on hand (Jul 2026):</strong> {fmtK(D.cash_eop[refMonth])}</span>
+        <span>💰 <strong>Cash on hand (Jul 2026):</strong> {fmtK(m.cash_eop[refMonth])}</span>
         <span>· <strong>Runway:</strong> {runway > 36 ? "36+ mo" : runway.toFixed(1)+" mo"}</span>
-        <span>· <strong>Cash EOP (Dec 26):</strong> {fmtK(D.cash_eop[11])}</span>
+        <span>· <strong>Cash EOP (Dec 26):</strong> {fmtK(m.cash_eop[11])}</span>
       </div>
 
       <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
@@ -414,7 +415,7 @@ function CashFlowTab({ refMonth }: { refMonth: number }) {
               <th className="text-left px-4 py-2.5 text-[10px] uppercase tracking-wide text-muted-foreground w-44">Line</th>
               {MONTHS.map((m,i) => (
                 <th key={m} className="text-right px-2 py-2.5 text-[10px] uppercase w-12"
-                  style={{color: i < REAL_MONTHS ? "#1C2340" : "#9CA3AF"}}>{m}</th>
+                  style={{color: i < realMonths ? "#1C2340" : "#9CA3AF"}}>{m}</th>
               ))}
               <th className="text-right px-2 py-2.5 text-[10px] uppercase text-muted-foreground w-14">FY</th>
             </tr>
@@ -428,7 +429,7 @@ function CashFlowTab({ refMonth }: { refMonth: number }) {
                   <td className={`px-4 py-1.5 ${isTotal ? "font-bold" : "text-muted-foreground"} ${row.name.startsWith('  ') ? "pl-8" : ""}`}
                     style={{color:"#1C2340"}}>{row.name.trim()}</td>
                   {row.data.map((v,i) => (
-                    <td key={i} className={`text-right px-2 py-1.5 font-mono tabular-nums ${i >= REAL_MONTHS ? "opacity-60" : ""}`}
+                    <td key={i} className={`text-right px-2 py-1.5 font-mono tabular-nums ${i >= realMonths ? "opacity-60" : ""}`}
                       style={{color: v === null ? "#9CA3AF" : (v??0) < 0 ? "#EF4444" : (v??0) > 0 ? "#10B981" : "#9CA3AF"}}>
                       {v === null || v === 0 ? "—" : fmt(v,0)}
                     </td>
@@ -448,7 +449,7 @@ function CashFlowTab({ refMonth }: { refMonth: number }) {
 }
 
 // ─── Balance Sheet Tab ────────────────────────────────────────────────────────
-function BalanceTab() {
+function BalanceTab({ m, realMonths }: { m: typeof D; realMonths: number }) {
   const bsCanvas = useRef<HTMLCanvasElement>(null);
   const donutCanvas = useRef<HTMLCanvasElement>(null);
 
@@ -457,8 +458,8 @@ function BalanceTab() {
     data: {
       labels: MONTHS,
       datasets: [
-        { label:'Total Assets', data:D.total_assets, borderColor:'#A3224A', backgroundColor:'rgba(163,34,74,0.08)', tension:0.3, fill:true, pointRadius:4 },
-        { label:'Total Equity', data:D.total_equity, borderColor:'#1C2340', tension:0.3, fill:false, pointRadius:4 }
+        { label:'Total Assets', data:m.total_assets, borderColor:'#A3224A', backgroundColor:'rgba(163,34,74,0.08)', tension:0.3, fill:true, pointRadius:4 },
+        { label:'Total Equity', data:m.total_equity, borderColor:'#1C2340', tension:0.3, fill:false, pointRadius:4 }
       ]
     },
     options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{ position:'bottom', labels:{ boxWidth:12, font:{ size:11 } } } }, scales:{ y:{ ticks:{ callback:(v:number)=>'$'+v+'K' } } } }
@@ -468,7 +469,7 @@ function BalanceTab() {
     type: 'doughnut',
     data: {
       labels: ['Cash','AR','Inventory'],
-      datasets: [{ data:[D.cash_eop[11],D.ar[11],D.inventory[11]], backgroundColor:['#1C2340','#A3224A','#C77A0A'] }]
+      datasets: [{ data:[m.cash_eop[11],m.ar[11],m.inventory[11]], backgroundColor:['#1C2340','#A3224A','#C77A0A'] }]
     },
     options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{ position:'bottom', labels:{ boxWidth:12, font:{ size:11 } } } } }
   }), []);
@@ -476,16 +477,16 @@ function BalanceTab() {
   type BSRow = { name: string; type?: 'header'|'total'; data?: number[] };
   const bsRows: BSRow[] = [
     { name: 'ASSETS', type: 'header' },
-    { name: 'Cash', data: D.cash_eop },
-    { name: 'Accounts receivable', data: D.ar },
-    { name: 'Inventory', data: D.inventory },
-    { name: 'Total Assets', type: 'total', data: D.total_assets },
+    { name: 'Cash', data: m.cash_eop },
+    { name: 'Accounts receivable', data: m.ar },
+    { name: 'Inventory', data: m.inventory },
+    { name: 'Total Assets', type: 'total', data: m.total_assets },
     { name: 'LIABILITIES', type: 'header' },
-    { name: 'Accounts payable', data: D.ap },
-    { name: 'Commercial debt', data: D.commercial_debt },
-    { name: 'Total Liabilities', type: 'total', data: D.total_liab },
+    { name: 'Accounts payable', data: m.ap },
+    { name: 'Commercial debt', data: m.commercial_debt },
+    { name: 'Total Liabilities', type: 'total', data: m.total_liab },
     { name: 'EQUITY', type: 'header' },
-    { name: 'Total Equity', type: 'total', data: D.total_equity },
+    { name: 'Total Equity', type: 'total', data: m.total_equity },
   ];
 
   return (
@@ -508,7 +509,7 @@ function BalanceTab() {
               <th className="text-left px-4 py-2.5 text-[10px] uppercase tracking-wide text-muted-foreground w-40">Line</th>
               {MONTHS.map((m,i) => (
                 <th key={m} className="text-right px-2 py-2.5 text-[10px] uppercase w-12"
-                  style={{color: i < REAL_MONTHS ? "#1C2340" : "#9CA3AF"}}>{m}</th>
+                  style={{color: i < realMonths ? "#1C2340" : "#9CA3AF"}}>{m}</th>
               ))}
             </tr>
           </thead>
@@ -522,7 +523,7 @@ function BalanceTab() {
                 <tr key={ri} className={`border-t border-border/40 hover:bg-muted/20 ${isTotal ? "font-bold bg-muted/10" : ""}`}>
                   <td className={`px-4 py-1.5 ${isTotal ? "font-bold" : "pl-6 text-muted-foreground"}`} style={{color:"#1C2340"}}>{row.name}</td>
                   {row.data!.map((v,i) => (
-                    <td key={i} className={`text-right px-2 py-1.5 font-mono tabular-nums ${i >= REAL_MONTHS ? "opacity-60" : ""}`}
+                    <td key={i} className={`text-right px-2 py-1.5 font-mono tabular-nums ${i >= realMonths ? "opacity-60" : ""}`}
                       style={{color: "#1C2340"}}>
                       {v === 0 ? "—" : fmt(v,0)}
                     </td>
@@ -782,6 +783,143 @@ function FinancePage() {
   const [period, setPeriod] = useState<Period>("fy");
   const [refMonth, setRefMonth] = useState(6); // Jul
 
+  // ── Actuals from Supabase ──
+  const [actuals, setActuals] = useState<Record<string, any>>({});
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadPreview, setUploadPreview] = useState<any[] | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  async function loadActuals() {
+    const { data } = await supabase.from("finance_actuals").select("*").order("period");
+    if (data) {
+      const map: Record<string, any> = {};
+      data.forEach((row: any) => { map[row.period] = row; });
+      setActuals(map);
+    }
+  }
+
+  useEffect(() => { loadActuals(); }, []);
+
+  // ── Merged data: actual overrides D for months that have been uploaded ──
+  const M = useMemo(() => {
+    const result: any = {};
+    for (const key of Object.keys(D) as (keyof typeof D)[]) {
+      result[key] = [...D[key]];
+    }
+    PERIODS.forEach((period, idx) => {
+      const actual = actuals[period];
+      if (!actual) return;
+      const fieldMap: Record<string, keyof typeof D> = {
+        gross_sales: 'gross_sales', trade_spend: 'trade_spend', distr_fees: 'distr_fees',
+        net_sales: 'net_sales', cogs: 'cogs', storage: 'storage', freight_out: 'freight_out',
+        gross_margin: 'gross_margin', gm_pct: 'gm_pct',
+        business_contribution: 'business_contribution',
+        selling_exp: 'selling_exp', mkt_trade: 'mkt_trade', team: 'team',
+        gen_exp: 'gen_exp', ebitda: 'ebitda',
+        cash: 'cash_eop', ar: 'ar', inventory: 'inventory',
+        total_assets: 'total_assets', total_liab: 'total_liab', total_equity: 'total_equity',
+        cash_from_ops: 'cash_from_ops',
+      };
+      for (const [actualField, dField] of Object.entries(fieldMap)) {
+        if (actual[actualField] != null) result[dField][idx] = Number(actual[actualField]);
+      }
+    });
+    return result as typeof D;
+  }, [actuals]);
+
+  const realMonths = useMemo(() => PERIODS.filter(p => actuals[p] != null).length, [actuals]);
+
+  const latestActualLabel = useMemo(() => {
+    const keys = Object.keys(actuals).filter(p => actuals[p]).sort();
+    if (!keys.length) return 'none';
+    const last = keys[keys.length - 1];
+    const idx = parseInt(last.split('-')[1]) - 1;
+    return MONTHS[idx] + ' ' + last.split('-')[0];
+  }, [actuals]);
+
+  // ── PDF upload → Claude API ──
+  async function handlePdfUpload(file: File) {
+    setUploading(true);
+    setUploadError(null);
+    setUploadPreview(null);
+    try {
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve((reader.result as string).split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: 2000,
+          messages: [{
+            role: "user",
+            content: [
+              { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } },
+              { type: "text", text: `Extract monthly P&L data from this Accountfully management report. Return ONLY a JSON array (no markdown, no explanation) where each item is one month:
+[
+  {
+    "period": "2026-01",
+    "period_label": "Jan 2026",
+    "gross_sales": <Sales of Product Income in $K>,
+    "trade_spend": <negative: DSD Programs + Promos + Consumer Returns in $K>,
+    "distr_fees": <negative: Distributor Fees + KeHE + UNFI Allowance + Payment Terms in $K>,
+    "net_sales": <Total Income after all deductions in $K>,
+    "cogs": <Product Costs in $K>,
+    "storage": <Warehouse/Fulfillment + Freight In combined in $K>,
+    "freight_out": <Freight Out in $K>,
+    "gross_margin": <Gross Profit in $K>,
+    "gm_pct": <gross_margin / net_sales as decimal e.g. 0.256>,
+    "selling_exp": <negative: 6500 Selling Expenses in $K>,
+    "mkt_trade": <negative: 7000 Marketing & Trade in $K>,
+    "team": <negative: Payroll & Employee Related Costs in $K>,
+    "gen_exp": <negative: G&A minus payroll in $K>,
+    "ebitda": <Net Operating Income in $K>,
+    "business_contribution": <gross_margin + selling_exp + mkt_trade in $K>,
+    "cash": <Bank Accounts total in $K if Balance Sheet available, else null>,
+    "ar": <Accounts Receivable in $K if available, else null>,
+    "inventory": <Total Inventory in $K if available, else null>,
+    "total_assets": <Total Assets in $K if available, else null>,
+    "total_liab": <Total Liabilities in $K if available, else null>,
+    "total_equity": <Total Equity in $K if available, else null>
+  }
+]
+All monetary values in $K (divide by 1000). Use null for unavailable fields.` }
+            ]
+          }]
+        })
+      });
+      const data = await response.json();
+      const text = data.content?.find((c: any) => c.type === 'text')?.text ?? '';
+      const clean = text.replace(/```json|```/g, '').trim();
+      const parsed = JSON.parse(clean);
+      setUploadPreview(parsed);
+    } catch (e: any) {
+      setUploadError(e.message ?? 'Failed to parse PDF');
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function saveActuals() {
+    if (!uploadPreview) return;
+    setUploading(true);
+    for (const row of uploadPreview) {
+      await supabase.from("finance_actuals").upsert(
+        { ...row, source: 'Accountfully', uploaded_at: new Date().toISOString() },
+        { onConflict: 'period' }
+      );
+    }
+    setUploading(false);
+    setUploadOpen(false);
+    setUploadPreview(null);
+    loadActuals();
+  }
+
   // Load Chart.js if not already loaded
   useEffect(() => {
     if (window.Chart) return;
@@ -802,10 +940,96 @@ function FinancePage() {
 
   return (
     <div className="space-y-5 pb-10">
-      <div>
-        <h1 className="text-2xl font-bold" style={{color:"#1C2340"}}>Finance</h1>
-        <p className="text-sm text-muted-foreground">P&L, cashflow, budget, forecast. Source: Best Estimate 2026 + Accountfully Jun 2026.</p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-bold" style={{color:"#1C2340"}}>Finance</h1>
+          <p className="text-sm text-muted-foreground">
+            P&L, cashflow, budget, forecast · Actuals: Accountfully {latestActualLabel} · Forecast: Best Estimate 2026
+          </p>
+        </div>
+        <button onClick={() => setUploadOpen(true)}
+          className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold hover:bg-muted flex items-center gap-1.5 mt-1">
+          ↑ Upload Accountfully PDF
+        </button>
       </div>
+
+      {/* Upload modal */}
+      {uploadOpen && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-card rounded-2xl border border-border shadow-xl w-full max-w-2xl p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="font-bold text-sm" style={{color:"#1C2340"}}>Upload Accountfully Management Report</h2>
+                <p className="text-xs text-muted-foreground mt-0.5">AI will extract P&L data and update actuals in the Finance module</p>
+              </div>
+              <button onClick={() => { setUploadOpen(false); setUploadPreview(null); setUploadError(null); }}
+                className="text-muted-foreground hover:text-foreground text-lg">✕</button>
+            </div>
+            {!uploadPreview && !uploading && (
+              <label className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-border p-8 cursor-pointer hover:bg-muted/30 transition-colors">
+                <span className="text-2xl mb-2">📄</span>
+                <span className="text-sm font-semibold">Drop PDF here or click to select</span>
+                <span className="text-xs text-muted-foreground mt-1">Accountfully management report (PDF)</span>
+                <input type="file" accept=".pdf" className="hidden"
+                  onChange={e => { const f = e.target.files?.[0]; if (f) handlePdfUpload(f); }} />
+              </label>
+            )}
+            {uploading && (
+              <div className="rounded-xl bg-muted/40 p-6 text-center text-sm text-muted-foreground">
+                <span className="animate-pulse">🤖 AI is reading the PDF and extracting financial data…</span>
+              </div>
+            )}
+            {uploadError && (
+              <div className="rounded-xl bg-red-50 border border-red-200 p-3 text-sm text-red-700">⚠ {uploadError}</div>
+            )}
+            {uploadPreview && (
+              <>
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-700 font-semibold">
+                  ✓ Extracted {uploadPreview.length} month{uploadPreview.length !== 1 ? 's' : ''} of data — review before saving
+                </div>
+                <div className="overflow-x-auto rounded-xl border border-border">
+                  <table className="w-full text-xs min-w-max">
+                    <thead className="bg-muted/30 border-b border-border">
+                      <tr>
+                        {['Period','Gross Sales','Net Sales','COGS','Storage','Selling','EBITDA'].map(h => (
+                          <th key={h} className="px-3 py-2 text-left font-semibold text-muted-foreground uppercase tracking-wide text-[10px]">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {uploadPreview.map((row: any, i: number) => (
+                        <tr key={i} className="border-t border-border/60">
+                          <td className="px-3 py-1.5 font-semibold" style={{color:"#1C2340"}}>{row.period_label}</td>
+                          <td className="px-3 py-1.5 font-mono">{row.gross_sales != null ? `$${Number(row.gross_sales).toFixed(0)}K` : '—'}</td>
+                          <td className="px-3 py-1.5 font-mono">{row.net_sales != null ? `$${Number(row.net_sales).toFixed(0)}K` : '—'}</td>
+                          <td className="px-3 py-1.5 font-mono">{row.cogs != null ? `$${Number(row.cogs).toFixed(0)}K` : '—'}</td>
+                          <td className="px-3 py-1.5 font-mono">{row.storage != null ? `$${Number(row.storage).toFixed(0)}K` : '—'}</td>
+                          <td className="px-3 py-1.5 font-mono">{row.selling_exp != null ? `$${Number(row.selling_exp).toFixed(0)}K` : '—'}</td>
+                          <td className="px-3 py-1.5 font-mono font-semibold" style={{color: row.ebitda < 0 ? '#DC2626' : '#16A34A'}}>
+                            {row.ebitda != null ? `$${Number(row.ebitda).toFixed(0)}K` : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-xs text-amber-700">
+                  ⚠ This will overwrite existing actuals for these months. Review numbers above before confirming.
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={saveActuals} disabled={uploading}
+                    className="rounded-lg px-5 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                    style={{backgroundColor:"#A3224A"}}>
+                    {uploading ? "Saving…" : `Save ${uploadPreview.length} months of actuals`}
+                  </button>
+                  <button onClick={() => setUploadPreview(null)}
+                    className="rounded-lg border border-border px-4 py-2 text-sm font-semibold hover:bg-muted">Re-upload</button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Sub-tabs */}
       <div className="flex gap-1 border-b border-border overflow-x-auto">
@@ -844,10 +1068,10 @@ function FinancePage() {
         </div>
       )}
 
-      {tab === "dashboard" && <DashboardTab period={period} refMonth={refMonth} />}
-      {tab === "pnl"       && <PNLTab />}
-      {tab === "cashflow"  && <CashFlowTab refMonth={refMonth} />}
-      {tab === "balance"   && <BalanceTab />}
+      {tab === "dashboard" && <DashboardTab period={period} refMonth={refMonth} m={M} realMonths={realMonths} />}
+      {tab === "pnl"       && <PNLTab m={M} realMonths={realMonths} />}
+      {tab === "cashflow"  && <CashFlowTab refMonth={refMonth} m={M} realMonths={realMonths} />}
+      {tab === "balance"   && <BalanceTab m={M} realMonths={realMonths} />}
       {tab === "runway"    && <RunwayTab />}
       {tab === "ebitda"    && <EBITDATab />}
     </div>
