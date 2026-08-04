@@ -362,6 +362,20 @@ function FPInputTab({ movements, loading, onAdded }: { movements: FPRow[]; loadi
                   <td className="px-4 py-1.5 font-mono text-xs" style={{color:"#A3224A"}}>{r.lot_number}</td>
                   <td className="px-4 py-1.5 text-xs">{r.concept}</td>
                   <td className="px-4 py-1.5 text-xs text-muted-foreground truncate max-w-[200px]">{r.notes ?? "—"}</td>
+                  <td className="px-4 py-1.5 text-right">
+                    {confirmFPId === r.id ? (
+                      <span className="flex items-center justify-end gap-1.5 text-xs">
+                        <span className="text-muted-foreground">Delete?</span>
+                        <button onClick={() => removeFP(r.id)} className="rounded bg-red-600 px-2 py-0.5 text-[10px] font-semibold text-white">Yes</button>
+                        <button onClick={() => setConfirmFPId(null)} className="rounded border border-border px-2 py-0.5 text-[10px]">No</button>
+                      </span>
+                    ) : (
+                      <span className="flex justify-end gap-1.5">
+                        <button onClick={() => startEditFP(r)} className="rounded border border-border px-2 py-0.5 text-[10px] font-semibold hover:bg-muted">Edit</button>
+                        <button onClick={() => setConfirmFPId(r.id)} className="rounded border border-red-200 px-2 py-0.5 text-[10px] font-semibold text-red-600 hover:bg-red-50">Del</button>
+                      </span>
+                    )}
+                  </td>
                 </tr>
               ))}
           </tbody>
