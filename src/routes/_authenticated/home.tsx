@@ -431,7 +431,7 @@ function HomePage() {
 
   const revenueForPeriod = useMemo(() =>
     invoiced.filter(o => o.invoice_date && o.invoice_date >= periodRange.start && o.invoice_date <= periodRange.end)
-      .reduce((s, o) => s + (Number(o.net_sales) || 0), 0),
+      .reduce((s, o) => s + (Number(o.gross_sales) || 0), 0),
   [invoiced, periodRange]);
 
   const CASE_KEYS = ["wd_cases","pw_cases","hm_cases","matcha_cases","xd_cases","wm_cases"] as const;
@@ -455,7 +455,7 @@ function HomePage() {
       const cutoffDate = new Date(today.getTime() - t * 86400000);
       const cutoff = cutoffDate.toISOString().slice(0, 10);
       return o.invoice_date >= cutoff;
-    }).reduce((s, o) => s + (Number(o.net_sales) || 0), 0);
+    }).reduce((s, o) => s + (Number(o.gross_sales) || 0), 0);
   }, [invoiced, today]);
 
   const avgFillRate = useMemo(() => {
@@ -500,7 +500,7 @@ function HomePage() {
     for (const o of invoiced) {
       if (!o.invoice_date || !o.invoice_date.startsWith("2026")) continue;
       const m = parseInt(o.invoice_date.slice(5, 7));
-      byMonth[m] = (byMonth[m] ?? 0) + (Number(o.net_sales) || 0);
+      byMonth[m] = (byMonth[m] ?? 0) + (Number(o.gross_sales) || 0);
     }
     // Open orders = everything not yet invoiced, bucketed by expected ship date (fallback PO date)
     const openByMonth: Record<number, number> = {};
@@ -509,7 +509,7 @@ function HomePage() {
       const d = o.ship_est_date || o.po_date;
       if (!d || !d.startsWith("2026")) continue;
       const mn = parseInt(d.slice(5, 7));
-      openByMonth[mn] = (openByMonth[mn] ?? 0) + (Number(o.net_sales) || 0);
+      openByMonth[mn] = (openByMonth[mn] ?? 0) + (Number(o.gross_sales) || 0);
     }
     return MONTHS.map((label, i) => ({
       label,
@@ -527,7 +527,7 @@ function HomePage() {
       if (!o.invoice_date || !o.invoice_date.startsWith("2026")) continue;
       const mo = parseInt(o.invoice_date.slice(5, 7));
       const qn = Math.ceil(mo / 3);
-      byQ[qn].actual += Number(o.net_sales) || 0;
+      byQ[qn].actual += Number(o.gross_sales) || 0;
     }
     for (let qn = 1; qn <= 4; qn++) {
       const months = [qn * 3 - 2, qn * 3 - 1, qn * 3];
@@ -545,7 +545,7 @@ function HomePage() {
     const byDist: Record<string, number> = {};
     for (const o of invoiced) {
       if (!o.invoice_date || !o.invoice_date.startsWith("2026")) continue;
-      byDist[o.distributor] = (byDist[o.distributor] ?? 0) + (Number(o.net_sales) || 0);
+      byDist[o.distributor] = (byDist[o.distributor] ?? 0) + (Number(o.gross_sales) || 0);
     }
     return DISTRIBUTORS.map(d => ({ label: d, value: Math.round(byDist[d] ?? 0), color: DIST_COLORS[d] }))
       .filter(d => d.value > 0);
@@ -559,12 +559,12 @@ function HomePage() {
     // Invoiced this month
     for (const o of invoiced) {
       if (!o.invoice_date || o.invoice_date < monthStart || o.invoice_date > monthEnd) continue;
-      byDist[o.distributor] = (byDist[o.distributor] ?? 0) + (Number(o.net_sales) || 0);
+      byDist[o.distributor] = (byDist[o.distributor] ?? 0) + (Number(o.gross_sales) || 0);
     }
     // Open orders (pending ship) for current month
     const openNet = orders
       .filter(o => ["Open","Acknowledged","Shipment"].includes(o.status))
-      .reduce((s, o) => s + (Number(o.net_sales) || 0), 0);
+      .reduce((s, o) => s + (Number(o.gross_sales) || 0), 0);
 
     const segs: { label: string; value: number; color: string }[] = DISTRIBUTORS
       .map(d => ({ label: d as string, value: Math.round(byDist[d] ?? 0), color: DIST_COLORS[d] }))
@@ -630,7 +630,7 @@ function HomePage() {
             {revUnit === "usd" ? fmtFull$(revenueMTD) : casesMTD.toLocaleString()}
           </div>
           <div className="text-xs mt-1 text-muted-foreground">
-            {revUnit === "usd" ? `${MONTHS[today.getMonth()]} ${today.getFullYear()} · net sales` : "cases invoiced this month"}
+            {revUnit === "usd" ? `${MONTHS[today.getMonth()]} ${today.getFullYear()} · gross sales` : "cases invoiced this month"}
           </div>
         </div>
 
@@ -685,7 +685,7 @@ function HomePage() {
           <div className="rounded-xl border border-border p-4 md:col-span-2">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold" style={{ color: "#1C2340" }}>Monthly Sales · Invoiced vs Best Estimate vs Open vs REPLAN 2026</h3>
-              <span className="text-xs text-muted-foreground">$ USD · net sales</span>
+              <span className="text-xs text-muted-foreground">$ USD · gross sales</span>
             </div>
             <GroupedBarChart data={monthlySales} height={320} highlightIndex={today.getMonth()} />
           </div>

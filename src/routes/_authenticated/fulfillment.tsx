@@ -1439,7 +1439,7 @@ function TaskQueueTab({ orders, onUpdated }: { orders: Order[]; onUpdated: (o: O
             <thead><tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20">
               <th className="px-4 py-2 text-left">PO #</th><th className="px-4 py-2 text-left">Customer</th>
               <th className="px-4 py-2 text-left">Distributor</th><th className="px-4 py-2 text-left">BOL Date</th>
-              <th className="px-4 py-2 text-right">Cases</th><th className="px-4 py-2 text-right">Net</th>
+              <th className="px-4 py-2 text-right">Cases</th><th className="px-4 py-2 text-right">Gross</th>
               <th className="px-4 py-2" />
             </tr></thead>
             <tbody>{readyToInvoice.map(o => {
@@ -1449,7 +1449,7 @@ function TaskQueueTab({ orders, onUpdated }: { orders: Order[]; onUpdated: (o: O
                 <td className="px-4 py-2">{o.customer}</td><td className="px-4 py-2">{o.distributor}</td>
                 <td className="px-4 py-2 text-muted-foreground">{o.bol_date ?? "—"}</td>
                 <td className="px-4 py-2 text-right font-mono font-semibold">{total.toLocaleString()}</td>
-                <td className="px-4 py-2 text-right font-mono text-emerald-600">${Math.round(Number(o.net_sales) || 0).toLocaleString()}</td>
+                <td className="px-4 py-2 text-right font-mono text-emerald-600">${Math.round(Number(o.gross_sales) || 0).toLocaleString()}</td>
                 <td className="px-4 py-2 text-right">
                   <button onClick={() => setDetailOrder(o)} className="rounded-lg px-3 py-1 text-xs font-semibold text-white" style={{ backgroundColor: "#1C2340" }}>
                     Invoice →
@@ -1471,7 +1471,7 @@ function TaskQueueTab({ orders, onUpdated }: { orders: Order[]; onUpdated: (o: O
             <thead><tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20">
               <th className="px-4 py-2 text-left">PO #</th><th className="px-4 py-2 text-left">Customer</th>
               <th className="px-4 py-2 text-left">Distributor</th><th className="px-4 py-2 text-left">Ship Est.</th>
-              <th className="px-4 py-2 text-right">Cases</th><th className="px-4 py-2 text-right">Net</th>
+              <th className="px-4 py-2 text-right">Cases</th><th className="px-4 py-2 text-right">Gross</th>
               <th className="px-4 py-2" />
             </tr></thead>
             <tbody>{readyToShip.map(o => {
@@ -1481,7 +1481,7 @@ function TaskQueueTab({ orders, onUpdated }: { orders: Order[]; onUpdated: (o: O
                 <td className="px-4 py-2">{o.customer}</td><td className="px-4 py-2">{o.distributor}</td>
                 <td className="px-4 py-2 text-muted-foreground">{o.ship_est_date ?? "—"}</td>
                 <td className="px-4 py-2 text-right font-mono font-semibold">{total.toLocaleString()}</td>
-                <td className="px-4 py-2 text-right font-mono text-emerald-600">${Math.round(Number(o.net_sales) || 0).toLocaleString()}</td>
+                <td className="px-4 py-2 text-right font-mono text-emerald-600">${Math.round(Number(o.gross_sales) || 0).toLocaleString()}</td>
                 <td className="px-4 py-2 text-right">
                   <button onClick={() => setLineageOrder(o)} className="rounded-lg px-3 py-1 text-xs font-semibold text-white" style={{ backgroundColor: "#A3224A" }}>
                     Send to Lineage →
@@ -1902,7 +1902,7 @@ function CollectionsTab({ orders }: { orders: Order[] }) {
       .sort((a, b) => {
         let av: number | string = 0, bv: number | string = 0;
         if (sortKey === "daysUntilDue") { av = a.daysUntilDue; bv = b.daysUntilDue; }
-        else if (sortKey === "net_sales") { av = Number(a.order.net_sales) || 0; bv = Number(b.order.net_sales) || 0; }
+        else if (sortKey === "net_sales") { av = Number(a.order.gross_sales) || 0; bv = Number(b.order.gross_sales) || 0; }
         else if (sortKey === "distributor") { av = a.order.distributor; bv = b.order.distributor; }
         else if (sortKey === "invoice_date") { av = a.order.invoice_date ?? ""; bv = b.order.invoice_date ?? ""; }
         if (av < bv) return sortDir === "asc" ? -1 : 1;
@@ -1916,9 +1916,9 @@ function CollectionsTab({ orders }: { orders: Order[] }) {
     else { setSortKey(key); setSortDir("asc"); }
   }
 
-  const totalPending = filtered.reduce((s, r) => s + (Number(r.order.net_sales) || 0), 0);
-  const dueThisWeek = filtered.filter(r => r.daysUntilDue <= 7 && r.daysUntilDue >= 0).reduce((s, r) => s + (Number(r.order.net_sales) || 0), 0);
-  const overdue = filtered.filter(r => r.daysUntilDue < 0).reduce((s, r) => s + (Number(r.order.net_sales) || 0), 0);
+  const totalPending = filtered.reduce((s, r) => s + (Number(r.order.gross_sales) || 0), 0);
+  const dueThisWeek = filtered.filter(r => r.daysUntilDue <= 7 && r.daysUntilDue >= 0).reduce((s, r) => s + (Number(r.order.gross_sales) || 0), 0);
+  const overdue = filtered.filter(r => r.daysUntilDue < 0).reduce((s, r) => s + (Number(r.order.gross_sales) || 0), 0);
 
   const [marking, setMarking] = useState<string | null>(null);
 
@@ -2026,7 +2026,7 @@ function CollectionsTab({ orders }: { orders: Order[] }) {
                     </span>
                   </td>
                   <td className="px-4 py-2 text-right font-mono font-semibold text-emerald-600">
-                    ${Math.round(Number(o.net_sales) || 0).toLocaleString()}
+                    ${Math.round(Number(o.gross_sales) || 0).toLocaleString()}
                   </td>
                   <td className="px-4 py-2 text-center">
                     <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${isOverdue ? "bg-red-100 text-red-700" : isDueSoon ? "bg-orange-100 text-orange-700" : "bg-blue-50 text-blue-700"}`}>
