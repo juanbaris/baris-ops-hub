@@ -220,6 +220,114 @@ export function FPSummaryTab() {
           </tfoot>
         </table>
       </div>
+      {/* Historical stock table */}
+      <FPHistoryTable movements={movements} lotMap={lotMap} />
+    </div>
+  );
+}
+
+// ─── Historical closing stock by month ──────────────────────────────────────
+function FPHistoryTable({ movements, lotMap }: { movements: Mv[]; lotMap: Record<string, any> }) {
+  const [viewMode, setViewMode] = useState<"cases"|"value">("cases");
+
+  const { monthList, history } = useMemo(() => {
+    const mList = [...new Set(movements.map(m => m.movement_date.slice(0,7)))].sort();
+    // Build cumulative balance at end of each month
+    const balance: Record<string, number> = {};
+    const valueBalance: Record<string, number> = {};
+    SKUS.forEach(s => { balance[s] = 0; valueBalance[s] = 0; });
+
+    const sorted = [...movements].sort((a,b) => a.movement_date.localeCompare(b.movement_date));
+    let mi = 0;
+    const snaps: { month: string; cases: Record<string, number>; value: Record<string, number> }[] = [];
+
+    for (const mv of sorted) {
+      const mo = mv.movement_date.slice(0,7);
+      while (mi < mList.length && mList[mi] < mo) {
+        snaps.push({ month: mList[mi], cases: {...balance}, value: {...valueBalance} });
+        mi++;
+      }
+      const delta = mv.type === "In" ? Number(mv.cases) : -Number(mv.cases);
+      const s = mv.sku as string;
+      balance[s] = (balance[s] || 0) + delta;
+      const cogs = mv.cogs_per_case ?? lotMap[mv.lot_number ?? ""]?.cogs_per_case ?? null;
+      if (cogs) valueBalance[s] = (valueBalance[s] || 0) + delta * cogs;
+    }
+    if (mi < mList.length) {
+      snaps.push({ month: mList[mi] ?? "", cases: {...balance}, value: {...valueBalance} });
+    }
+    return { monthList: snaps.map(s => s.month), history: snaps };
+  }, [movements, lotMap]);
+
+  const SKU_COLORS: Record<string,string> = {
+    XD:"#A3224A", PW:"#1C2340", HM:"#7C3AED", WM:"#0EA5E9", WD:"#D97706", Matcha:"#16A34A"
+  };
+
+  return (
+    <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+      <div className="px-5 py-3 border-b border-border bg-muted/30 flex items-center justify-between">
+        <div>
+          <p className="text-sm font-bold" style={{color:"#1C2340"}}>Closing stock — historical view</p>
+          <p className="text-xs text-muted-foreground">End-of-month inventory from all FP movements</p>
+        </div>
+        <div className="flex gap-1 rounded-xl bg-muted p-1">
+          {(["cases","value"] as const).map(m => (
+            <button key={m} onClick={() => setViewMode(m)}
+              className={`rounded-lg px-3 py-1 text-xs font-semibold transition-colors ${viewMode===m ? "text-white shadow-sm" : "text-muted-foreground"}`}
+              style={viewMode===m ? {backgroundColor:"#1C2340"} : {}}>
+              {m === "cases" ? "Units" : "$ Value"}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs min-w-max">
+          <thead>
+            <tr className="text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
+              <th className="px-4 py-2 text-left sticky left-0 bg-muted/20">SKU</th>
+              {monthList.map(m => (
+                <th key={m} className="px-3 py-2 text-right whitespace-nowrap">{m.slice(2).replace("-","/")}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {SKUS.map(sku => (
+              <tr key={sku} className="border-t border-border/40 hover:bg-muted/20">
+                <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color: SKU_COLORS[sku]}}>{SKU_LABEL[sku]}</td>
+                {history.map(snap => {
+                  const val = viewMode === "cases" ? snap.cases[sku] || 0 : snap.value[sku] || 0;
+                  return (
+                    <td key={snap.month} className={`px-3 py-1.5 text-right font-mono ${val < 0 ? "text-red-600 font-semibold" : ""}`}>
+                      {viewMode === "cases"
+                        ? val.toLocaleString()
+                        : val ? `$${Math.round(val).toLocaleString()}` : "—"
+                      }
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr style={{backgroundColor:"#1C2340", color:"#fff"}}>
+              <td className="px-4 py-2 font-semibold text-xs sticky left-0" style={{backgroundColor:"#1C2340"}}>TOTAL</td>
+              {history.map(snap => {
+                const total = viewMode === "cases"
+                  ? SKUS.reduce((s, sku) => s + (snap.cases[sku] || 0), 0)
+                  : SKUS.reduce((s, sku) => s + (snap.value[sku] || 0), 0);
+                return (
+                  <td key={snap.month} className="px-3 py-2 text-right font-mono font-bold text-emerald-400">
+                    {viewMode === "cases"
+                      ? total.toLocaleString()
+                      : total ? `$${Math.round(total).toLocaleString()}` : "—"
+                    }
+                  </td>
+                );
+              })}
+            </tr>
+          </tfoot>
+        </table>
+      </div>
     </div>
   );
 }
