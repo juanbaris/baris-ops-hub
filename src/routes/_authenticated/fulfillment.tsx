@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import * as XLSX from "xlsx";
 import { PageHeader } from "@/components/app-shell";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
@@ -13,12 +14,12 @@ type Status = Database["public"]["Enums"]["order_status"];
 const DISTRIBUTORS: Distributor[] = ["UNFI", "KeHe", "Rainforest", "RFD", "Direct", "Other"];
 const STATUSES: Status[] = ["Open", "Accepted", "Sent to 3PL", "Shipment", "BOL Confirmed", "Invoiced"];
 const SKU_ITEMS = [
+  { key: "wm_cases" as const, label: "W&M", item: "93562" },
   { key: "wd_cases" as const, label: "W&D", item: "23141" },
+  { key: "xd_cases" as const, label: "XD", item: "88021" },
   { key: "pw_cases" as const, label: "P&W", item: "77670" },
   { key: "hm_cases" as const, label: "H&M", item: "77671" },
   { key: "matcha_cases" as const, label: "Matcha", item: "77672" },
-  { key: "xd_cases" as const, label: "XD", item: "88021" },
-  { key: "wm_cases" as const, label: "W&M", item: "93562" },
 ];
 
 type DateFilter = "all" | "this_month" | "last_month" | "quarter" | "this_year" | "last_year" | "custom";
@@ -44,7 +45,6 @@ function computeRange(filter: DateFilter, quarter: Quarter, from: string, to: st
   }
 }
 
-// CHANGE 2: All statuses available (not just next)
 const STATUS_STYLES: Record<string, string> = {
   Open:           "bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200",
   Accepted:       "bg-orange-50 text-orange-700 ring-1 ring-inset ring-orange-200",
@@ -55,7 +55,7 @@ const STATUS_STYLES: Record<string, string> = {
   Invoiced:       "bg-purple-50 text-purple-700 ring-1 ring-inset ring-purple-200",
 };
 
-// ─── Status cell — CHANGE 2: show all statuses, not just next ──────────────────
+// ─── Status cell ──────────────────────────────────────────────────────────────
 function StatusCell({ order, onChanged }: { order: Order; onChanged: (o: Order) => void }) {
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -105,7 +105,7 @@ function StatusCell({ order, onChanged }: { order: Order; onChanged: (o: Order) 
   );
 }
 
-// ─── PO Detail Modal — CHANGE 3: file attachments ─────────────────────────────
+// ─── PO Detail Modal ──────────────────────────────────────────────────────────
 function PODetailModal({ order, onClose, onUpdated, onDelete }: {
   order: Order; onClose: () => void; onUpdated: (o: Order) => void; onDelete: (id: string) => void;
 }) {
@@ -120,35 +120,45 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
   const steps: string[] = ["Open", "Accepted", "Sent to 3PL", "Shipment", "BOL Confirmed", "Invoiced"];
   const currentIdx = steps.indexOf(order.status);
 
-  // Edit mode
   const [editing, setEditing] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
   const [editData, setEditData] = useState({
     ship_est_date: order.ship_est_date ?? "",
     customer: order.customer ?? "",
     distributor: order.distributor as Distributor,
+    wm_cases: String(order.wm_cases ?? ""),
     wd_cases: String(order.wd_cases ?? ""),
+    xd_cases: String(order.xd_cases ?? ""),
     pw_cases: String(order.pw_cases ?? ""),
     hm_cases: String(order.hm_cases ?? ""),
     matcha_cases: String(order.matcha_cases ?? ""),
-    xd_cases: String(order.xd_cases ?? ""),
-    wm_cases: String(order.wm_cases ?? ""),
+    case_value: String((order as any).case_value ?? ""),
     gross_sales: String(order.gross_sales ?? ""),
     promo_discount: String(order.promo_discount ?? ""),
   });
-  // Sync editData when order prop updates (after a save) and we're not editing
+
+  // Auto-recalculate gross = total × case_value whenever SKU qty or case_value changes
+  function recalcEdit(data: typeof editData, changedKey?: string): typeof editData {
+    const cv = parseFloat(data.case_value) || 0;
+    if (cv <= 0) return data;
+    const total = SKU_ITEMS.reduce((s, sk) => s + (parseInt(data[sk.key as keyof typeof data] as string) || 0), 0);
+    const gross = total * cv;
+    return { ...data, gross_sales: gross > 0 ? gross.toFixed(2) : data.gross_sales };
+  }
+
   useEffect(() => {
     if (!editing) {
       setEditData({
         ship_est_date: order.ship_est_date ?? "",
         customer: order.customer ?? "",
         distributor: order.distributor as Distributor,
+        wm_cases: String(order.wm_cases ?? ""),
         wd_cases: String(order.wd_cases ?? ""),
+        xd_cases: String(order.xd_cases ?? ""),
         pw_cases: String(order.pw_cases ?? ""),
         hm_cases: String(order.hm_cases ?? ""),
         matcha_cases: String(order.matcha_cases ?? ""),
-        xd_cases: String(order.xd_cases ?? ""),
-        wm_cases: String(order.wm_cases ?? ""),
+        case_value: String((order as any).case_value ?? ""),
         gross_sales: String(order.gross_sales ?? ""),
         promo_discount: String(order.promo_discount ?? ""),
       });
@@ -173,7 +183,6 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
     const { error } = await supabase.storage.from("po-attachments").upload(path, file, { upsert: true });
     if (error) {
       toast.error(`Upload failed: ${error.message}`);
-      console.error("Storage upload error:", error);
     } else {
       toast.success("File uploaded ✓");
       await loadFiles();
@@ -199,20 +208,22 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
     setEditSaving(true);
     const gross = parseFloat(editData.gross_sales) || 0;
     const promo = parseFloat(editData.promo_discount) || 0;
+    const cv = parseFloat(editData.case_value) || null;
     const payload = {
       ship_est_date: editData.ship_est_date || null,
       customer: editData.customer,
       distributor: editData.distributor,
+      wm_cases: parseInt(editData.wm_cases) || 0,
       wd_cases: parseInt(editData.wd_cases) || 0,
+      xd_cases: parseInt(editData.xd_cases) || 0,
       pw_cases: parseInt(editData.pw_cases) || 0,
       hm_cases: parseInt(editData.hm_cases) || 0,
       matcha_cases: parseInt(editData.matcha_cases) || 0,
-      xd_cases: parseInt(editData.xd_cases) || 0,
-      wm_cases: parseInt(editData.wm_cases) || 0,
+      case_value: cv,
       gross_sales: gross || null,
       promo_discount: promo || null,
       net_sales: gross > 0 ? gross - promo : null,
-    };
+    } as any;
     const { data, error } = await supabase.from("customer_orders").update(payload).eq("id", order.id).select().single();
     setEditSaving(false);
     if (error || !data) { toast.error("Failed to save changes"); return; }
@@ -221,7 +232,6 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
     setEditing(false);
   }
 
-  // CHANGE 4: delete PO
   async function deletePO() {
     if (!confirm(`Delete PO #${order.po_number}? This cannot be undone.`)) return;
     setDeleting(true);
@@ -253,7 +263,6 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
     toast.success(`PO #${order.po_number} marked as Invoiced`);
   }
 
-  // CHANGE 5: fill rate calculation
   const fillRate = order.fill_rate != null ? Number(order.fill_rate) : null;
   const fillRateColor = fillRate == null ? "" : fillRate >= 99 ? "text-emerald-600" : fillRate >= 90 ? "text-orange-500" : "text-red-600";
 
@@ -335,7 +344,6 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
 
           {/* Quantities + Financials */}
           <div className="grid grid-cols-2 gap-4 mb-5">
-            {/* Quantities — view or edit */}
             <div className={`rounded-xl border p-4 ${editing ? "border-amber-300 bg-amber-50/40" : "border-border"}`}>
               <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2">PO Quantities</p>
               {editing ? (
@@ -345,7 +353,7 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
                       <span className="text-xs text-muted-foreground w-20">{sk.label}</span>
                       <input type="number" min="0"
                         value={editData[sk.key]}
-                        onChange={e => setEditData(d => ({ ...d, [sk.key]: e.target.value }))}
+                        onChange={e => setEditData(d => recalcEdit({ ...d, [sk.key]: e.target.value }))}
                         className="w-24 rounded border border-amber-300 bg-white px-2 py-0.5 text-xs font-mono text-right focus:outline-none focus:ring-1 focus:ring-amber-400" />
                     </div>
                   ))}
@@ -378,23 +386,28 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
               )}
             </div>
 
-            {/* Financials — view or edit */}
             <div className={`rounded-xl border p-4 ${editing ? "border-amber-300 bg-amber-50/40" : "border-border"}`}>
               <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2">Financials</p>
               {editing ? (
                 <>
                   <div className="flex flex-col gap-1.5">
                     <div>
-                      <label className="text-[9px] uppercase tracking-wide text-muted-foreground">Gross Sales ($)</label>
+                      <label className="text-[9px] uppercase tracking-wide text-muted-foreground">$/case (precio unitario)</label>
+                      <input type="number" min="0" step="0.01"
+                        value={editData.case_value}
+                        onChange={e => setEditData(d => recalcEdit({ ...d, case_value: e.target.value }))}
+                        className="w-full rounded border border-amber-300 bg-white px-2 py-1 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-amber-400"
+                        placeholder="36.96" />
+                    </div>
+                    <div>
+                      <label className="text-[9px] uppercase tracking-wide text-muted-foreground flex items-center gap-1">
+                        Gross Sales ($)
+                        {editData.case_value && <span className="text-amber-600 font-semibold">= total × ${parseFloat(editData.case_value).toFixed(2)}</span>}
+                      </label>
                       <input type="number" min="0" step="0.01"
                         value={editData.gross_sales}
-                        onChange={e => {
-                          const g = e.target.value;
-                          const net = (parseFloat(g) || 0) - (parseFloat(editData.promo_discount) || 0);
-                          setEditData(d => ({ ...d, gross_sales: g }));
-                          // net_sales auto-shown below
-                        }}
-                        className="w-full rounded border border-amber-300 bg-white px-2 py-1 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-amber-400" />
+                        onChange={e => setEditData(d => ({ ...d, gross_sales: e.target.value }))}
+                        className={`w-full rounded border px-2 py-1 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-amber-400 ${editData.case_value ? "border-amber-200 bg-amber-50/50 text-amber-900" : "border-amber-300 bg-white"}`} />
                     </div>
                     <div>
                       <label className="text-[9px] uppercase tracking-wide text-muted-foreground">Allowance ($)</label>
@@ -413,6 +426,12 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
                 </>
               ) : (
                 <>
+                  {(order as any).case_value != null && (
+                    <div className="flex justify-between text-sm py-0.5">
+                      <span className="text-muted-foreground">$/case</span>
+                      <span className="font-mono">${Number((order as any).case_value).toFixed(2)}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between text-sm py-0.5">
                     <span className="text-muted-foreground">Gross Sales</span>
                     <span className="font-mono">${Math.round(Number(order.gross_sales) || 0).toLocaleString()}</span>
@@ -430,7 +449,6 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
             </div>
           </div>
 
-          {/* Save button — only visible in edit mode */}
           {editing && (
             <div className="mb-5">
               <button onClick={saveEdit} disabled={editSaving}
@@ -448,7 +466,6 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
                 Attachments ({files.length})
               </p>
               <div className="flex gap-2">
-                {/* Quick upload buttons by type */}
                 {[
                   { label: "SPS PO", prefix: "SPS_PO" },
                   { label: "BOL", prefix: "BOL" },
@@ -484,7 +501,6 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
             ) : (
               <div className="space-y-1.5">
                 {files.map(f => {
-                  // Detect file type by name
                   const nl = f.name.toLowerCase();
                   const isPS = nl.includes("baris_ps") || nl.includes("packing");
                   const isBOL = nl.includes("bol");
@@ -539,7 +555,7 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
   );
 }
 
-// ─── Send to Lineage Modal — CHANGE 1: Juan instead of Marcos ─────────────────
+// ─── Send to Lineage Modal ────────────────────────────────────────────────────
 function LineageModal({ order, onClose, onSent }: { order: Order; onClose: () => void; onSent: (o: Order) => void }) {
   const isKehe = order.distributor === "KeHe";
   const to = "a6orders@onelineage.com";
@@ -581,7 +597,7 @@ function LineageModal({ order, onClose, onSent }: { order: Order; onClose: () =>
   );
 }
 
-// ─── BOL Upload Modal — CHANGE 5: fill rate calculation ───────────────────────
+// ─── BOL Upload Modal ─────────────────────────────────────────────────────────
 function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () => void; onConfirmed: (o: Order) => void }) {
   const [step, setStep] = useState<"upload" | "review" | "saving">("upload");
   const [bolCases, setBolCases] = useState<Record<string, number>>({});
@@ -592,7 +608,6 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
   const [bolFile, setBolFile] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  // Pre-fill with PO quantities
   useEffect(() => {
     setBolCases({
       wd: Number(order.wd_cases) || 0, pw: Number(order.pw_cases) || 0,
@@ -640,7 +655,6 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
     setStep("review");
   }
 
-  // CHANGE 5: compute fill rate from BOL vs PO
   function computeFillRate() {
     const poCases = SKU_ITEMS.reduce((s, sk) => s + (Number(order[sk.key]) || 0), 0);
     const bolTotal = Object.values(bolCases).reduce((s, v) => s + v, 0);
@@ -651,68 +665,66 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
   async function confirm() {
     setStep("saving");
     try {
-    const today = new Date().toISOString().slice(0, 10);
-    const fillRate = computeFillRate();
-    const shipped = shipDate || today;
+      const today = new Date().toISOString().slice(0, 10);
+      const fillRate = computeFillRate();
+      const shipped = shipDate || today;
 
-    const patch: Database["public"]["Tables"]["customer_orders"]["Update"] = {
-      status: "BOL Confirmed",
-      bol_number: bolNumber || null,
-      bol_date: shipped,
-      fill_rate: fillRate,
-      wd_cases: bolCases.wd || order.wd_cases,
-      pw_cases: bolCases.pw || order.pw_cases,
-      hm_cases: bolCases.hm || order.hm_cases,
-      matcha_cases: bolCases.matcha || order.matcha_cases,
-      xd_cases: bolCases.xd || order.xd_cases,
-      wm_cases: bolCases.wm || order.wm_cases,
-    };
-    const { data, error } = await supabase.from("customer_orders").update(patch).eq("id", order.id).select().single();
-    if (error || !data) { toast.error(error?.message ?? "Failed to update order"); setStep("review"); return; }
+      const patch: Database["public"]["Tables"]["customer_orders"]["Update"] = {
+        status: "BOL Confirmed",
+        bol_number: bolNumber || null,
+        bol_date: shipped,
+        fill_rate: fillRate,
+        wd_cases: bolCases.wd || order.wd_cases,
+        pw_cases: bolCases.pw || order.pw_cases,
+        hm_cases: bolCases.hm || order.hm_cases,
+        matcha_cases: bolCases.matcha || order.matcha_cases,
+        xd_cases: bolCases.xd || order.xd_cases,
+        wm_cases: bolCases.wm || order.wm_cases,
+      };
+      const { data, error } = await supabase.from("customer_orders").update(patch).eq("id", order.id).select().single();
+      if (error || !data) { toast.error(error?.message ?? "Failed to update order"); setStep("review"); return; }
 
-    // Save the uploaded BOL file to storage
-    if (bolFile) {
-      const ext = bolFile.name.includes(".") ? bolFile.name.slice(bolFile.name.lastIndexOf(".")) : "";
-      const filename = `BOL_${(bolNumber || shipped).replace(/[^A-Za-z0-9_-]/g, "")}${ext}`;
-      const { error: upErr } = await supabase.storage
-        .from("po-attachments")
-        .upload(`${order.po_number}/${filename}`, bolFile, { upsert: true, contentType: bolFile.type || undefined });
-      if (upErr) toast.error(`BOL file not saved: ${upErr.message}`);
-    }
+      if (bolFile) {
+        const ext = bolFile.name.includes(".") ? bolFile.name.slice(bolFile.name.lastIndexOf(".")) : "";
+        const filename = `BOL_${(bolNumber || shipped).replace(/[^A-Za-z0-9_-]/g, "")}${ext}`;
+        const { error: upErr } = await supabase.storage
+          .from("po-attachments")
+          .upload(`${order.po_number}/${filename}`, bolFile, { upsert: true, contentType: bolFile.type || undefined });
+        if (upErr) toast.error(`BOL file not saved: ${upErr.message}`);
+      }
 
-    // Create fp_movements Out records
-    const lotKeyByField: Record<string, string> = { wd_cases: "wd", pw_cases: "pw", hm_cases: "hm", matcha_cases: "matcha", xd_cases: "xd", wm_cases: "wm" };
-    const movements = SKU_ITEMS
-      .filter(sk => Number(patch[sk.key]) > 0)
-      .map(sk => ({
-        movement_date: shipped,
-        type: "Out" as const,
-        sku: sk.label.replace("&", "").replace(" ", "") as Database["public"]["Enums"]["sku"],
-        cases: Number(patch[sk.key]),
-        warehouse: "Lineage Newark" as Database["public"]["Enums"]["warehouse"],
-        lot_number: lots[lotKeyByField[sk.key]!]?.trim() || `BOL-${order.po_number}-${shipped}`,
-        concept: "Sale" as Database["public"]["Enums"]["fp_concept"],
-        po_number_ref: order.po_number,
-        notes: `BOL ${bolNumber || "—"} · PO ${order.po_number} · Fill ${fillRate}%`,
-      }));
-    if (movements.length > 0) {
-      const { error: fpErr } = await supabase.from("fp_movements").insert(movements);
-      if (fpErr) toast.error(`FP error: ${fpErr.message}`);
-    }
+      const lotKeyByField: Record<string, string> = { wd_cases: "wd", pw_cases: "pw", hm_cases: "hm", matcha_cases: "matcha", xd_cases: "xd", wm_cases: "wm" };
+      const movements = SKU_ITEMS
+        .filter(sk => Number(patch[sk.key]) > 0)
+        .map(sk => ({
+          movement_date: shipped,
+          type: "Out" as const,
+          sku: sk.label.replace("&", "").replace(" ", "") as Database["public"]["Enums"]["sku"],
+          cases: Number(patch[sk.key]),
+          warehouse: "Lineage Newark" as Database["public"]["Enums"]["warehouse"],
+          lot_number: lots[lotKeyByField[sk.key]!]?.trim() || `BOL-${order.po_number}-${shipped}`,
+          concept: "Sale" as Database["public"]["Enums"]["fp_concept"],
+          po_number_ref: order.po_number,
+          notes: `BOL ${bolNumber || "—"} · PO ${order.po_number} · Fill ${fillRate}%`,
+        }));
+      if (movements.length > 0) {
+        const { error: fpErr } = await supabase.from("fp_movements").insert(movements);
+        if (fpErr) toast.error(`FP error: ${fpErr.message}`);
+      }
 
-    try {
-      const { data: userData } = await supabase.auth.getUser();
-      await supabase.from("audit_log").insert({
-        table_name: "customer_orders", record_id: order.id, action: "bol_confirmed",
-        user_id: userData.user?.id ?? null,
-        old_data: { status: order.status },
-        new_data: { status: "BOL Confirmed", fill_rate: fillRate, bol_cases: bolCases, bol_number: bolNumber, bol_date: shipped },
-      });
-    } catch { /* audit log is best-effort */ }
+      try {
+        const { data: userData } = await supabase.auth.getUser();
+        await supabase.from("audit_log").insert({
+          table_name: "customer_orders", record_id: order.id, action: "bol_confirmed",
+          user_id: userData.user?.id ?? null,
+          old_data: { status: order.status },
+          new_data: { status: "BOL Confirmed", fill_rate: fillRate, bol_cases: bolCases, bol_number: bolNumber, bol_date: shipped },
+        });
+      } catch { /* audit log is best-effort */ }
 
-    onConfirmed(data);
-    toast.success(`BOL confirmed ✓ Fill rate: ${fillRate}%${fillRate < 100 ? " ⚠️" : ""}`);
-    onClose();
+      onConfirmed(data);
+      toast.success(`BOL confirmed ✓ Fill rate: ${fillRate}%${fillRate < 100 ? " ⚠️" : ""}`);
+      onClose();
     } catch (e) {
       toast.error(`Error: ${e instanceof Error ? e.message : "Unknown error"}`);
       setStep("review");
@@ -793,7 +805,6 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
               })}
             </div>
 
-            {/* Fill rate preview */}
             <div className={`rounded-xl border p-3 mb-4 flex items-center justify-between ${fillRate < 100 ? "border-orange-200 bg-orange-50" : "border-emerald-200 bg-emerald-50"}`}>
               <span className="text-xs font-semibold text-muted-foreground">Fill Rate</span>
               <span className={`text-lg font-bold font-mono ${fillColor}`}>{fillRate.toFixed(1)}%</span>
@@ -810,7 +821,7 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
   );
 }
 
-// ─── Generate Packing Slip HTML — BARIS format (matches Word template) ────────
+// ─── Generate Packing Slip HTML ───────────────────────────────────────────────
 function generatePackingSlip(po: any): { html: string; filename: string } {
   const filename = `BARIS_PS_${po.po_number || "DRAFT"}.html`;
   const skus = [
@@ -857,69 +868,39 @@ function generatePackingSlip(po: any): { html: string; filename: string } {
   .total-row td { background: #F5F0E8; font-weight: bold; }
   .sign-table td { border: none; padding: 8px 20px; vertical-align: bottom; font-size: 11px; width: 50%; }
   .sign-line { border-bottom: 1.5px solid #1C2340; margin-bottom: 5px; height: 30px; }
-  .note { font-style: italic; font-size: 10px; color: #555; margin: 8px 0; }
   .footer { margin-top: 20px; font-size: 9px; color: #aaa; text-align: right; }
   @media print { body { margin: 0; padding: 20px; } .brand-header { margin: -20px -20px 16px; } }
 </style>
 </head><body>
-
 <div class="brand-header">
-  <div>
-    <h1>BARIS</h1>
-    <p>Patagonia Bites Corp</p>
-  </div>
+  <div><h1>BARIS</h1><p>Patagonia Bites Corp</p></div>
   <div style="text-align:right; color:#9CA3AF; font-size:11px">
     <div style="font-size:14px;font-weight:bold;color:white">Packing Slip</div>
     <div>PO # ${po.po_number || "—"}</div>
   </div>
 </div>
-
 <table class="meta-table" style="width:auto;margin-bottom:14px">
   <tr><td>PO DATE</td><td>${po.po_date || "—"}</td></tr>
   <tr><td>VENDOR #</td><td>PATAGONIA BITES CORP</td></tr>
   <tr><td>TEMPERATURE</td><td>Frozen (0°F)</td></tr>
   <tr><td>${po.distributor === "KeHe" ? "PICKUP DATE" : "DELIVERY DATE"}</td><td><strong>${po.ship_est_date || "TBD"}</strong></td></tr>
 </table>
-
 <hr class="divider">
-
 <table class="ship-table"><tr>
-  <td>
-    <strong>SHIP FROM</strong>
-    LINEAGE NEWARK<br>
-    360 Avenue P<br>
-    Newark, NJ 07105
-  </td>
-  <td>
-    <strong>SHIP TO</strong>
-    ${po.customer || "—"}${po.ship_to_address ? `<br>${(po.ship_to_address as string).replace(/\n/g, "<br>")}` : ""}
-  </td>
+  <td><strong>SHIP FROM</strong>LINEAGE NEWARK<br>360 Avenue P<br>Newark, NJ 07105</td>
+  <td><strong>SHIP TO</strong>${po.customer || "—"}${po.ship_to_address ? `<br>${(po.ship_to_address as string).replace(/\n/g, "<br>")}` : ""}</td>
 </tr></table>
-
 <div class="section-label">LOAD</div>
 <table class="summary-table" style="width:auto;margin-bottom:12px">
-  <tr>
-    <th style="width:150px">Total Pallets</th>
-    <th style="width:150px">Total LBS</th>
-    <th style="width:150px">Total Cases</th>
-  </tr>
-  <tr>
-    <td>${Math.ceil(totalCases / 255)}</td>
-    <td>${totalLbs}</td>
-    <td>${totalCases}</td>
-  </tr>
+  <tr><th style="width:150px">Total Pallets</th><th style="width:150px">Total LBS</th><th style="width:150px">Total Cases</th></tr>
+  <tr><td>${Math.ceil(totalCases / 255)}</td><td>${totalLbs}</td><td>${totalCases}</td></tr>
 </table>
-
 <table>
   <thead><tr>
-    <th style="width:35%">Product</th>
-    <th>Case UPC</th>
-    <th>Item #</th>
-    <th style="text-align:right;width:70px">Cases</th>
-    <th style="text-align:right;width:90px">Weight (LBS)</th>
+    <th style="width:35%">Product</th><th>Case UPC</th><th>Item #</th>
+    <th style="text-align:right;width:70px">Cases</th><th style="text-align:right;width:90px">Weight (LBS)</th>
   </tr></thead>
-  <tbody>
-    ${rows}
+  <tbody>${rows}
     <tr class="total-row">
       <td colspan="3" style="text-align:right"><strong>TOTAL</strong></td>
       <td style="text-align:right;border:1px solid #ccc;padding:6px 10px"><strong>${totalCases}</strong></td>
@@ -927,18 +908,10 @@ function generatePackingSlip(po: any): { html: string; filename: string } {
     </tr>
   </tbody>
 </table>
-
 <table class="sign-table" style="margin-top:35px;width:100%"><tr>
-  <td>
-    <div class="sign-line"></div>
-    <strong>Shipper (Lineage Newark)</strong><br>Sign / Print / Date
-  </td>
-  <td>
-    <div class="sign-line"></div>
-    <strong>Carrier / Driver (${po.distributor || "Carrier"})</strong><br>Sign / Print / Date
-  </td>
+  <td><div class="sign-line"></div><strong>Shipper (Lineage Newark)</strong><br>Sign / Print / Date</td>
+  <td><div class="sign-line"></div><strong>Carrier / Driver (${po.distributor || "Carrier"})</strong><br>Sign / Print / Date</td>
 </tr></table>
-
 <div class="footer">Generated by BARIS Ops Hub · ${new Date().toLocaleDateString()}</div>
 </body></html>`;
 
@@ -962,7 +935,6 @@ function PackingSlipModal({ order, onClose, onSaved }: {
     wd_cases: String(order.wd_cases ?? 0),
     wm_cases: String(order.wm_cases ?? 0),
     matcha_cases: String(order.matcha_cases ?? 0),
-    // Editable UPCs — correct case UPCs
     upc_wd: "10197644231413",
     upc_pw: "10860013776708",
     upc_hm: "10860013776715",
@@ -976,11 +948,9 @@ function PackingSlipModal({ order, onClose, onSaved }: {
   const [psHtml, setPsHtml] = useState<string | null>(null);
   const filename = `BARIS_PS_${order.po_number}.html`;
 
-  // Generate PS from server route (correct format with all styles)
   async function generateFromServer() {
     setGenerating(true);
     try {
-      // Build a minimal "fake PO file" as JSON encoded as text to send to server
       const poJson = JSON.stringify({
         po_number: psData.po_number,
         po_date: psData.po_date,
@@ -1017,7 +987,6 @@ function PackingSlipModal({ order, onClose, onSaved }: {
     setGenerating(false);
   }
 
-  // Build HTML locally as fallback (same format as server)
   function buildLocalHtml() {
     const items = [
       ...(Number(psData.wd_cases)>0 ? [{sku:"WD", item:"23141", label:"Rasp in white & dark chocolate", upc:psData.upc_wd, cases:Number(psData.wd_cases), lbs:Math.round(Number(psData.wd_cases)*3.41)}] : []),
@@ -1049,8 +1018,6 @@ table{border-collapse:collapse;width:100%;margin-bottom:16px}
 .th{background:#7B1D3A;color:white;font-weight:bold;padding:6px 8px;border:1px solid #7B1D3A;font-size:12px}
 .td{padding:6px 8px;border:1px solid #ccc;font-size:12px}
 .alt{background:#F2E0E5}
-.section{font-weight:bold;font-size:13px;margin:14px 0 6px;color:#1C2340}
-.note{font-style:italic;font-size:10px;color:#555;margin:6px 0 12px}
 @media print{body{margin:20px}.brand{margin:-20px -20px 16px}}
 </style></head><body>
 <div class="brand">
@@ -1065,13 +1032,12 @@ table{border-collapse:collapse;width:100%;margin-bottom:16px}
 </table>
 <hr style="border:none;border-top:2px solid #A3224A;margin:10px 0 14px">
 <table><tr>
-  <td class="th" style="width:50%">SHIP FROM</td>
-  <td class="th" style="width:50%">SHIP TO</td>
+  <td class="th" style="width:50%">SHIP FROM</td><td class="th" style="width:50%">SHIP TO</td>
 </tr><tr>
   <td class="td" style="vertical-align:top">LINEAGE NEWARK<br>360 Avenue P<br>Newark, NJ 07105</td>
   <td class="td" style="vertical-align:top">${shipToHtml}</td>
 </tr></table>
-<div class="section">LOAD</div>
+<p style="font-weight:bold;font-size:13px;margin:14px 0 6px;color:#1C2340">LOAD</p>
 <table style="width:auto;margin-bottom:14px"><tr>
   <td class="th" style="width:140px;text-align:center">Total Pallets</td>
   <td class="th" style="width:140px;text-align:center">Total LBS</td>
@@ -1082,8 +1048,7 @@ table{border-collapse:collapse;width:100%;margin-bottom:16px}
   <td class="td" style="text-align:center"><strong>${totalCases}</strong></td>
 </tr></table>
 <table><tr>
-  <td class="th" style="width:32%">Product</td>
-  <td class="th" style="width:22%">Case UPC</td>
+  <td class="th" style="width:32%">Product</td><td class="th" style="width:22%">Case UPC</td>
   <td class="th" style="width:16%">Item #</td>
   <td class="th" style="width:15%;text-align:center">Cases</td>
   <td class="th" style="width:15%;text-align:center">Weight (LBS)</td>
@@ -1173,18 +1138,16 @@ ${psData.notes ? `<p style="font-size:11px;color:#555;margin-top:8px">${psData.n
                     onChange={e => setPsData(d => ({...d, [f.cKey]: e.target.value}))} />
                 </div>
                 <div>
-                  <label className="text-[10px] text-muted-foreground">UPC (leave blank to hide)</label>
+                  <label className="text-[10px] text-muted-foreground">UPC</label>
                   <input className={`${inp} font-mono text-xs`}
                     value={psData[f.uKey as keyof typeof psData]}
-                    placeholder="00860013..."
                     onChange={e => setPsData(d => ({...d, [f.uKey]: e.target.value}))} />
                 </div>
               </div>
             ))}
             <div><label className="text-xs text-muted-foreground">Notes (optional)</label>
               <textarea className={`${inp} mt-1`} rows={2} value={psData.notes}
-                onChange={e => setPsData(d => ({...d, notes: e.target.value}))}
-                placeholder="e.g. PATAGONIA BITES CORP (FRZ)" /></div>
+                onChange={e => setPsData(d => ({...d, notes: e.target.value}))} /></div>
           </div>
 
           <div className="p-4">
@@ -1202,7 +1165,7 @@ ${psData.notes ? `<p style="font-size:11px;color:#555;margin-top:8px">${psData.n
   );
 }
 
-
+// ─── New Order Modal ───────────────────────────────────────────────────────────
 function NewOrderModal({ onClose, onCreated, existingPONumbers }: {
   onClose: () => void; onCreated: (o: Order) => void; existingPONumbers: Set<string>;
 }) {
@@ -1213,17 +1176,26 @@ function NewOrderModal({ onClose, onCreated, existingPONumbers }: {
   const [form, setForm] = useState({
     po_number: "", po_date: ymd(new Date()), ship_est_date: "", distributor: "UNFI" as Distributor,
     customer: "", ship_to_address: "", status: "Open" as unknown as Status,
-    wd_cases: "", pw_cases: "", hm_cases: "", matcha_cases: "", xd_cases: "", wm_cases: "",
-    gross_sales: "", promo_discount: "", net_sales: "", notes: "",
+    wm_cases: "", wd_cases: "", xd_cases: "", pw_cases: "", hm_cases: "", matcha_cases: "",
+    case_value: "", gross_sales: "", promo_discount: "", net_sales: "", notes: "",
   });
 
-  // CHANGE 4: warn if PO already exists
   const poExists = form.po_number.trim() !== "" && existingPONumbers.has(form.po_number.trim());
 
   function set(k: string, v: string) {
     setForm(f => {
       const next = { ...f, [k]: v };
-      if (k === "gross_sales" || k === "promo_discount") {
+      // Auto-calc gross = total × case_value when SKU qty or case_value changes
+      const skuKeys = SKU_ITEMS.map(s => s.key as string);
+      if (skuKeys.includes(k) || k === "case_value") {
+        const cv = parseFloat(k === "case_value" ? v : next.case_value) || 0;
+        if (cv > 0) {
+          const total = SKU_ITEMS.reduce((s, sk) => s + (parseInt(next[sk.key as keyof typeof next] as string) || 0), 0);
+          next.gross_sales = (total * cv).toFixed(2);
+        }
+      }
+      // Auto-calc net = gross - allowance
+      if (["gross_sales", "promo_discount", "case_value", ...skuKeys].includes(k)) {
         const g = parseFloat(next.gross_sales) || 0;
         const p = parseFloat(next.promo_discount) || 0;
         next.net_sales = (g - p).toFixed(2);
@@ -1239,19 +1211,16 @@ function NewOrderModal({ onClose, onCreated, existingPONumbers }: {
         const r = new FileReader(); r.onload = () => res((r.result as string).split(",")[1]); r.onerror = rej; r.readAsDataURL(file);
       });
       const mediaType = file.type || "application/pdf";
-
       const response = await fetch("/api/process-po", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fileBase64: base64, mediaType }),
       });
-
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}));
         throw new Error(`Server error ${response.status}: ${errData.error ?? "unknown"}`);
       }
       const ex = await response.json();
-
       setForm(f => ({
         ...f,
         po_number: ex.po_number || f.po_number,
@@ -1270,7 +1239,6 @@ function NewOrderModal({ onClose, onCreated, existingPONumbers }: {
         promo_discount: String(ex.promo_discount || 0),
         net_sales: String(ex.net_sales || 0),
       }));
-
       if (ex.packing_slip_html) {
         setPackingSlip({ html: ex.packing_slip_html, filename: ex.packing_slip_filename });
       } else {
@@ -1279,7 +1247,6 @@ function NewOrderModal({ onClose, onCreated, existingPONumbers }: {
       setMode("manual");
       toast.success("PO extracted — review fields and save");
     } catch (e: any) {
-      console.error("extractFromFile error:", e);
       toast.error(`Extract failed: ${e?.message ?? "unknown error"} — fill in manually`);
       setMode("manual");
     }
@@ -1291,17 +1258,16 @@ function NewOrderModal({ onClose, onCreated, existingPONumbers }: {
     const { data, error } = await supabase.from("customer_orders").insert({
       po_number: form.po_number, po_date: form.po_date || new Date().toISOString().slice(0, 10), ship_est_date: form.ship_est_date || null,
       distributor: form.distributor, customer: form.customer, ship_to_address: form.ship_to_address || null, status: form.status,
-      wd_cases: parseInt(form.wd_cases) || null, pw_cases: parseInt(form.pw_cases) || null,
+      wm_cases: parseInt(form.wm_cases) || null, wd_cases: parseInt(form.wd_cases) || null,
+      xd_cases: parseInt(form.xd_cases) || null, pw_cases: parseInt(form.pw_cases) || null,
       hm_cases: parseInt(form.hm_cases) || null, matcha_cases: parseInt(form.matcha_cases) || null,
-      xd_cases: parseInt(form.xd_cases) || null, wm_cases: parseInt(form.wm_cases) || null,
+      case_value: parseFloat(form.case_value) || null,
       gross_sales: parseFloat(form.gross_sales) || null, promo_discount: parseFloat(form.promo_discount) || null,
       net_sales: parseFloat(form.net_sales) || null, notes: form.notes || null,
-    }).select().single();
+    } as any).select().single();
     if (error || !data) { toast.error(error?.message ?? "Failed to create order"); return; }
 
-    // Auto-upload packing slip to storage
     if (packingSlip && data.po_number) {
-      // Server returns HTML as base64 (toBase64Utf8). Decode before saving.
       let htmlContent = packingSlip.html;
       try {
         const decoded = decodeURIComponent(escape(atob(htmlContent)));
@@ -1388,12 +1354,26 @@ function NewOrderModal({ onClose, onCreated, existingPONumbers }: {
 
           <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2 mt-1">Financials</p>
           <div className={row3}>
-            <div><label className="text-[10px] text-muted-foreground">Gross ($)</label>
-              <input type="number" className={`${inp} mt-1 font-mono`} value={form.gross_sales} onChange={e => set("gross_sales", e.target.value)} /></div>
-            <div><label className="text-[10px] text-muted-foreground">Promo/Allow ($)</label>
+            <div>
+              <label className="text-[10px] text-muted-foreground">$/case (precio)</label>
+              <input type="number" step="0.01" className={`${inp} mt-1 font-mono`} value={form.case_value}
+                onChange={e => set("case_value", e.target.value)} placeholder="36.96" />
+            </div>
+            <div>
+              <label className="text-[10px] text-muted-foreground flex items-center gap-1">
+                Gross ($)
+                {form.case_value && <span className="text-amber-600">auto</span>}
+              </label>
+              <input type="number" className={`${inp} mt-1 font-mono ${form.case_value ? "bg-amber-50/50" : ""}`}
+                value={form.gross_sales} onChange={e => set("gross_sales", e.target.value)} />
+            </div>
+            <div><label className="text-[10px] text-muted-foreground">Allowance ($)</label>
               <input type="number" className={`${inp} mt-1 font-mono`} value={form.promo_discount} onChange={e => set("promo_discount", e.target.value)} /></div>
+          </div>
+          <div className={row2}>
             <div><label className="text-[10px] text-muted-foreground">Net ($)</label>
-              <input type="number" className={`${inp} mt-1 font-mono bg-muted/30`} value={form.net_sales} readOnly /></div>
+              <input type="number" className={`${inp} font-mono bg-muted/30`} value={form.net_sales} readOnly /></div>
+            <div />
           </div>
 
           <div className="mb-4"><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Notes</label>
@@ -1529,22 +1509,23 @@ function TaskQueueTab({ orders, onUpdated }: { orders: Order[]; onUpdated: (o: O
   );
 }
 
-// ─── Column config — CHANGE 5: fill rate colored ──────────────────────────────
-type ColumnKey = keyof Order | "total_cases";
+// ─── Column config ─────────────────────────────────────────────────────────────
+type ColumnKey = keyof Order | "total_cases" | "case_value";
 const COLUMNS: { key: ColumnKey; label: string; numeric?: boolean; sku?: boolean; money?: boolean }[] = [
   { key: "po_number", label: "PO #" }, { key: "po_date", label: "PO Date" },
   { key: "ship_est_date", label: "Ship Est." }, { key: "invoice_date", label: "Invoice" },
   { key: "distributor", label: "Distributor" }, { key: "customer", label: "Customer" },
   { key: "status", label: "Status" },
+  { key: "wm_cases", label: "W&M (93562)", numeric: true, sku: true },
   { key: "wd_cases", label: "W&D (23141)", numeric: true, sku: true },
+  { key: "xd_cases", label: "XD (88021)", numeric: true, sku: true },
   { key: "pw_cases", label: "P&W (77670)", numeric: true, sku: true },
   { key: "hm_cases", label: "H&M (77671)", numeric: true, sku: true },
   { key: "matcha_cases", label: "Matcha (77672)", numeric: true, sku: true },
-  { key: "xd_cases", label: "XD (88021)", numeric: true, sku: true },
-  { key: "wm_cases", label: "W&M (93562)", numeric: true, sku: true },
   { key: "total_cases", label: "Total", numeric: true },
+  { key: "case_value", label: "$/case", numeric: true },
   { key: "gross_sales", label: "Gross", numeric: true, money: true },
-  { key: "promo_discount", label: "Promo", numeric: true, money: true },
+  { key: "promo_discount", label: "Allowance", numeric: true, money: true },
   { key: "net_sales", label: "Net", numeric: true, money: true },
   { key: "fill_rate", label: "Fill %", numeric: true },
 ];
@@ -1572,13 +1553,17 @@ function renderBodyCell(r: Order, c: (typeof COLUMNS)[number], onChanged: (o: Or
       {r.po_number}
     </button>
   );
-  // CHANGE 5: fill rate colored
   if (c.key === "fill_rate") {
     const v = r.fill_rate;
     if (v == null || r.status !== "Invoiced" && r.status !== "BOL Confirmed") return <span className="text-muted-foreground">—</span>;
     const n = Number(v);
     const color = n >= 99 ? "text-emerald-600" : n >= 90 ? "text-orange-500 font-semibold" : "text-red-600 font-bold";
     return <span className={color}>{n.toFixed(1)}%</span>;
+  }
+  if (c.key === "case_value") {
+    const v = (r as any).case_value;
+    if (v == null) return <span className="text-muted-foreground">—</span>;
+    return <span className="font-mono">${Number(v).toFixed(2)}</span>;
   }
   const v = c.key === "total_cases" ? rowTotalCases(r) : r[c.key as keyof Order];
   if (c.sku) {
@@ -1602,7 +1587,6 @@ function Fulfillment() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("pipeline");
-  // Multi-select filters
   const [selDist, setSelDist] = useState<Set<string>>(new Set());
   const [selStatus, setSelStatus] = useState<Set<string>>(new Set());
   const [selCustomer, setSelCustomer] = useState<Set<string>>(new Set());
@@ -1614,6 +1598,8 @@ function Fulfillment() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [detailOrder, setDetailOrder] = useState<Order | null>(null);
   const [showNewOrder, setShowNewOrder] = useState(false);
+  // ── Export state ──
+  const [showExportPicker, setShowExportPicker] = useState(false);
 
   useEffect(() => {
     let cancel = false;
@@ -1628,8 +1614,6 @@ function Fulfillment() {
   }, []);
 
   const existingPONumbers = useMemo(() => new Set(rows.map(r => r.po_number)), [rows]);
-
-  // Unique customers for filter
   const allCustomers = useMemo(() => [...new Set(rows.map(r => r.customer).filter(Boolean))].sort(), [rows]);
 
   const filtered = useMemo(() => {
@@ -1661,12 +1645,85 @@ function Fulfillment() {
   function applyUpdate(updated: Order) { setRows(rs => rs.map(r => r.id === updated.id ? updated : r)); }
   function applyDelete(id: string) { setRows(rs => rs.filter(r => r.id !== id)); }
 
+  // ── Export to Excel ──────────────────────────────────────────────────────────
+  function exportToExcel(yearFilter: string) {
+    const toExport = yearFilter
+      ? rows.filter(r => (r.po_date ?? "").startsWith(yearFilter))
+      : filtered;
+
+    if (toExport.length === 0) {
+      toast.error("No orders to export");
+      return;
+    }
+
+    const data = toExport
+      .sort((a, b) => (a.po_date ?? "").localeCompare(b.po_date ?? ""))
+      .map(r => ({
+        "Month":          (r.po_date ?? "").slice(0, 7),
+        "Invoice/PO":     r.po_number,
+        "PO Date":        r.po_date ?? "",
+        "Ship Est.":      r.ship_est_date ?? "",
+        "Invoice Date":   r.invoice_date ?? "",
+        "Distributor":    r.distributor,
+        "Customer":       r.customer,
+        "W&D (23141)":    Number(r.wd_cases ?? 0),
+        "P&W (77670)":    Number(r.pw_cases ?? 0),
+        "H&M (77671)":    Number(r.hm_cases ?? 0),
+        "Matcha (77672)": Number(r.matcha_cases ?? 0),
+        "XD (88021)":     Number(r.xd_cases ?? 0),
+        "W&M (93562)":    Number(r.wm_cases ?? 0),
+        "Total Cases":    rowTotalCases(r),
+        "Gross Sales":    Number(r.gross_sales ?? 0),
+        "Promo Disc.":    Number(r.promo_discount ?? 0),
+        "Net Sales":      Number(r.net_sales ?? 0),
+        "Fill Rate %":    r.fill_rate != null ? Number(r.fill_rate) : "",
+        "Status":         r.status,
+        "Notes":          r.notes ?? "",
+      }));
+
+    const ws = XLSX.utils.json_to_sheet(data);
+    // Column widths
+    ws["!cols"] = [
+      { wch: 8 },  // Month
+      { wch: 16 }, // Invoice/PO
+      { wch: 12 }, // PO Date
+      { wch: 12 }, // Ship Est.
+      { wch: 12 }, // Invoice Date
+      { wch: 12 }, // Distributor
+      { wch: 22 }, // Customer
+      { wch: 10 }, // W&D
+      { wch: 10 }, // P&W
+      { wch: 10 }, // H&M
+      { wch: 12 }, // Matcha
+      { wch: 10 }, // XD
+      { wch: 10 }, // W&M
+      { wch: 10 }, // Total
+      { wch: 12 }, // Gross
+      { wch: 12 }, // Promo
+      { wch: 12 }, // Net
+      { wch: 10 }, // Fill Rate
+      { wch: 12 }, // Status
+      { wch: 24 }, // Notes
+    ];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "PO History");
+    const filename = yearFilter
+      ? `BARIS_Pipeline_${yearFilter}.xlsx`
+      : `BARIS_Pipeline_filtered_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    XLSX.writeFile(wb, filename);
+    toast.success(`Exported ${toExport.length} orders → ${filename}`);
+    setShowExportPicker(false);
+  }
+
   const tabs: { id: Tab; label: string }[] = [
     { id: "pipeline", label: "Pipeline PO" },
     { id: "tasks", label: "Task Queue" },
     { id: "collections", label: "Collections" },
     { id: "logistics", label: "Logistics" },
   ];
+
+  const currentYear = new Date().getFullYear();
 
   return (
     <>
@@ -1718,10 +1775,57 @@ function Fulfillment() {
             <span className="rounded-full bg-muted px-3 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               {filtered.length} {filtered.length === 1 ? "order" : "orders"}
             </span>
-            <button onClick={() => setShowNewOrder(true)}
-              className="ml-auto rounded-lg px-4 py-1.5 text-sm font-semibold text-white" style={{ backgroundColor: "#A3224A" }}>
-              + New Order
-            </button>
+
+            {/* ── Action buttons ── */}
+            <div className="ml-auto flex items-center gap-2">
+              {/* Export button */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowExportPicker(p => !p)}
+                  className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm font-semibold hover:bg-muted">
+                  ↓ Export
+                </button>
+                {showExportPicker && (
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setShowExportPicker(false)} />
+                    <div className="absolute right-0 z-20 mt-1 rounded-xl border border-border bg-popover shadow-xl p-4 min-w-[230px]">
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-3">
+                        Export PO History to Excel
+                      </p>
+                      <div className="space-y-1.5">
+                        {[currentYear, currentYear - 1, currentYear - 2].map(yr => {
+                          const count = rows.filter(r => (r.po_date ?? "").startsWith(String(yr))).length;
+                          return (
+                            <button
+                              key={yr}
+                              onClick={() => exportToExcel(String(yr))}
+                              className="w-full flex items-center justify-between rounded-lg px-3 py-2 text-sm font-semibold border border-border hover:bg-muted text-left">
+                              <span>📅 All {yr} POs</span>
+                              <span className="text-xs text-muted-foreground font-normal">{count} orders</span>
+                            </button>
+                          );
+                        })}
+                        <div className="border-t border-border my-1" />
+                        <button
+                          onClick={() => exportToExcel("")}
+                          className="w-full flex items-center justify-between rounded-lg px-3 py-2 text-sm border border-border hover:bg-muted text-left text-muted-foreground">
+                          <span>📋 Current view</span>
+                          <span className="text-xs font-normal">{filtered.length} orders</span>
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* New Order button */}
+              <button
+                onClick={() => setShowNewOrder(true)}
+                className="rounded-lg px-4 py-1.5 text-sm font-semibold text-white"
+                style={{ backgroundColor: "#A3224A" }}>
+                + New Order
+              </button>
+            </div>
           </div>
 
           <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-md ring-1 ring-black/5">
@@ -1782,7 +1886,7 @@ function Fulfillment() {
   );
 }
 
-// ─── Multi-select filter component ───────────────────────────────────────────
+// ─── Multi-select filter component ────────────────────────────────────────────
 function MultiSelect({ label, options, selected, onChange }: {
   label: string;
   options: string[];
@@ -1841,10 +1945,9 @@ function MultiSelect({ label, options, selected, onChange }: {
   );
 }
 
-// ─── Ship date cell — colored by urgency, only for non-Invoiced ──────────────
+// ─── Ship date cell ────────────────────────────────────────────────────────────
 function ShipDateCell({ date, status }: { date: string | null; status: Status }) {
   if (!date) return <span className="text-muted-foreground">—</span>;
-  // Don't flag ship date if already invoiced — it's done
   if (status === "Invoiced" || status === "BOL Confirmed") {
     return <span className="font-mono text-xs text-muted-foreground">{date}</span>;
   }
@@ -1940,7 +2043,6 @@ function CollectionsTab({ orders }: { orders: Order[] }) {
 
   return (
     <div className="space-y-5">
-      {/* KPIs */}
       <div className="grid grid-cols-3 gap-4">
         <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
           <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2">Total Pending</p>
@@ -1959,7 +2061,6 @@ function CollectionsTab({ orders }: { orders: Order[] }) {
         </div>
       </div>
 
-      {/* Payment terms + Filters */}
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex gap-2 flex-wrap">
           {[["UNFI","30d"],["KeHe","30d"],["RFD","30d"],["Rainforest","60d ⚠️"]].map(([d,t]) => (
@@ -1984,7 +2085,6 @@ function CollectionsTab({ orders }: { orders: Order[] }) {
         </div>
       </div>
 
-      {/* Collections table */}
       <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
         <table className="w-full text-sm">
           <thead>
