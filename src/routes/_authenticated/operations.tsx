@@ -107,60 +107,66 @@ function FPStockTab({ movements, orders, loading }: { movements: FPRow[]; orders
         })}
       </div>
 
-      {/* Detail by SKU × Warehouse */}
-      <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
-        <div className="px-5 py-3 border-b border-border bg-muted/30">
-          <p className="text-sm font-semibold" style={{color:"#1C2340"}}>Stock by SKU × Warehouse</p>
-          <p className="text-xs text-muted-foreground">Calculated from all fp_movements · last updated: {ymd()}</p>
-        </div>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
-              <th className="px-4 py-2.5 text-left">SKU</th>
-              <th className="px-4 py-2.5 text-left">Item #</th>
-              <th className="px-4 py-2.5 text-left">Warehouse</th>
-              <th className="px-4 py-2.5 text-right">Stock</th>
-              <th className="px-4 py-2.5 text-right">Committed</th>
-              <th className="px-4 py-2.5 text-right">Available</th>
-              <th className="px-4 py-2.5 text-right">Forecast</th>
-              <th className="px-4 py-2.5 text-right">WoH</th>
-              <th className="px-4 py-2.5 text-center">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">Loading…</td></tr>
-            ) : stock.filter(s => s.cases > 0).length === 0 ? (
-              <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">No stock data yet</td></tr>
-            ) : stock.filter(s => s.cases > 0).map(s => {
-              const skuStock = Math.round(bySku[s.sku] ?? 0);
-              const comm = Math.round(committed[s.sku] ?? 0);
-              // allocate committed proportionally to this warehouse's share of SKU stock
-              const share = skuStock > 0 ? s.cases / skuStock : 0;
-              const rowComm = Math.round(comm * share);
-              const available = Math.round(s.cases) - rowComm;
-              const fc = forecastNextMonth[s.sku] ?? 0;
-              const woh = fc > 0 ? (available / (fc * share || fc)) * 4 : 0;
-              const st = stockStatus(available, woh);
-              return (
-                <tr key={`${s.sku}|${s.warehouse}`} className="border-t border-border/60 hover:bg-muted/20">
-                  <td className="px-4 py-2 font-semibold" style={{color:"#1C2340"}}>{s.sku}</td>
-                  <td className="px-4 py-2 font-mono text-xs text-muted-foreground">{SKU_ITEMS[s.sku]}</td>
-                  <td className="px-4 py-2">{s.warehouse}</td>
-                  <td className="px-4 py-2 text-right font-mono font-semibold">{Math.round(s.cases).toLocaleString()}</td>
-                  <td className="px-4 py-2 text-right font-mono text-xs">{rowComm ? rowComm.toLocaleString() : "—"}</td>
-                  <td className="px-4 py-2 text-right font-mono font-semibold">{available.toLocaleString()}</td>
-                  <td className="px-4 py-2 text-right font-mono text-xs text-muted-foreground">{Math.round(fc * share).toLocaleString()}</td>
-                  <td className="px-4 py-2 text-right font-mono text-xs">{woh.toFixed(1)}</td>
-                  <td className="px-4 py-2 text-center">
-                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${STATUS_PILL[st]}`}>{st}</span>
-                  </td>
+      {/* Detail by SKU × Warehouse — split into two cards */}
+      {(['Lineage Newark', 'other'] as const).map(wh => {
+        const isLineage = wh === 'Lineage Newark';
+        const rows = stock.filter(s => s.cases > 0 && (isLineage ? s.warehouse === 'Lineage Newark' : s.warehouse !== 'Lineage Newark'));
+        if (rows.length === 0) return null;
+        return (
+          <div key={wh} className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+            <div className="px-5 py-3 border-b border-border bg-muted/30">
+              <p className="text-sm font-semibold" style={{color:"#1C2340"}}>
+                {isLineage ? '📦 Lineage Newark' : '🏭 Other Warehouses'}
+              </p>
+              <p className="text-xs text-muted-foreground">Calculated from all fp_movements · last updated: {ymd()}</p>
+            </div>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
+                  <th className="px-4 py-2.5 text-left">SKU</th>
+                  <th className="px-4 py-2.5 text-left">Item #</th>
+                  {!isLineage && <th className="px-4 py-2.5 text-left">Warehouse</th>}
+                  <th className="px-4 py-2.5 text-right">Stock</th>
+                  <th className="px-4 py-2.5 text-right">Committed</th>
+                  <th className="px-4 py-2.5 text-right">Available</th>
+                  <th className="px-4 py-2.5 text-right">Forecast</th>
+                  <th className="px-4 py-2.5 text-right">WoH</th>
+                  <th className="px-4 py-2.5 text-center">Status</th>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+              </thead>
+              <tbody>
+                {loading ? (
+                  <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">Loading…</td></tr>
+                ) : rows.map(s => {
+                  const skuStock = Math.round(bySku[s.sku] ?? 0);
+                  const comm = Math.round(committed[s.sku] ?? 0);
+                  const share = skuStock > 0 ? s.cases / skuStock : 0;
+                  const rowComm = Math.round(comm * share);
+                  const available = Math.round(s.cases) - rowComm;
+                  const fc = forecastNextMonth[s.sku] ?? 0;
+                  const woh = fc > 0 ? (available / (fc * share || fc)) * 4 : 0;
+                  const st = stockStatus(available, woh);
+                  return (
+                    <tr key={`${s.sku}|${s.warehouse}`} className="border-t border-border/60 hover:bg-muted/20">
+                      <td className="px-4 py-2 font-semibold" style={{color:"#1C2340"}}>{s.sku}</td>
+                      <td className="px-4 py-2 font-mono text-xs text-muted-foreground">{SKU_ITEMS[s.sku]}</td>
+                      {!isLineage && <td className="px-4 py-2 text-xs text-muted-foreground">{s.warehouse}</td>}
+                      <td className="px-4 py-2 text-right font-mono font-semibold">{Math.round(s.cases).toLocaleString()}</td>
+                      <td className="px-4 py-2 text-right font-mono text-xs">{rowComm ? rowComm.toLocaleString() : "—"}</td>
+                      <td className="px-4 py-2 text-right font-mono font-semibold">{available.toLocaleString()}</td>
+                      <td className="px-4 py-2 text-right font-mono text-xs text-muted-foreground">{Math.round(fc * share).toLocaleString()}</td>
+                      <td className="px-4 py-2 text-right font-mono text-xs">{woh.toFixed(1)}</td>
+                      <td className="px-4 py-2 text-center">
+                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${STATUS_PILL[st]}`}>{st}</span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        );
+      })}
     </div>
   );
 }
