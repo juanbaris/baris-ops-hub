@@ -1,7 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import * as XLSX from "xlsx";
 import { PageHeader } from "@/components/app-shell";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
@@ -1581,6 +1580,308 @@ function renderBodyCell(r: Order, c: (typeof COLUMNS)[number], onChanged: (o: Or
   return String(v);
 }
 
+
+// ─── Import Modal ──────────────────────────────────────────────────────────────
+type ImportRow = {
+  po_number: string;
+  po_date: string | null;
+  ship_est_date: string | null;
+  invoice_date: string | null;
+  distributor: string;
+  customer: string;
+  wm_cases: number | null;
+  wd_cases: number | null;
+  xd_cases: number | null;
+  pw_cases: number | null;
+  hm_cases: number | null;
+  matcha_cases: number | null;
+  case_value: number | null;
+  gross_sales: number | null;
+  promo_discount: number | null;
+  net_sales: number | null;
+  status: string;
+  notes: string | null;
+  _action: "new" | "update" | "unchanged";
+  _changes: string[];
+};
+
+const DIST_FIX: Record<string, string> = {
+  kehe: "KeHe", Kehe: "KeHe", KEHE: "KeHe",
+  ups: "Direct", UPS: "Direct",
+  "jmm distributors": "Other", "JMM Distributors": "Other",
+  "pod foods": "Other", "Pod Foods": "Other",
+  ubereats: "Other", UberEats: "Other",
+};
+function fixDist(v: string): Distributor {
+  const valid: Distributor[] = ["UNFI","KeHe","Rainforest","RFD","Direct","Other"];
+  const mapped = DIST_FIX[v] ?? DIST_FIX[v.toLowerCase()] ?? v;
+  return (valid.includes(mapped as Distributor) ? mapped : "Other") as Distributor;
+}
+
+function parseCSVLine(line: string): string[] {
+  const result: string[] = [];
+  let cur = ""; let inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') { if (inQ && line[i+1] === '"') { cur += '"'; i++; } else inQ = !inQ; }
+    else if (c === ',' && !inQ) { result.push(cur.trim()); cur = ""; }
+    else cur += c;
+  }
+  result.push(cur.trim());
+  return result;
+}
+
+function safeNum(v: string): number | null {
+  if (!v || v === "—") return null;
+  const n = parseFloat(v.replace(/[$,\s]/g, ""));
+  return isNaN(n) ? null : n;
+}
+
+function ImportModal({ onClose, onImported, existingRows }: {
+  onClose: () => void;
+  onImported: (orders: Order[]) => void;
+  existingRows: Order[];
+}) {
+  const [step, setStep]       = useState<"upload"|"preview"|"importing"|"done">("upload");
+  const [rows, setRows]       = useState<ImportRow[]>([]);
+  const [result, setResult]   = useState({ updated: 0, created: 0, unchanged: 0 });
+  const [errors, setErrors]   = useState<string[]>([]);
+  const fileRef               = useRef<HTMLInputElement>(null);
+
+  const existingMap = useMemo(() => new Map(existingRows.map(r => [r.po_number, r])), [existingRows]);
+
+  function handleFile(file: File) {
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        let text = e.target?.result as string;
+        if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+        const lines = text.split(/\r?\n/).filter(l => l.trim());
+        if (lines.length < 2) { toast.error("CSV vacío"); return; }
+        const headers = parseCSVLine(lines[0]);
+        const parsed  = lines.slice(1)
+          .map(l => Object.fromEntries(headers.map((h, i) => [h.trim(), parseCSVLine(l)[i]?.trim() ?? ""])))
+          .filter(r => r["Invoice/PO"]?.trim() && r["Invoice/PO"] !== "—");
+
+        const importRows: ImportRow[] = parsed.map(r => {
+          const po       = r["Invoice/PO"];
+          const existing = existingMap.get(po);
+          const newRow: ImportRow = {
+            po_number:     po,
+            po_date:       r["PO Date"]     || null,
+            ship_est_date: r["Ship Est."]   || null,
+            invoice_date:  r["Invoice Date"]|| null,
+            distributor:   fixDist(r["Distributor"] || "Other"),
+            customer:      r["Customer"]    || "",
+            wm_cases:      safeNum(r["W&M (93562)"]),
+            wd_cases:      safeNum(r["W&D (23141)"]),
+            xd_cases:      safeNum(r["XD (88021)"]),
+            pw_cases:      safeNum(r["P&W (77670)"]),
+            hm_cases:      safeNum(r["H&M (77671)"]),
+            matcha_cases:  safeNum(r["Matcha (77672)"]),
+            case_value:    safeNum(r["$/case"]),
+            gross_sales:   safeNum(r["Gross Sales"]),
+            promo_discount:safeNum(r["Allowance"]),
+            net_sales:     safeNum(r["Net Sales"]),
+            status:        r["Status"] || "Open",
+            notes:         r["Notes"]  || null,
+            _action:       "unchanged",
+            _changes:      [],
+          };
+          if (!existing) {
+            newRow._action = "new";
+          } else {
+            const changes: string[] = [];
+            const check = (dbKey: keyof Order, label: string, val: unknown) => {
+              const a = String(existing[dbKey] ?? "");
+              const b = String(val ?? "");
+              if (a !== b && !(existing[dbKey] == null && val == null) && !(a === "0" && b === "null"))
+                changes.push(`${label}: ${a || "—"} → ${b || "—"}`);
+            };
+            check("status",        "Status",    newRow.status);
+            check("wm_cases",      "W&M",       newRow.wm_cases);
+            check("wd_cases",      "W&D",       newRow.wd_cases);
+            check("xd_cases",      "XD",        newRow.xd_cases);
+            check("pw_cases",      "P&W",       newRow.pw_cases);
+            check("hm_cases",      "H&M",       newRow.hm_cases);
+            check("matcha_cases",  "Matcha",    newRow.matcha_cases);
+            check("gross_sales",   "Gross",     newRow.gross_sales);
+            check("promo_discount","Allowance", newRow.promo_discount);
+            check("ship_est_date", "Ship",      newRow.ship_est_date);
+            check("invoice_date",  "Invoice",   newRow.invoice_date);
+            check("notes",         "Notes",     newRow.notes);
+            if (changes.length > 0) { newRow._action = "update"; newRow._changes = changes; }
+          }
+          return newRow;
+        });
+        setRows(importRows);
+        setStep("preview");
+      } catch (err: any) {
+        toast.error("Error parseando CSV: " + err.message);
+      }
+    };
+    reader.readAsText(file, "utf-8");
+  }
+
+  async function applyImport() {
+    setStep("importing");
+    const toProcess = rows.filter(r => r._action !== "unchanged");
+    const errs: string[] = [];
+    const saved: Order[] = [];
+
+    for (const row of toProcess) {
+      const payload: any = {
+        po_number: row.po_number, po_date: row.po_date, ship_est_date: row.ship_est_date,
+        invoice_date: row.invoice_date, distributor: row.distributor, customer: row.customer,
+        wm_cases: row.wm_cases, wd_cases: row.wd_cases, xd_cases: row.xd_cases,
+        pw_cases: row.pw_cases, hm_cases: row.hm_cases, matcha_cases: row.matcha_cases,
+        case_value: row.case_value, gross_sales: row.gross_sales,
+        promo_discount: row.promo_discount, net_sales: row.net_sales,
+        status: row.status, notes: row.notes,
+      };
+      const op = row._action === "update"
+        ? supabase.from("customer_orders").update(payload).eq("po_number", row.po_number).select().single()
+        : supabase.from("customer_orders").insert(payload).select().single();
+      const { data, error } = await op;
+      if (error) errs.push(`PO ${row.po_number}: ${error.message}`);
+      else if (data) saved.push(data);
+    }
+    setResult({
+      updated:   rows.filter(r => r._action === "update").length - errs.length,
+      created:   rows.filter(r => r._action === "new").length - errs.length,
+      unchanged: rows.filter(r => r._action === "unchanged").length,
+    });
+    setErrors(errs);
+    setStep("done");
+    if (saved.length > 0) onImported(saved);
+  }
+
+  const newCount       = rows.filter(r => r._action === "new").length;
+  const updateCount    = rows.filter(r => r._action === "update").length;
+  const unchangedCount = rows.filter(r => r._action === "unchanged").length;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="relative w-full max-w-3xl rounded-2xl bg-card shadow-2xl ring-1 ring-black/10 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <button onClick={onClose} className="absolute right-4 top-4 text-muted-foreground hover:text-foreground text-lg z-10">✕</button>
+        <div className="p-6">
+          <h2 className="text-lg font-bold mb-1" style={{ color: "#1C2340" }}>Import Pipeline</h2>
+          <p className="text-xs text-muted-foreground mb-5">
+            Exportá desde BARIS → editá en Excel → reimportá. Solo se aplican los cambios reales.
+          </p>
+
+          {step === "upload" && (
+            <div>
+              <div onClick={() => fileRef.current?.click()}
+                className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-border bg-muted/30 py-14 cursor-pointer hover:bg-muted/50 transition">
+                <p className="text-3xl mb-3">📂</p>
+                <p className="text-sm font-semibold">Subí el CSV exportado desde BARIS</p>
+                <p className="text-xs text-muted-foreground mt-1">El mismo archivo que genera el botón ↓ Export</p>
+              </div>
+              <input ref={fileRef} type="file" accept=".csv" className="hidden"
+                onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
+            </div>
+          )}
+
+          {step === "preview" && (
+            <div>
+              <div className="grid grid-cols-3 gap-3 mb-5">
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-center">
+                  <p className="text-2xl font-bold font-mono text-emerald-600">{newCount}</p>
+                  <p className="text-xs text-emerald-700 font-semibold mt-0.5">Nuevos POs</p>
+                </div>
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-center">
+                  <p className="text-2xl font-bold font-mono text-amber-600">{updateCount}</p>
+                  <p className="text-xs text-amber-700 font-semibold mt-0.5">Con cambios</p>
+                </div>
+                <div className="rounded-xl border border-border bg-muted/20 p-3 text-center">
+                  <p className="text-2xl font-bold font-mono text-muted-foreground">{unchangedCount}</p>
+                  <p className="text-xs text-muted-foreground font-semibold mt-0.5">Sin cambios</p>
+                </div>
+              </div>
+
+              {newCount + updateCount === 0 ? (
+                <div className="rounded-xl border border-border bg-muted/20 p-6 text-center mb-4">
+                  <p className="text-sm font-semibold text-muted-foreground">✅ Todo ya está al día — nada que importar</p>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-border overflow-hidden mb-5 max-h-[40vh] overflow-y-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="bg-muted/40 text-[10px] uppercase tracking-wide text-muted-foreground sticky top-0">
+                        <th className="px-3 py-2 text-left">PO #</th>
+                        <th className="px-3 py-2 text-left">Customer</th>
+                        <th className="px-3 py-2 text-left">Acción</th>
+                        <th className="px-3 py-2 text-left">Cambios</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.filter(r => r._action !== "unchanged").map(r => (
+                        <tr key={r.po_number} className="border-t border-border/60 hover:bg-muted/20">
+                          <td className="px-3 py-1.5 font-mono font-semibold" style={{ color: "#A3224A" }}>{r.po_number}</td>
+                          <td className="px-3 py-1.5 text-muted-foreground">{r.customer}</td>
+                          <td className="px-3 py-1.5">
+                            {r._action === "new"
+                              ? <span className="rounded-full bg-emerald-100 text-emerald-700 px-2 py-0.5 text-[10px] font-semibold">Nuevo</span>
+                              : <span className="rounded-full bg-amber-100 text-amber-700 px-2 py-0.5 text-[10px] font-semibold">Update</span>}
+                          </td>
+                          <td className="px-3 py-1.5 text-muted-foreground max-w-[280px] truncate text-[10px]">
+                            {r._changes.length > 0 ? r._changes.join(" · ") : "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <div className="flex gap-3">
+                {newCount + updateCount > 0 && (
+                  <button onClick={applyImport}
+                    className="flex-1 rounded-lg py-2 text-sm font-semibold text-white"
+                    style={{ backgroundColor: "#A3224A" }}>
+                    Aplicar {newCount + updateCount} cambios →
+                  </button>
+                )}
+                <button onClick={onClose}
+                  className="rounded-lg py-2 px-4 text-sm font-semibold border border-border hover:bg-muted">
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          )}
+
+          {step === "importing" && (
+            <div className="py-12 text-center">
+              <p className="text-sm text-muted-foreground animate-pulse">Aplicando cambios en Supabase…</p>
+            </div>
+          )}
+
+          {step === "done" && (
+            <div className="py-8 text-center space-y-3">
+              <p className="text-4xl">✅</p>
+              <p className="text-sm font-semibold" style={{ color: "#1C2340" }}>
+                {result.updated} actualizados · {result.created} nuevos · {result.unchanged} sin cambios
+              </p>
+              {errors.length > 0 && (
+                <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-left">
+                  <p className="text-xs font-semibold text-red-700 mb-1">Errores ({errors.length}):</p>
+                  {errors.map((e, i) => <p key={i} className="text-xs text-red-600">{e}</p>)}
+                </div>
+              )}
+              <button onClick={onClose}
+                className="rounded-lg px-6 py-2 text-sm font-semibold text-white"
+                style={{ backgroundColor: "#1C2340" }}>
+                Cerrar
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main component ────────────────────────────────────────────────────────────
 function Fulfillment() {
   const [rows, setRows] = useState<Order[]>([]);
@@ -1598,8 +1899,9 @@ function Fulfillment() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [detailOrder, setDetailOrder] = useState<Order | null>(null);
   const [showNewOrder, setShowNewOrder] = useState(false);
-  // ── Export state ──
+  // ── Export / Import state ──
   const [showExportPicker, setShowExportPicker] = useState(false);
+  const [showImport, setShowImport] = useState(false);
 
   useEffect(() => {
     let cancel = false;
@@ -1644,8 +1946,16 @@ function Fulfillment() {
   }
   function applyUpdate(updated: Order) { setRows(rs => rs.map(r => r.id === updated.id ? updated : r)); }
   function applyDelete(id: string) { setRows(rs => rs.filter(r => r.id !== id)); }
+  function handleImported(imported: Order[]) {
+    setRows(prev => {
+      const existingIds = new Set(prev.map(r => r.id));
+      const updates = imported.filter(o => existingIds.has(o.id));
+      const inserts = imported.filter(o => !existingIds.has(o.id));
+      return [...inserts, ...prev.map(r => updates.find(u => u.id === r.id) ?? r)];
+    });
+  }
 
-  // ── Export to Excel ──────────────────────────────────────────────────────────
+  // ── Export to CSV (no external package, opens directly in Excel) ─────────
   function exportToExcel(yearFilter: string) {
     const toExport = yearFilter
       ? rows.filter(r => (r.po_date ?? "").startsWith(yearFilter))
@@ -1656,63 +1966,59 @@ function Fulfillment() {
       return;
     }
 
-    const data = toExport
-      .sort((a, b) => (a.po_date ?? "").localeCompare(b.po_date ?? ""))
-      .map(r => ({
-        "Month":          (r.po_date ?? "").slice(0, 7),
-        "Invoice/PO":     r.po_number,
-        "PO Date":        r.po_date ?? "",
-        "Ship Est.":      r.ship_est_date ?? "",
-        "Invoice Date":   r.invoice_date ?? "",
-        "Distributor":    r.distributor,
-        "Customer":       r.customer,
-        "W&D (23141)":    Number(r.wd_cases ?? 0),
-        "P&W (77670)":    Number(r.pw_cases ?? 0),
-        "H&M (77671)":    Number(r.hm_cases ?? 0),
-        "Matcha (77672)": Number(r.matcha_cases ?? 0),
-        "XD (88021)":     Number(r.xd_cases ?? 0),
-        "W&M (93562)":    Number(r.wm_cases ?? 0),
-        "Total Cases":    rowTotalCases(r),
-        "Gross Sales":    Number(r.gross_sales ?? 0),
-        "Promo Disc.":    Number(r.promo_discount ?? 0),
-        "Net Sales":      Number(r.net_sales ?? 0),
-        "Fill Rate %":    r.fill_rate != null ? Number(r.fill_rate) : "",
-        "Status":         r.status,
-        "Notes":          r.notes ?? "",
-      }));
-
-    const ws = XLSX.utils.json_to_sheet(data);
-    // Column widths
-    ws["!cols"] = [
-      { wch: 8 },  // Month
-      { wch: 16 }, // Invoice/PO
-      { wch: 12 }, // PO Date
-      { wch: 12 }, // Ship Est.
-      { wch: 12 }, // Invoice Date
-      { wch: 12 }, // Distributor
-      { wch: 22 }, // Customer
-      { wch: 10 }, // W&D
-      { wch: 10 }, // P&W
-      { wch: 10 }, // H&M
-      { wch: 12 }, // Matcha
-      { wch: 10 }, // XD
-      { wch: 10 }, // W&M
-      { wch: 10 }, // Total
-      { wch: 12 }, // Gross
-      { wch: 12 }, // Promo
-      { wch: 12 }, // Net
-      { wch: 10 }, // Fill Rate
-      { wch: 12 }, // Status
-      { wch: 24 }, // Notes
+    const headers = [
+      "Month","Invoice/PO","PO Date","Ship Est.","Invoice Date",
+      "Distributor","Customer",
+      "W&M (93562)","W&D (23141)","XD (88021)","P&W (77670)","H&M (77671)","Matcha (77672)",
+      "Total Cases","$/case","Gross Sales","Allowance","Net Sales","Fill Rate %","Status","Notes",
     ];
 
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "PO History");
-    const filename = yearFilter
-      ? `BARIS_Pipeline_${yearFilter}.xlsx`
-      : `BARIS_Pipeline_filtered_${new Date().toISOString().slice(0, 10)}.xlsx`;
-    XLSX.writeFile(wb, filename);
-    toast.success(`Exported ${toExport.length} orders → ${filename}`);
+    function cell(v: unknown): string {
+      if (v === null || v === undefined || v === "") return "";
+      const s = String(v);
+      return (s.includes(",") || s.includes("\n") || s.includes('"')) ? `"${s.replace(/"/g, '""')}"`  : s;
+    }
+
+    const dataRows = toExport
+      .sort((a, b) => (a.po_date ?? "").localeCompare(b.po_date ?? ""))
+      .map(r => [
+        (r.po_date ?? "").slice(0, 7),
+        r.po_number,
+        r.po_date ?? "",
+        r.ship_est_date ?? "",
+        r.invoice_date ?? "",
+        r.distributor,
+        r.customer,
+        Number(r.wm_cases ?? 0),
+        Number(r.wd_cases ?? 0),
+        Number(r.xd_cases ?? 0),
+        Number(r.pw_cases ?? 0),
+        Number(r.hm_cases ?? 0),
+        Number(r.matcha_cases ?? 0),
+        rowTotalCases(r),
+        (r as any).case_value ?? "",
+        Number(r.gross_sales ?? 0),
+        Number(r.promo_discount ?? 0),
+        Number(r.net_sales ?? 0),
+        r.fill_rate != null ? Number(r.fill_rate) : "",
+        r.status,
+        r.notes ?? "",
+      ].map(cell));
+
+    // UTF-8 BOM → Excel abre acentos correctamente
+    const csv = "\uFEFF" + [headers.map(cell), ...dataRows].map(row => row.join(",")).join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href     = url;
+    a.download = yearFilter
+      ? `BARIS_Pipeline_${yearFilter}.csv`
+      : `BARIS_Pipeline_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast.success(`Exported ${toExport.length} orders`);
     setShowExportPicker(false);
   }
 
@@ -1778,6 +2084,12 @@ function Fulfillment() {
 
             {/* ── Action buttons ── */}
             <div className="ml-auto flex items-center gap-2">
+              {/* Import button */}
+              <button
+                onClick={() => setShowImport(true)}
+                className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm font-semibold hover:bg-muted">
+                ↑ Import
+              </button>
               {/* Export button */}
               <div className="relative">
                 <button
@@ -1882,6 +2194,9 @@ function Fulfillment() {
       {showNewOrder && <NewOrderModal onClose={() => setShowNewOrder(false)}
         existingPONumbers={existingPONumbers}
         onCreated={o => { setRows(rs => [o, ...rs]); setShowNewOrder(false); }} />}
+      {showImport && <ImportModal onClose={() => setShowImport(false)}
+        existingRows={rows}
+        onImported={handleImported} />}
     </>
   );
 }
