@@ -1535,6 +1535,29 @@ function ProductionTab({ fpMovements, ipMovements, onAdded }: {
             {editingRun ? "Edit Production Run" : "New Production Run"}
           </h3>
 
+          {!editingRun && (
+            <div className="mb-5">
+              <label className="cursor-pointer block">
+                <div className="rounded-2xl border-2 border-dashed p-5 text-center hover:opacity-80 transition-opacity"
+                  style={{borderColor:"#A3224A", backgroundColor:"#A3224A08"}}>
+                  <div className="text-3xl mb-2">📄</div>
+                  <p className="text-sm font-bold" style={{color:"#A3224A"}}>Upload Heinlein production report</p>
+                  <p className="text-xs text-muted-foreground mt-1">PDF or Excel · AI reads BOM, lot number and cases automatically</p>
+                  <div className="mt-3 inline-block rounded-lg px-5 py-2 text-sm font-semibold text-white" style={{backgroundColor:"#A3224A"}}>
+                    Choose file
+                  </div>
+                </div>
+                <input type="file" accept=".pdf,.xlsx,.xls" className="hidden"
+                  onChange={e => { const f = e.target.files?.[0]; if (f) parseProductionReport(f); }} />
+              </label>
+              {parsingReport && (
+                <div className="mt-2 rounded-xl bg-muted/40 p-3 text-center text-sm text-muted-foreground">
+                  <span className="animate-pulse">🤖 AI is reading the report and filling the form…</span>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
             <div><Lbl>Run Date</Lbl>
               <input type="date" className={`${inp} mt-1`} value={form.run_date}
