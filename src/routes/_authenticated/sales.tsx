@@ -491,8 +491,6 @@ function SKUTab({forecast,newSkus,mixOverrides,mixOverrideActive,committedCount}
 }) {
   const SKU_COLORS: Record<string,string> = {XD:"#1C2340",PW:"#A3224A",HM:"#3B82F6",WM:"#10B981",WD:"#F59E0B",Matcha:"#8B5CF6"};
   const SKUS = ["XD","PW","HM","WM","WD","Matcha"];
-  // Existing SKUs split the base demand; new-SKU volume is fully incremental
-  // and is listed in its own rows so the TOTAL row still ties to the forecast.
   const baseByMonth = useMemo(()=>forecast.map(f=>f.totalCases-(f.newSkuDelta??0)),[forecast]);
   const defaultMonths = useMemo(()=>skuForecast(forecast.map((f,i)=>({...f,totalCases:baseByMonth[i]})) as any),[forecast,baseByMonth]);
   const skuData = useMemo(()=>SKUS.map(sku=>{
@@ -646,7 +644,6 @@ function rowClass(active:boolean,committed:boolean,tint:string) {
   return active?tint:"";
 }
 
-/** Collapsible section used by the simulator blocks and the live impact panels. */
 function Collapsible({title,subtitle,badge,defaultOpen=true,actions,children}:{
   title:string;subtitle?:string;badge?:ReactNode;defaultOpen?:boolean;
   actions?:ReactNode;children:ReactNode;
@@ -732,7 +729,6 @@ function SimuladorTab(p:SimProps) {
         </div>
       )}
 
-      {/* Summary cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
           {label:"Δ Velocity (Bloque 1)",value:velDeltaTotal,color:velDeltaTotal>0?"#10B981":"#6B7280"},
@@ -750,7 +746,6 @@ function SimuladorTab(p:SimProps) {
         ))}
       </div>
 
-      {/* Bloque 1 — Velocity */}
       <Collapsible title="Bloque 1 — Velocity por cadena"
         subtitle="Cambio de u/tienda/semana en cadenas activas. Activar con SI."
         badge={velDeltaTotal!==0?<span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">{velDeltaTotal>0?"+":""}{velDeltaTotal.toLocaleString()} cs/mo</span>:undefined}>
@@ -803,7 +798,6 @@ function SimuladorTab(p:SimProps) {
         </table>
       </Collapsible>
 
-      {/* Bloque 2 — New retailers */}
       <Collapsible title="Block 2 — New retailers"
         subtitle="Automatic ramp-up: month 1 = 40% · month 2 = 70% · month 3+ = 100%"
         badge={retDeltaTotal!==0?<span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold" style={{color:"#A3224A"}}>+{retDeltaTotal.toLocaleString()} cs/mo</span>:undefined}>
@@ -867,7 +861,6 @@ function SimuladorTab(p:SimProps) {
         </table>
       </Collapsible>
 
-      {/* Bloque 3 — New SKUs */}
       <Collapsible title="Block 3 — New SKUs"
         subtitle="Fully incremental · 0% cannibalization · ramp-up: month 1=40% · month 2=70% · month 3+=100%"
         badge={skuDeltaTotal!==0?<span className="rounded-full bg-pink-100 px-2 py-0.5 text-[10px] font-bold text-pink-700">+{skuDeltaTotal.toLocaleString()} cs/mo</span>:undefined}>
@@ -947,7 +940,6 @@ function SimuladorTab(p:SimProps) {
         </div>
       </Collapsible>
 
-      {/* Bloque 4 — SKU mix override */}
       <Collapsible title="Block 4 — SKU Mix override"
         subtitle="Override the default mix per month. Use for promos or seasonal launches."
         actions={
@@ -1020,7 +1012,6 @@ function SimuladorTab(p:SimProps) {
         )}
       </Collapsible>
 
-      {/* Live impact — see the effect without switching tabs */}
       {detailView && (
         <Collapsible title="Live impact — Monthly Detail" defaultOpen={false}
           subtitle="Same view as the Monthly Detail tab, recalculated as you change levers above.">
@@ -1046,7 +1037,7 @@ function SimuladorTab(p:SimProps) {
   );
 }
 
-// ─── Seasonality Tab ───────────────────────────────────────────────────────
+// ─── Seasonality Tab ──────────────────────────────────────────────────────────
 function SeasonalityTab({seasonIdx,onSeasonIdxChange,velChains,onVelChainsChange}:{
   seasonIdx:Record<number,number>;
   onSeasonIdxChange:(idx:Record<number,number>)=>void;
@@ -1071,8 +1062,8 @@ function SeasonalityTab({seasonIdx,onSeasonIdxChange,velChains,onVelChainsChange
       <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h3 className="text-sm font-bold mb-1" style={{color:"#1C2340"}}>Seasonality indices — source: 2025 actual</h3>
-            <p className="text-xs text-muted-foreground mb-5">Distributor PO cycles, not shopper consumption. 1.0 = average · editable</p>
+            <h3 className="text-sm font-bold mb-1" style={{color:"#1C2340"}}>Seasonality indices — updated Aug 2026</h3>
+            <p className="text-xs text-muted-foreground mb-5">Source: Excel budget model · 1.0 = average month · editable</p>
           </div>
           <button onClick={()=>onSeasonIdxChange({...DEFAULT_SEASON_IDX})}
             className="rounded-full border border-border px-3 py-1 text-xs font-semibold text-muted-foreground hover:text-foreground">
@@ -1148,17 +1139,14 @@ function SalesPage() {
   const [tab,setTab] = useState<SalesTab>("real");
   const [scenario,setScenario] = useState<"Pessimistic"|"Normal"|"Optimistic">("Normal");
   const [reals,setReals] = useState<Record<string,number>>({});
-  // Actuals are derived from the Fulfillment pipeline (status = Invoiced).
   const {byLabel, casesByLabel, loading:loadingActuals} = useInvoicedActuals();
   const history: HistRow[] = useMemo(()=>Object.values(byLabel)
     .sort((a,b)=>a.year-b.year||a.month-b.month)
     .filter(a=>a.year>=2026&&(a.cases>0||a.revenue>0))
     .map(a=>({label:a.label,cases:a.cases,revenue:Math.round(a.revenue)})),[byLabel]);
-  // Pipeline actuals win; manual overrides only fill months with no invoices.
   const mergedReals = useMemo(()=>({...reals,...casesByLabel}),[reals,casesByLabel]);
   const [seasonIdx,setSeasonIdx] = useState<Record<number,number>>(DEFAULT_SEASON_IDX);
   const [velChains,setVelChains] = useState<VelChain[]>(DEFAULT_VEL_CHAINS);
-  // Simulator levers live here so committed state survives tab switches.
   const [velActive,setVelActive] = useState<boolean[]>(DEFAULT_VEL_CHAINS.map(()=>false));
   const [velNew,setVelNew] = useState<number[]>(DEFAULT_VEL_CHAINS.map(c=>c.velCurrent));
   const [retActive,setRetActive] = useState<boolean[]>(NEW_RETAILERS.map(()=>false));
@@ -1187,7 +1175,6 @@ function SalesPage() {
     + skuCommitted.filter((c,i)=>c&&!!newSkus[i]).length
     + (mixCommitted?1:0);
 
-  // When levers are locked in, downstream views use only the committed subset.
   const committedForecast = useMemo(()=>calcForecast(
     scenario,
     velActive.map((a,i)=>a&&velCommitted[i]), velNew,
@@ -1208,8 +1195,6 @@ function SalesPage() {
     setMixCommitted(false);
   }
 
-  // Publish the forecast state so other modules (Operations → Procurement
-  // Planning) plan production against the same numbers.
   useEffect(()=>{
     const state: ForecastState = {
       scenario, seasonIdx, velChains,
@@ -1241,10 +1226,12 @@ function SalesPage() {
   const TABS_REFERENCE: {id:SalesTab;label:string}[] = [
     {id:"salesdb",label:"Sales DB"},
   ];
+
+  // ── Updated scenario descriptions from Excel budget model (Aug 2026) ────────
   const SCENARIO_INFO = {
-    Pessimistic:"0% YoY · same volume · floor",
-    Normal:"+15% YoY · organic · working base",
-    Optimistic:"+25% YoY · strong organic volume",
+    Pessimistic: "Best Estimate · $2.17M 2026",
+    Normal:      "+43% → $2.5M 2026",
+    Optimistic:  "+80% → $2.8M 2026",
   };
 
   return (
