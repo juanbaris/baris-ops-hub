@@ -1,59 +1,60 @@
 // ─── Shared sales forecast engine ────────────────────────────────────────────
-// Single source of truth for the demand forecast. The Sales module edits this
-// state; Operations (Procurement Planning / stock WoH) consumes the result.
-
 export const PRICE_PER_CASE = 37;
 export const UNITS_PER_CASE = 8;
 export const WEEKS_PER_MONTH = 4.33;
-// Normal scenario 12-month total (Aug 2026 → Jul 2027), used for reference.
+// Normal scenario 12-month total (Aug 2026 → Jul 2027)
 export const IMPLIED_ANNUAL_2026 = 102242;
 
-// Updated seasonality from Excel budget model (Aug 2026 revision).
-// Source: Assumptions sheet · 1.0 = average month · sum = 12.0
+// Effective seasonality derived from Excel Normal scenario monthly PO pattern.
+// Reproduces exact Excel values: baseCases = annualBase/12 × seasonIdx × promoMult
+// Sum = 12.0 → annual total preserved. Editable in Seasonality tab.
 export const DEFAULT_SEASON_IDX: Record<number, number> = {
-  1: 0.80,  // Jan — Post-holiday
-  2: 0.92,  // Feb — Valentine mini-peak
-  3: 1.08,  // Mar — Spring reset
-  4: 1.18,  // Apr — Spring momentum
-  5: 1.25,  // May — Pre-summer
-  6: 1.28,  // Jun — Summer peak
-  7: 1.22,  // Jul — Summer peak DC reorders
-  8: 1.00,  // Aug — Back-to-school (base)
-  9: 0.88,  // Sep — Fall slowdown
-  10: 0.82, // Oct — Autumn
-  11: 0.82, // Nov — Holiday flat
-  12: 0.75, // Dec — DC space tight
+  1:  0.6945, // Jan
+  2:  0.7987, // Feb
+  3:  0.9375, // Mar
+  4:  1.0244, // Apr
+  5:  1.0852, // May
+  6:  1.1112, // Jun
+  7:  1.0591, // Jul
+  8:  0.8682, // Aug
+  9:  1.1460, // Sep
+  10: 1.0678, // Oct
+  11: 1.0678, // Nov
+  12: 1.1395, // Dec
 };
 
-// Growth rates vs 2025 actuals, for reference only.
-// Actual base cases come from SCENARIO_BASE_CASES below.
+// Growth rates vs 2025 actuals, display reference only.
 export const GROWTH = { Pessimistic: -0.30, Normal: 0.43, Optimistic: 0.80 };
 export type Scenario = keyof typeof GROWTH;
 
-// ─── Explicit monthly base cases per scenario ─────────────────────────────────
-// Source: budgets_actualizados.xlsx (Aug 2026 revision)
-//   Pessimistic = Best Estimate budget column ÷ $37 (baseline, no growth)
-//   Normal      = Scenario Selector "Normal" values (+43% → $2.5M 2026)
-//   Optimistic  = Normal × 1.12 ($2.8M/$2.5M revenue target ratio)
-// Order: Aug 2026, Sep, Oct, Nov, Dec, Jan 2027, Feb, Mar, Apr, May, Jun, Jul 2027
-export const SCENARIO_BASE_CASES: Record<Scenario, readonly number[]> = {
-  Pessimistic: [4530, 5955, 7866, 7382, 6855, 4300, 6290, 6032, 3461, 8584, 5068, 5668],
-  Normal:      [7397, 9764, 9098, 9098, 9709, 5917, 6805, 7988, 8728, 9246, 9468, 9024],
-  Optimistic:  [8285, 10936, 10190, 10190, 10874, 6627, 7622, 8947, 9775, 10356, 10604, 10107],
+// Annual base cases per scenario (12-month total Aug 2026 → Jul 2027).
+// Monthly = annualBase / 12 × seasonIdx × promoMult
+export const SCENARIO_ANNUAL_CASES: Record<Scenario, number> = {
+  Pessimistic: 71991,   // Best Estimate / budget baseline
+  Normal:      102242,  // +43% → $2.5M 2026
+  Optimistic:  114513,  // +80% → $2.8M 2026 (Normal × 1.12)
 };
+
+// Default promo multipliers — 1 per forecast month (1.0 = no promo effect)
+export const DEFAULT_PROMO_MULTIPLIERS: number[] = Array(12).fill(1);
 
 export const SKU_MIX: Record<string, number> = { XD: 0.30, PW: 0.25, HM: 0.18, WM: 0.12, WD: 0.08, Matcha: 0.07 };
 
-export type NewSku = { name: string; stores: number; vel: number; entry: number; active: boolean; committed?: boolean };
+export type NewSku = {
+  name: string; stores: number; vel: number; entry: number; active: boolean;
+  committed?: boolean;
+  cannibalizesMatcha?: boolean; // replaces Matcha at Sprouts — no net total-case change
+  skuVel?: number[]; // per-SKU velocity [XD,PW,HM,WM,WD,Matcha]
+};
+
 export const DEFAULT_NEW_SKUS: NewSku[] = [
-  { name: "Strawberry & White", stores: 50, vel: 1.20, entry: 3, active: false, committed: false },
-  { name: "Strawberry Caramel", stores: 50, vel: 1.20, entry: 4, active: false, committed: false },
-  { name: "Strawberry Yogurt", stores: 50, vel: 1.00, entry: 5, active: false, committed: false },
-  { name: "Raspberry Yogurt", stores: 50, vel: 1.00, entry: 6, active: false, committed: false },
+  { name: "Strawberry & White",  stores: 404, vel: 1.20, entry: 3, active: false, committed: false, cannibalizesMatcha: false },
+  { name: "Strawberry Caramel",  stores: 404, vel: 1.20, entry: 4, active: false, committed: false, cannibalizesMatcha: false },
+  { name: "Strawberry Yogurt",   stores: 404, vel: 1.00, entry: 5, active: false, committed: false, cannibalizesMatcha: false },
+  { name: "Raspberry Yogurt",    stores: 404, vel: 1.00, entry: 6, active: false, committed: false, cannibalizesMatcha: false },
 ];
 export const NEW_SKU_COLORS = ["#EC4899", "#F97316", "#14B8A6", "#A855F7"];
 
-/** Incremental cases for one new SKU in forecast month `idx` (0-based). */
 export function newSkuCases(sku: NewSku, idx: number) {
   const monthsIn = idx - (sku.entry - 1);
   if (monthsIn < 0) return 0;
@@ -78,20 +79,20 @@ export const FORECAST_MONTHS = [
 
 export type VelChain = { name: string; stores: number; velCurrent: number; lastWeek: number };
 export const DEFAULT_VEL_CHAINS: VelChain[] = [
-  { name: "Sprouts", stores: 404, velCurrent: 1.39, lastWeek: 1.20 },
-  { name: "Whole Foods", stores: 60, velCurrent: 8.09, lastWeek: 9.40 },
-  { name: "GoPuff", stores: 80, velCurrent: 2.84, lastWeek: 2.10 },
-  { name: "INFRA/Independientes", stores: 41, velCurrent: 2.15, lastWeek: 2.00 },
+  { name: "Sprouts",              stores: 404, velCurrent: 1.39, lastWeek: 1.20 },
+  { name: "Whole Foods",          stores: 60,  velCurrent: 8.09, lastWeek: 9.40 },
+  { name: "GoPuff",               stores: 80,  velCurrent: 2.84, lastWeek: 2.10 },
+  { name: "INFRA/Independientes", stores: 41,  velCurrent: 2.15, lastWeek: 2.00 },
 ];
 
 export const NEW_RETAILERS = [
   { name: "Whole Foods expansion", stores: 100, vel: 8.09, entry: 3, note: "Today 60 stores" },
-  { name: "Raley's", stores: 80, vel: 1.50, entry: 4, note: "Regional NoCal/Nevada" },
-  { name: "Kroger", stores: 300, vel: 1.50, entry: 6, note: "Mayor chain convencional" },
-  { name: "Walmart", stores: 500, vel: 1.20, entry: 8, note: "Nacional Frozen" },
-  { name: "Costco", stores: 50, vel: 3.00, entry: 6, note: "Club — alta velocidad" },
-  { name: "Publix", stores: 150, vel: 1.50, entry: 9, note: "South East" },
-  { name: "Target", stores: 400, vel: 1.20, entry: 10, note: "Nacional convencional" },
+  { name: "Raley's",               stores: 80,  vel: 1.50, entry: 4, note: "Regional NoCal/Nevada" },
+  { name: "Kroger",                stores: 300, vel: 1.50, entry: 6, note: "Mayor chain convencional" },
+  { name: "Walmart",               stores: 500, vel: 1.20, entry: 8, note: "Nacional Frozen" },
+  { name: "Costco",                stores: 50,  vel: 3.00, entry: 6, note: "Club — alta velocidad" },
+  { name: "Publix",                stores: 150, vel: 1.50, entry: 9, note: "South East" },
+  { name: "Target",                stores: 400, vel: 1.20, entry: 10, note: "Nacional convencional" },
 ];
 
 export function calcForecast(
@@ -103,8 +104,10 @@ export function calcForecast(
   retailerVel: number[],
   retailerEntry: number[],
   velChains: VelChain[] = DEFAULT_VEL_CHAINS,
-  seasonIdx: Record<number, number> = DEFAULT_SEASON_IDX, // retained for API compat
+  seasonIdx: Record<number, number> = DEFAULT_SEASON_IDX,
   newSkus: NewSku[] = [],
+  promoMultipliers: number[] = DEFAULT_PROMO_MULTIPLIERS,
+  retVelBySku?: (number[] | null)[],
 ) {
   const velDelta = velChains.reduce((s, chain, i) => {
     if (!velActive[i]) return s;
@@ -112,22 +115,34 @@ export function calcForecast(
   }, 0);
 
   return FORECAST_MONTHS.map((m, idx) => {
-    // Base cases come from the explicit Excel scenario table (exact monthly values).
-    const baseCases = SCENARIO_BASE_CASES[scenario][idx];
+    // Formula: annualBase / 12 × seasonality × promoMult
+    const promoMult = promoMultipliers[idx] ?? 1;
+    const baseCases = Math.round(
+      (SCENARIO_ANNUAL_CASES[scenario] / 12) * (seasonIdx[m.month] ?? 1) * promoMult
+    );
 
     const acctDelta = NEW_RETAILERS.reduce((s, retailer, ri) => {
       if (!retailerActive[ri]) return s;
-      const monthsIn = idx - (retailerEntry[ri] - 1);
+      // DC pre-stock: orders start 1 month before retail entry, always ×1.2 buffer
+      const monthsIn = idx - (retailerEntry[ri] - 2);
       if (monthsIn < 0) return s;
-      const ramp = monthsIn === 0 ? 0.4 : monthsIn === 1 ? 0.7 : 1.0;
-      return s + Math.round(retailerStores[ri] * retailerVel[ri] * WEEKS_PER_MONTH / UNITS_PER_CASE * ramp);
+      const skuVels = retVelBySku?.[ri];
+      const vel = skuVels != null ? skuVels.reduce((sum, v) => sum + v, 0) : retailerVel[ri];
+      return s + Math.round(retailerStores[ri] * vel * WEEKS_PER_MONTH / UNITS_PER_CASE * 1.2);
     }, 0);
 
-    const newSkuDelta = newSkus.reduce((s, sku) => (sku.active ? s + newSkuCases(sku, idx) : s), 0);
+    // Cannibalized new SKUs don't change total cases (they shift Matcha → new SKU in production)
+    const newSkuDelta = newSkus.reduce((s, sku) => {
+      if (!sku.active || sku.cannibalizesMatcha) return s;
+      return s + newSkuCases(sku, idx);
+    }, 0);
 
     const totalCases = baseCases + velDelta + acctDelta + newSkuDelta;
-    // Budget = Pessimistic scenario (fixed baseline — Normal & Optimistic compared against it).
-    const budgetCases = SCENARIO_BASE_CASES.Pessimistic[idx];
+
+    // Budget = Pessimistic with same seasonality & promo (apples-to-apples comparison)
+    const budgetCases = Math.round(
+      (SCENARIO_ANNUAL_CASES.Pessimistic / 12) * (seasonIdx[m.month] ?? 1) * promoMult
+    );
 
     return {
       ...m,
@@ -136,8 +151,8 @@ export function calcForecast(
       acctDelta,
       newSkuDelta,
       totalCases,
-      revenue: Math.round(totalCases * PRICE_PER_CASE),
-      budget: Math.round(budgetCases * PRICE_PER_CASE),
+      revenue:    Math.round(totalCases * PRICE_PER_CASE),
+      budget:     Math.round(budgetCases * PRICE_PER_CASE),
       budgetCases,
     };
   });
@@ -145,14 +160,12 @@ export function calcForecast(
 
 export type ForecastRow = ReturnType<typeof calcForecast>[number];
 
-/** Per-SKU cases for each forecast month, derived from the SKU mix. */
 export function skuForecast(forecast: ForecastRow[]): Record<string, number[]> {
   return Object.fromEntries(
     Object.entries(SKU_MIX).map(([sku, pct]) => [sku, forecast.map(f => Math.round(f.totalCases * pct))]),
   );
 }
 
-/** Per-SKU cases keyed by "YYYY-M" so any module can look up an arbitrary month. */
 export function skuForecastByMonthKey(forecast: ForecastRow[]): Record<string, Record<string, number>> {
   const bySku = skuForecast(forecast);
   const out: Record<string, Record<string, number>> = {};
@@ -163,7 +176,7 @@ export function skuForecastByMonthKey(forecast: ForecastRow[]): Record<string, R
   return out;
 }
 
-// ─── Shared (cross-module) forecast state ────────────────────────────────────
+// ─── Forecast state ───────────────────────────────────────────────────────────
 export type ForecastState = {
   scenario: Scenario;
   seasonIdx: Record<number, number>;
@@ -174,8 +187,8 @@ export type ForecastState = {
   retStores: number[];
   retVel: number[];
   retEntry: number[];
+  retVelBySku?: (number[] | null)[];
   newSkus?: NewSku[];
-  /** Committed ("SET") levers — the official production/finance scenario. */
   velCommitted?: boolean[];
   retCommitted?: boolean[];
   skuCommitted?: boolean[];
@@ -183,6 +196,7 @@ export type ForecastState = {
   mixOverrides?: Record<string, Record<string, number>>;
   mixOverrideActive?: boolean;
   committedAt?: string | null;
+  promoMultipliers?: number[];
 };
 
 export const DEFAULT_FORECAST_STATE: ForecastState = {
@@ -195,6 +209,7 @@ export const DEFAULT_FORECAST_STATE: ForecastState = {
   retStores: NEW_RETAILERS.map(r => r.stores),
   retVel: NEW_RETAILERS.map(r => r.vel),
   retEntry: NEW_RETAILERS.map(r => r.entry),
+  retVelBySku: NEW_RETAILERS.map(() => null),
   newSkus: DEFAULT_NEW_SKUS,
   velCommitted: DEFAULT_VEL_CHAINS.map(() => false),
   retCommitted: NEW_RETAILERS.map(() => false),
@@ -203,6 +218,7 @@ export const DEFAULT_FORECAST_STATE: ForecastState = {
   mixOverrides: {},
   mixOverrideActive: false,
   committedAt: null,
+  promoMultipliers: Array(12).fill(1),
 };
 
 const STORAGE_KEY = "baris.sales.forecast.v1";
@@ -214,9 +230,7 @@ export function loadForecastState(): ForecastState {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT_FORECAST_STATE;
     return { ...DEFAULT_FORECAST_STATE, ...JSON.parse(raw) } as ForecastState;
-  } catch {
-    return DEFAULT_FORECAST_STATE;
-  }
+  } catch { return DEFAULT_FORECAST_STATE; }
 }
 
 export function saveForecastState(state: ForecastState) {
@@ -224,7 +238,7 @@ export function saveForecastState(state: ForecastState) {
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     window.dispatchEvent(new CustomEvent(EVENT));
-  } catch { /* ignore quota errors */ }
+  } catch {}
 }
 
 export function subscribeForecast(cb: () => void) {
@@ -242,15 +256,15 @@ export function forecastFromState(s: ForecastState) {
     s.scenario, s.velActive, s.velNew,
     s.retActive, s.retStores, s.retVel, s.retEntry,
     s.velChains, s.seasonIdx, s.newSkus ?? [],
+    s.promoMultipliers ?? Array(12).fill(1),
+    s.retVelBySku ?? NEW_RETAILERS.map(() => null),
   );
 }
 
-// ─── Committed ("SET") scenario ──────────────────────────────────────────────
-
+// ─── Committed scenario ───────────────────────────────────────────────────────
 export const MIX_SKUS = ["XD", "PW", "HM", "WM", "WD", "Matcha"] as const;
 export const DEFAULT_MIX_PCT: Record<string, number> = { XD: 30, PW: 25, HM: 18, WM: 12, WD: 8, Matcha: 7 };
 
-/** How many levers the user locked in with SET. */
 export function committedLeverCount(s: ForecastState) {
   const vel = (s.velCommitted ?? []).filter((c, i) => c && s.velActive[i]).length;
   const ret = (s.retCommitted ?? []).filter((c, i) => c && s.retActive[i]).length;
@@ -258,7 +272,6 @@ export function committedLeverCount(s: ForecastState) {
   return vel + ret + sku + (s.mixCommitted ? 1 : 0);
 }
 
-/** Forecast built from committed levers only. Null when nothing is committed. */
 export function committedForecastFromState(s: ForecastState) {
   if (committedLeverCount(s) === 0) return null;
   const velC = s.velCommitted ?? [];
@@ -270,10 +283,11 @@ export function committedForecastFromState(s: ForecastState) {
     s.retActive.map((a, i) => a && !!retC[i]), s.retStores, s.retVel, s.retEntry,
     s.velChains, s.seasonIdx,
     (s.newSkus ?? []).map((sk, i) => ({ ...sk, active: sk.active && !!skuC[i] })),
+    s.promoMultipliers ?? Array(12).fill(1),
+    s.retVelBySku ?? NEW_RETAILERS.map(() => null),
   );
 }
 
-/** Existing-SKU cases per month, honouring a per-month mix override. */
 export function skuForecastWithMix(
   forecast: ForecastRow[],
   mixOverrides: Record<string, Record<string, number>> = {},
@@ -294,10 +308,9 @@ export function skuForecastWithMix(
 export type ProductionMonth = {
   label: string; month: number; year: number; totalCases: number;
   skuBreakdown: Record<string, number>;
-  newSkuBreakdown: { name: string; cases: number }[];
+  newSkuBreakdown: { name: string; cases: number; isCannibalization?: boolean }[];
 };
 
-/** Per-SKU production requirement per month for a given forecast. */
 export function productionRequirements(
   forecast: ForecastRow[],
   newSkus: NewSku[],
@@ -305,9 +318,27 @@ export function productionRequirements(
   mixOverrideActive = false,
 ): ProductionMonth[] {
   const bySku = skuForecastWithMix(forecast, mixOverrides, mixOverrideActive);
-  return forecast.map((f, i) => ({
-    label: f.label, month: f.month, year: f.year, totalCases: f.totalCases,
-    skuBreakdown: Object.fromEntries(MIX_SKUS.map(s => [s, bySku[s]?.[i] ?? 0])),
-    newSkuBreakdown: newSkus.filter(s => s.active).map(s => ({ name: s.name, cases: newSkuCases(s, i) })),
-  }));
+  return forecast.map((f, i) => {
+    // Cannibalized SKUs shift Matcha → new SKU in production (no total change)
+    const matchaReduction = newSkus
+      .filter(s => s.active && s.cannibalizesMatcha)
+      .reduce((sum, s) => sum + newSkuCases(s, i), 0);
+    const skuBreakdown = Object.fromEntries(
+      MIX_SKUS.map(s => [
+        s,
+        s === 'Matcha'
+          ? Math.max(0, (bySku[s]?.[i] ?? 0) - matchaReduction)
+          : (bySku[s]?.[i] ?? 0),
+      ])
+    );
+    return {
+      label: f.label, month: f.month, year: f.year, totalCases: f.totalCases,
+      skuBreakdown,
+      newSkuBreakdown: newSkus.filter(s => s.active).map(s => ({
+        name: s.name,
+        cases: newSkuCases(s, i),
+        isCannibalization: !!s.cannibalizesMatcha,
+      })),
+    };
+  });
 }
