@@ -5,14 +5,42 @@
 export const PRICE_PER_CASE = 37;
 export const UNITS_PER_CASE = 8;
 export const WEEKS_PER_MONTH = 4.33;
-export const IMPLIED_ANNUAL_2026 = 62113;
+// Normal scenario 12-month total (Aug 2026 → Jul 2027), used for reference.
+export const IMPLIED_ANNUAL_2026 = 102242;
 
+// Updated seasonality from Excel budget model (Aug 2026 revision).
+// Source: Assumptions sheet · 1.0 = average month · sum = 12.0
 export const DEFAULT_SEASON_IDX: Record<number, number> = {
-  1: 0.21, 2: 1.40, 3: 1.39, 4: 1.64, 5: 0.72, 6: 1.47,
-  7: 0.68, 8: 0.65, 9: 1.48, 10: 0.76, 11: 0.26, 12: 1.33,
+  1: 0.80,  // Jan — Post-holiday
+  2: 0.92,  // Feb — Valentine mini-peak
+  3: 1.08,  // Mar — Spring reset
+  4: 1.18,  // Apr — Spring momentum
+  5: 1.25,  // May — Pre-summer
+  6: 1.28,  // Jun — Summer peak
+  7: 1.22,  // Jul — Summer peak DC reorders
+  8: 1.00,  // Aug — Back-to-school (base)
+  9: 0.88,  // Sep — Fall slowdown
+  10: 0.82, // Oct — Autumn
+  11: 0.82, // Nov — Holiday flat
+  12: 0.75, // Dec — DC space tight
 };
-export const GROWTH = { Pessimistic: 0.0, Normal: 0.15, Optimistic: 0.25 };
+
+// Growth rates vs 2025 actuals, for reference only.
+// Actual base cases come from SCENARIO_BASE_CASES below.
+export const GROWTH = { Pessimistic: -0.30, Normal: 0.43, Optimistic: 0.80 };
 export type Scenario = keyof typeof GROWTH;
+
+// ─── Explicit monthly base cases per scenario ─────────────────────────────────
+// Source: budgets_actualizados.xlsx (Aug 2026 revision)
+//   Pessimistic = Best Estimate budget column ÷ $37 (baseline, no growth)
+//   Normal      = Scenario Selector "Normal" values (+43% → $2.5M 2026)
+//   Optimistic  = Normal × 1.12 ($2.8M/$2.5M revenue target ratio)
+// Order: Aug 2026, Sep, Oct, Nov, Dec, Jan 2027, Feb, Mar, Apr, May, Jun, Jul 2027
+export const SCENARIO_BASE_CASES: Record<Scenario, readonly number[]> = {
+  Pessimistic: [4530, 5955, 7866, 7382, 6855, 4300, 6290, 6032, 3461, 8584, 5068, 5668],
+  Normal:      [7397, 9764, 9098, 9098, 9709, 5917, 6805, 7988, 8728, 9246, 9468, 9024],
+  Optimistic:  [8285, 10936, 10190, 10190, 10874, 6627, 7622, 8947, 9775, 10356, 10604, 10107],
+};
 
 export const SKU_MIX: Record<string, number> = { XD: 0.30, PW: 0.25, HM: 0.18, WM: 0.12, WD: 0.08, Matcha: 0.07 };
 
@@ -75,19 +103,17 @@ export function calcForecast(
   retailerVel: number[],
   retailerEntry: number[],
   velChains: VelChain[] = DEFAULT_VEL_CHAINS,
-  seasonIdx: Record<number, number> = DEFAULT_SEASON_IDX,
+  seasonIdx: Record<number, number> = DEFAULT_SEASON_IDX, // retained for API compat
   newSkus: NewSku[] = [],
 ) {
-  const growth = GROWTH[scenario];
-  const base = IMPLIED_ANNUAL_2026 * (1 + growth);
-
   const velDelta = velChains.reduce((s, chain, i) => {
     if (!velActive[i]) return s;
     return s + Math.round((velNew[i] - chain.velCurrent) * chain.stores * WEEKS_PER_MONTH / UNITS_PER_CASE);
   }, 0);
 
   return FORECAST_MONTHS.map((m, idx) => {
-    const baseCases = Math.round((base / 12) * (seasonIdx[m.month] ?? 1));
+    // Base cases come from the explicit Excel scenario table (exact monthly values).
+    const baseCases = SCENARIO_BASE_CASES[scenario][idx];
 
     const acctDelta = NEW_RETAILERS.reduce((s, retailer, ri) => {
       if (!retailerActive[ri]) return s;
@@ -100,7 +126,8 @@ export function calcForecast(
     const newSkuDelta = newSkus.reduce((s, sku) => (sku.active ? s + newSkuCases(sku, idx) : s), 0);
 
     const totalCases = baseCases + velDelta + acctDelta + newSkuDelta;
-    const budgetCases = Math.round((IMPLIED_ANNUAL_2026 * (1 + GROWTH.Normal) / 12) * (seasonIdx[m.month] ?? 1));
+    // Budget = Normal scenario (used for "vs Budget" column in Detalle tab).
+    const budgetCases = SCENARIO_BASE_CASES.Normal[idx];
 
     return {
       ...m,
