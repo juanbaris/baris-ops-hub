@@ -1383,7 +1383,7 @@ function ProductionTab({ fpMovements, ipMovements, onAdded }: {
 
   // BOM lines with calculated quantities and COGS
   const bomLines = useMemo(() => {
-    if (cases <= 0) return bom.map(line => ({ ...line, qty: 0, cogsContrib: 0, availableLots: [] as any[] }));
+    if (cases <= 0) return bom.map(line => ({ ...line, qty: 0, cogsContrib: 0, availableLots: [] as any[], cogs: null as number | null }));
     return bom.filter(l => (l.pct ?? 0) > 0 || (l.perCase ?? 0) > 0).map(line => {
       const qty = calcBomQty(line, cases);
       // Find available lots for this material
