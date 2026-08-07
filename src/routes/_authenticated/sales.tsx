@@ -224,18 +224,39 @@ function SummaryTab({forecast,scenario,reals,history,committedCount=0}:{forecast
     if(!mainCanvas.current||!window.Chart) return;
     const existing = (mainCanvas.current as any)._chart;
     if(existing) existing.destroy();
-    const allMonths=[...history.map(h=>h.label),...forecast.map(f=>f.label)];
-    const caseVals=[...history.map(h=>h.cases),...forecast.map(f=>reals[f.label]??f.totalCases)];
-    const colors=[...history.map(()=>"#A3224A"),...forecast.map(()=>"rgba(163,34,74,0.45)")];
-    const budgetVals=[...history.map(()=>null),...forecast.map(f=>f.budgetCases)];
+    // Exclude history months that overlap with forecast (avoids Aug 2026 duplication)
+    const forecastLabels = new Set(forecast.map((f:any)=>f.label));
+    const pureHist = history.filter(h=>!forecastLabels.has(h.label));
+    const allMonths = [...pureHist.map(h=>h.label), ...forecast.map((f:any)=>f.label)];
+    // Green = real confirmed; Pink = forecast remaining
+    const actualVals = allMonths.map(label=>{
+      const h = pureHist.find(x=>x.label===label);
+      if(h) return h.cases;
+      return reals[label]??0;
+    });
+    const remainingVals = allMonths.map(label=>{
+      const fcst = forecast.find((f:any)=>f.label===label);
+      if(!fcst) return 0;
+      const actual = reals[label]??0;
+      return Math.max(0, fcst.totalCases - actual);
+    });
+    const budgetVals = allMonths.map(label=>{
+      const fcst = forecast.find((f:any)=>f.label===label);
+      return fcst ? fcst.budgetCases : null;
+    });
     const chart = new window.Chart(mainCanvas.current,{
       type:"bar",
       data:{labels:allMonths,datasets:[
-        {label:"Cases",data:caseVals,backgroundColor:colors,borderRadius:3},
+        {label:"Real",   data:actualVals,   backgroundColor:"#10B981",              stack:"cases",borderRadius:3},
+        {label:"Forecast",data:remainingVals,backgroundColor:"rgba(163,34,74,0.45)",stack:"cases",borderRadius:3},
         {type:"line",label:"Budget",data:budgetVals,borderColor:"#9CA3AF",borderDash:[4,3],pointRadius:3,fill:false,tension:0.3},
       ]},
       options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
-        scales:{y:{ticks:{callback:(v:number)=>v.toLocaleString()}}}}
+        scales:{
+          x:{stacked:true},
+          y:{stacked:true,ticks:{callback:(v:number)=>v.toLocaleString()}}
+        }
+      }
     });
     (mainCanvas.current as any)._chart = chart;
   },[forecast,reals,history]);
@@ -264,8 +285,8 @@ function SummaryTab({forecast,scenario,reals,history,committedCount=0}:{forecast
       <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
         <h3 className="text-sm font-bold mb-1" style={{color:"#1C2340"}}>Real · Forecast · Budget — Jan 2026 → Jul 2027</h3>
         <div className="flex items-center gap-4 mb-3 text-[11px] text-muted-foreground">
-          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{backgroundColor:"#A3224A"}}/>Real</span>
-          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{backgroundColor:"rgba(163,34,74,0.45)"}}/>Forecast</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{backgroundColor:"#10B981"}}/>Real</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{backgroundColor:"rgba(163,34,74,0.45)"}}/>Forecast remaining</span>
           <span className="flex items-center gap-1.5"><span className="w-4 h-0 border-t-2 border-dashed" style={{borderColor:"#9CA3AF"}}/>Budget</span>
         </div>
         <div style={{height:280}}><canvas ref={mainCanvas}/></div>
@@ -301,12 +322,12 @@ function SummaryTab({forecast,scenario,reals,history,committedCount=0}:{forecast
 // ─── Detalle Tab ──────────────────────────────────────────────────────────────
 type DetalleRange = "all"|"ytd"|"next3"|"rest2026"|"y2026"|"y2027";
 const RANGE_OPTIONS: {id:DetalleRange;label:string;sub:string}[] = [
-  {id:"all",label:"All",sub:"Jan 2026 – Jul 2027"},
-  {id:"ytd",label:"Actuals (YTD)",sub:"Jan–Jul 2026"},
-  {id:"next3",label:"Next 3 months",sub:"Aug–Oct 2026"},
-  {id:"rest2026",label:"Rest of 2026",sub:"Aug–Dec 2026"},
-  {id:"y2026",label:"Full 2026",sub:"Jan–Dec 2026"},
-  {id:"y2027",label:"Full 2027",sub:"Jan–Jul 2027"},
+  {id:"all",    label:"All",             sub:"Aug 2026 – Jul 2027"},
+  {id:"ytd",    label:"With actuals",    sub:"Months where real data is loaded"},
+  {id:"next3",  label:"Next 3 months",   sub:"Aug–Oct 2026"},
+  {id:"rest2026",label:"Rest of 2026",   sub:"Aug–Dec 2026"},
+  {id:"y2026",  label:"2026 forecast",   sub:"Aug–Dec 2026"},
+  {id:"y2027",  label:"Full 2027",       sub:"Jan–Jul 2027"},
 ];
 const NEXT3_LABELS = ["Aug 2026","Sep 2026","Oct 2026"];
 const REST2026_LABELS = ["Aug 2026","Sep 2026","Oct 2026","Nov 2026","Dec 2026"];
@@ -316,24 +337,22 @@ function DetalleTab({forecast,reals,onRealUpdate,history,committedCount=0}:{fore
   const [editVal,setEditVal]=useState("");
   const [range,setRange]=useState<DetalleRange>("all");
 
-  const showHist = range==="all"||range==="ytd"||range==="y2026";
-  const histRows: HistRow[] = showHist?history:[];
+  // Monthly Detail shows forecast only — actuals for Jan-Jul 2026 live in Real Monthly tab
+  const histRows: HistRow[] = [];
   const fcstRows = forecast.filter(f=>{
     if(range==="all") return true;
-    if(range==="ytd") return false;
+    if(range==="ytd") return reals[f.label] != null; // months with real data loaded
     if(range==="next3") return NEXT3_LABELS.includes(f.label);
     if(range==="rest2026") return REST2026_LABELS.includes(f.label);
     if(range==="y2026") return f.year===2026;
     return f.year===2027;
   });
 
-  const histCases = histRows.reduce((s,h)=>s+h.cases,0);
-  const histRev = histRows.reduce((s,h)=>s+h.revenue,0);
   const fcstCases = fcstRows.reduce((s,f)=>s+(reals[f.label]??f.totalCases),0);
   const fcstRev = fcstRows.reduce((s,f)=>s+(reals[f.label]??f.totalCases)*PRICE_PER_CASE,0);
-  const visCases = histCases+fcstCases;
-  const visRev = histRev+fcstRev;
-  const monthCount = histRows.length+fcstRows.length;
+  const visCases = fcstCases;
+  const visRev = fcstRev;
+  const monthCount = fcstRows.length;
   const totalBudget = fcstRows.reduce((s,f)=>s+f.budgetCases,0);
   const activeOpt = RANGE_OPTIONS.find(o=>o.id===range)!;
 
@@ -411,13 +430,7 @@ function DetalleTab({forecast,reals,onRealUpdate,history,committedCount=0}:{fore
                 <td className="px-4 py-1.5 text-right text-muted-foreground">—</td>
               </tr>
             ))}
-            {histRows.length>0&&fcstRows.length>0&&(
-              <tr style={{backgroundColor:"#F5F0E8"}}>
-                <td colSpan={11} className="px-4 py-1 text-[10px] font-bold uppercase tracking-wider border-y-2" style={{color:"#A3224A",borderColor:"#A3224A"}}>
-                  Forecast →
-                </td>
-              </tr>
-            )}
+
             {fcstRows.map((f,i)=>{
               const real=reals[f.label];
               const deltaVsBudget=f.totalCases-f.budgetCases;
