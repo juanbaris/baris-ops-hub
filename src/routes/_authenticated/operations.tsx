@@ -5,6 +5,7 @@ import { PageHeader } from "@/components/app-shell";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import { useSalesForecast } from "@/hooks/use-sales-forecast";
+import { calcForecast, skuForecastByMonthKey, DEFAULT_VEL_CHAINS, NEW_RETAILERS, type Scenario as SalesScenario } from "@/lib/sales-forecast";
 
 type FPRow = Database["public"]["Tables"]["fp_movements"]["Row"];
 type IPRow = Database["public"]["Tables"]["ip_movements"]["Row"];
@@ -1999,7 +2000,7 @@ function buildOpsForecast(bySkuMonthKey: Record<string, Record<string, number>>)
 type ProcSubTab = "schedule"|"stock_proj"|"bom_cogs"|"shopping"|"raw_materials";
 
 /** Production requirements coming from the Sales simulator (committed scenario wins). */
-function CommittedRequirements() {
+function CommittedRequirements({ planScenario, onPlanScenarioChange }: { planScenario: SalesScenario; onPlanScenarioChange: (s: SalesScenario) => void }) {
   const { production, isCommitted, committedLevers, committedAt, scenario } = useSalesForecast();
   const newSkuNames = useMemo(()=>{
     const set = new Set<string>();
@@ -2039,9 +2040,15 @@ function CommittedRequirements() {
           )}
         </div>
         <div className="flex items-center gap-2">
-          <Link to="/sales" className="rounded-full border border-border px-3 py-1 text-xs font-semibold text-muted-foreground hover:text-foreground">
-            Review in Simulador
-          </Link>
+          <div className="flex gap-1 rounded-xl bg-muted p-1">
+            {(["Pessimistic","Normal","Optimistic"] as const).map(s=>(
+              <button key={s} onClick={()=>onPlanScenarioChange(s)}
+                className={`rounded-lg px-2.5 py-1 text-xs font-semibold ${planScenario===s?"text-white":"text-muted-foreground"}`}
+                style={planScenario===s?{backgroundColor:s==="Pessimistic"?"#EF4444":s==="Normal"?"#1C2340":"#10B981"}:{}}>
+                {s}
+              </button>
+            ))}
+          </div>
           <button onClick={exportCsv} className="rounded-full border border-border px-3 py-1 text-xs font-semibold text-muted-foreground hover:text-foreground">
             Export CSV
           </button>
@@ -2168,7 +2175,16 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
   }
   const wipBySku = useMemo(()=>Object.fromEntries(SKUS.map(s=>[s,parseInt(wip[s]?.cases??"")||0])),[wip]);
   const { bySkuMonthKey } = useSalesForecast();
-  const fcstOps = useMemo(()=>buildOpsForecast(bySkuMonthKey),[bySkuMonthKey]);
+  const [planScenario, setPlanScenario] = useState<SalesScenario>("Normal");
+  // Local forecast from selected plan scenario (no levers = pure scenario base cases)
+  const planForecast = useMemo(()=>calcForecast(
+    planScenario,
+    DEFAULT_VEL_CHAINS.map(()=>false as boolean), DEFAULT_VEL_CHAINS.map(ch=>ch.velCurrent),
+    NEW_RETAILERS.map(()=>false as boolean), NEW_RETAILERS.map(r=>r.stores),
+    NEW_RETAILERS.map(r=>r.vel), NEW_RETAILERS.map(r=>r.entry),
+  ),[planScenario]);
+  const planSkuByMonthKey = useMemo(()=>skuForecastByMonthKey(planForecast),[planForecast]);
+  const fcstOps = useMemo(()=>buildOpsForecast(planSkuByMonthKey),[planSkuByMonthKey]);
 
   const bySku = useMemo(()=>{
     const m:Record<string,number>={};
@@ -2211,7 +2227,7 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
 
   return (
     <div className="space-y-4">
-      <CommittedRequirements />
+      <CommittedRequirements planScenario={planScenario} onPlanScenarioChange={setPlanScenario} />
       {/* Controls */}
       <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
         <div className="flex flex-wrap items-center gap-6">
