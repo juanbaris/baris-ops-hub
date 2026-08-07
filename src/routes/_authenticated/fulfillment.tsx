@@ -24,6 +24,7 @@ const SKU_ITEMS = [
 type DateFilter = "all" | "this_month" | "last_month" | "quarter" | "this_year" | "last_year" | "custom";
 type Quarter = "Q1" | "Q2" | "Q3" | "Q4";
 type Tab = "pipeline" | "tasks" | "collections" | "logistics";
+type DateField = "po_date" | "ship_est_date" | "invoice_date";
 
 function ymd(d: Date) { return d.toISOString().slice(0, 10); }
 
@@ -122,7 +123,9 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
   const [editing, setEditing] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
   const [editData, setEditData] = useState({
+    po_date: order.po_date ?? "",
     ship_est_date: order.ship_est_date ?? "",
+    invoice_date: order.invoice_date ?? "",
     customer: order.customer ?? "",
     distributor: order.distributor as Distributor,
     wm_cases: String(order.wm_cases ?? ""),
@@ -148,7 +151,9 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
   useEffect(() => {
     if (!editing) {
       setEditData({
+        po_date: order.po_date ?? "",
         ship_est_date: order.ship_est_date ?? "",
+        invoice_date: order.invoice_date ?? "",
         customer: order.customer ?? "",
         distributor: order.distributor as Distributor,
         wm_cases: String(order.wm_cases ?? ""),
@@ -209,7 +214,9 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
     const promo = parseFloat(editData.promo_discount) || 0;
     const cv = parseFloat(editData.case_value) || null;
     const payload = {
+      po_date: editData.po_date || null,
       ship_est_date: editData.ship_est_date || null,
+      invoice_date: editData.invoice_date || null,
       customer: editData.customer,
       distributor: editData.distributor,
       wm_cases: parseInt(editData.wm_cases) || 0,
@@ -311,9 +318,21 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
                   className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400" />
               </div>
               <div className="flex flex-col gap-0.5">
+                <label className="text-[9px] uppercase tracking-wide text-muted-foreground font-semibold">PO Date</label>
+                <input type="date" value={editData.po_date}
+                  onChange={e => setEditData(d => ({ ...d, po_date: e.target.value }))}
+                  className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400" />
+              </div>
+              <div className="flex flex-col gap-0.5">
                 <label className="text-[9px] uppercase tracking-wide text-muted-foreground font-semibold">Ship Date</label>
                 <input type="date" value={editData.ship_est_date}
                   onChange={e => setEditData(d => ({ ...d, ship_est_date: e.target.value }))}
+                  className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400" />
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <label className="text-[9px] uppercase tracking-wide text-muted-foreground font-semibold">Invoice Date</label>
+                <input type="date" value={editData.invoice_date}
+                  onChange={e => setEditData(d => ({ ...d, invoice_date: e.target.value }))}
                   className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400" />
               </div>
             </div>
@@ -321,6 +340,7 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
             <p className="text-sm text-muted-foreground mb-5">
               {order.distributor} · {order.customer} · PO Date: {order.po_date ?? "—"}
               {order.ship_est_date && <> · Ship: {order.ship_est_date}</>}
+              {order.invoice_date && <> · Invoice: {order.invoice_date}</>}
             </p>
           )}
 
@@ -1892,6 +1912,7 @@ function Fulfillment() {
   const [selStatus, setSelStatus] = useState<Set<string>>(new Set());
   const [selCustomer, setSelCustomer] = useState<Set<string>>(new Set());
   const [dateFilter, setDateFilter] = useState<DateFilter>("all");
+  const [dateField, setDateField] = useState<DateField>("po_date");
   const [quarter, setQuarter] = useState<Quarter>("Q1");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
@@ -1924,8 +1945,8 @@ function Fulfillment() {
       (selDist.size === 0 || selDist.has(r.distributor)) &&
       (selStatus.size === 0 || selStatus.has(r.status)) &&
       (selCustomer.size === 0 || selCustomer.has(r.customer)) &&
-      (!range.from || (r.po_date ?? "") >= range.from) &&
-      (!range.to || (r.po_date ?? "") <= range.to),
+      (!range.from || (r[dateField] ?? "") >= range.from) &&
+      (!range.to || (r[dateField] ?? "") <= range.to),
     )].sort((a, b) => {
       const av = sortKey === "total_cases" ? rowTotalCases(a) : a[sortKey as keyof Order];
       const bv = sortKey === "total_cases" ? rowTotalCases(b) : b[sortKey as keyof Order];
@@ -2053,7 +2074,12 @@ function Fulfillment() {
         <>
           {/* Filter bar */}
           <div className="mb-5 flex flex-wrap items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3 shadow-sm">
-            <FilterSelect label="Date" value={dateFilter} onChange={v => setDateFilter(v as DateFilter)} options={[
+            <FilterSelect label="Date" value={dateField} onChange={v => setDateField(v as DateField)} options={[
+              { value: "po_date", label: "PO Date" },
+              { value: "ship_est_date", label: "Ship Date" },
+              { value: "invoice_date", label: "Invoice Date" },
+            ]} />
+            <FilterSelect label="Range" value={dateFilter} onChange={v => setDateFilter(v as DateFilter)} options={[
               { value: "all", label: "All" }, { value: "this_month", label: "This month" },
               { value: "last_month", label: "Last month" }, { value: "quarter", label: "By Quarter" },
               { value: "this_year", label: "This year" }, { value: "last_year", label: "Last year" },
