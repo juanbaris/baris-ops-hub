@@ -126,8 +126,8 @@ export function calcForecast(
     const newSkuDelta = newSkus.reduce((s, sku) => (sku.active ? s + newSkuCases(sku, idx) : s), 0);
 
     const totalCases = baseCases + velDelta + acctDelta + newSkuDelta;
-    // Budget = Normal scenario (used for "vs Budget" column in Detalle tab).
-    const budgetCases = SCENARIO_BASE_CASES.Normal[idx];
+    // Budget = Pessimistic scenario (fixed baseline — Normal & Optimistic compared against it).
+    const budgetCases = SCENARIO_BASE_CASES.Pessimistic[idx];
 
     return {
       ...m,
