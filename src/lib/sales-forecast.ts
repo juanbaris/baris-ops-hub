@@ -3,7 +3,7 @@ export const PRICE_PER_CASE = 37;
 export const UNITS_PER_CASE = 8;
 export const WEEKS_PER_MONTH = 4.33;
 // Normal scenario 12-month total (Aug 2026 → Jul 2027)
-export const IMPLIED_ANNUAL_2026 = 102242;
+export const IMPLIED_ANNUAL_2026 = 71680;
 
 // Effective seasonality derived from Excel Normal scenario monthly PO pattern.
 // Reproduces exact Excel values: baseCases = annualBase/12 × seasonIdx × promoMult
@@ -30,9 +30,9 @@ export type Scenario = keyof typeof GROWTH;
 // Annual base cases per scenario (12-month total Aug 2026 → Jul 2027).
 // Monthly = annualBase / 12 × seasonIdx × promoMult
 export const SCENARIO_ANNUAL_CASES: Record<Scenario, number> = {
-  Pessimistic: 71991,   // Best Estimate / budget baseline
-  Normal:      102242,  // +43% → $2.5M 2026
-  Optimistic:  114513,  // +80% → $2.8M 2026 (Normal × 1.12)
+  Pessimistic: 53284,   // Budget baseline → $2.2M full-year 2026 (real Jan-Jul + forecast Aug-Dec)
+  Normal:      71680,   // → $2.5M full-year 2026
+  Optimistic:  90075,   // → $2.8M full-year 2026
 };
 
 // Default promo multipliers — 1 per forecast month (1.0 = no promo effect)
