@@ -646,6 +646,7 @@ type SimProps = {
   retVel:number[]; setRetVel:(v:number[])=>void;
   retEntry:number[]; setRetEntry:(v:number[])=>void;
   retCommitted:boolean[]; setRetCommitted:(v:boolean[])=>void;
+  retVelBySku:(number[]|null)[]; setRetVelBySku:(v:(number[]|null)[])=>void;
   newSkus:NewSku[]; setNewSkus:(v:NewSku[])=>void;
   skuCommitted:boolean[]; setSkuCommitted:(v:boolean[])=>void;
   mixOverrides:Record<string,Record<string,number>>; setMixOverrides:(v:Record<string,Record<string,number>>)=>void;
@@ -696,7 +697,7 @@ function Collapsible({title,subtitle,badge,defaultOpen=true,actions,children}:{
 function SimuladorTab(p:SimProps) {
   const {velChains,velActive,setVelActive,velNew,setVelNew,velCommitted,setVelCommitted,
     retActive,setRetActive,retStores,setRetStores,retVel,setRetVel,retEntry,setRetEntry,
-    retCommitted,setRetCommitted,newSkus,setNewSkus,skuCommitted,setSkuCommitted,
+    retCommitted,setRetCommitted,retVelBySku,setRetVelBySku,newSkus,setNewSkus,skuCommitted,setSkuCommitted,
     mixOverrides,setMixOverrides,mixOverrideActive,setMixOverrideActive,mixCommitted,setMixCommitted,
     onClearCommitted,detailView,skuView} = p;
 
@@ -832,53 +833,99 @@ function SimuladorTab(p:SimProps) {
               <th className="px-4 py-2.5 text-right">Stores</th>
               <th className="px-4 py-2.5 text-right">Vel. (u/s/w)</th>
               <th className="px-4 py-2.5 text-right">Entry month</th>
-              <th className="px-4 py-2.5 text-right">Δ estabilizado</th>
+              <th className="px-4 py-2.5 text-right">Δ cases/mo</th>
               <th className="px-4 py-2.5 text-left">Notas</th>
+              <th className="px-4 py-2.5 text-center">Per SKU</th>
               <th className="px-4 py-2.5 text-center">Activar</th>
               <th className="px-4 py-2.5 text-center">Set</th>
             </tr>
           </thead>
           <tbody>
             {NEW_RETAILERS.map((r,i)=>{
-              const delta=Math.round(retStores[i]*retVel[i]*WEEKS_PER_MONTH/UNITS_PER_CASE);
+              const skuVels=retVelBySku[i];
+              const useSkuVel=skuVels!=null;
+              const totalVel=useSkuVel?skuVels.reduce((s,v)=>s+v,0):retVel[i];
+              const delta=Math.round(retStores[i]*totalVel*WEEKS_PER_MONTH/UNITS_PER_CASE*1.2);
               return (
-                <tr key={i} className={`border-t border-border/60 ${rowClass(retActive[i],retCommitted[i],"bg-orange-50/20")}`}>
-                  <td className="px-4 py-1.5 font-semibold">{r.name}</td>
-                  <td className="px-4 py-1.5 text-right">
-                    <input type="number" min={0} value={retStores[i]}
-                      onChange={e=>{const n=[...retStores];n[i]=parseInt(e.target.value)||0;setRetStores(n);}}
-                      className={`${inp} w-20 text-right font-mono`}/>
-                  </td>
-                  <td className="px-4 py-1.5 text-right">
-                    <input type="number" step="0.1" min={0} value={retVel[i]}
-                      onChange={e=>{const n=[...retVel];n[i]=parseFloat(e.target.value)||0;setRetVel(n);}}
-                      className={`${inp} w-16 text-right font-mono`}/>
-                  </td>
-                  <td className="px-4 py-1.5 text-right">
-                    <select value={retEntry[i]} onChange={e=>{const n=[...retEntry];n[i]=parseInt(e.target.value);setRetEntry(n);}}
-                      className={`${inp} w-24`}>
-                      {MONTH_LABELS.map((m,j)=><option key={j} value={j+1}>{j+1} — {m}</option>)}
-                    </select>
-                  </td>
-                  <td className="px-4 py-1.5 text-right font-mono font-semibold" style={{color:retActive[i]?"#A3224A":"#6B7280"}}>
-                    {retActive[i]?`+${delta.toLocaleString()}`:"—"}
-                  </td>
-                  <td className="px-4 py-1.5 text-xs text-muted-foreground">{r.note}</td>
-                  <td className="px-4 py-1.5 text-center">
-                    <button onClick={()=>{
-                        const n=[...retActive];n[i]=!n[i];setRetActive(n);
-                        if(!n[i]&&retCommitted[i]){const c2=[...retCommitted];c2[i]=false;setRetCommitted(c2);}
-                      }}
-                      className={`rounded-full px-3 py-0.5 text-xs font-bold ${retActive[i]?"text-white":"border border-border text-muted-foreground"}`}
-                      style={retActive[i]?{backgroundColor:retCommitted[i]?"#1C2340":"#10B981"}:{}}>
-                      {retCommitted[i]?"ON":retActive[i]?"SI":"NO"}
-                    </button>
-                  </td>
-                  <td className="px-4 py-1.5 text-center">
-                    <SetButton active={retActive[i]} committed={retCommitted[i]}
-                      onToggle={()=>toggleArr(retCommitted,i,setRetCommitted)}/>
-                  </td>
-                </tr>
+                <React.Fragment key={i}>
+                  <tr className={`border-t border-border/60 ${rowClass(retActive[i],retCommitted[i],"bg-orange-50/20")}`}>
+                    <td className="px-4 py-1.5 font-semibold">{r.name}</td>
+                    <td className="px-4 py-1.5 text-right">
+                      <input type="number" min={0} value={retStores[i]}
+                        onChange={e=>{const n=[...retStores];n[i]=parseInt(e.target.value)||0;setRetStores(n);}}
+                        className={`${inp} w-20 text-right font-mono`}/>
+                    </td>
+                    <td className="px-4 py-1.5 text-right">
+                      {useSkuVel?(
+                        <span className="font-mono text-xs text-amber-700 font-semibold">Σ {totalVel.toFixed(2)}</span>
+                      ):(
+                        <input type="number" step="0.1" min={0} value={retVel[i]}
+                          onChange={e=>{const n=[...retVel];n[i]=parseFloat(e.target.value)||0;setRetVel(n);}}
+                          className={`${inp} w-16 text-right font-mono`}/>
+                      )}
+                    </td>
+                    <td className="px-4 py-1.5 text-right">
+                      <select value={retEntry[i]} onChange={e=>{const n=[...retEntry];n[i]=parseInt(e.target.value);setRetEntry(n);}}
+                        className={`${inp} w-24`}>
+                        {MONTH_LABELS.map((m,j)=><option key={j} value={j+1}>{j+1} — {m}</option>)}
+                      </select>
+                    </td>
+                    <td className="px-4 py-1.5 text-right">
+                      <div className={`font-mono font-semibold ${retActive[i]?"":"text-muted-foreground"}`} style={retActive[i]?{color:"#A3224A"}:{}}>
+                        {retActive[i]?`+${delta.toLocaleString()}`:"—"}
+                      </div>
+                      {retActive[i]&&<div className="text-[9px] text-muted-foreground mt-0.5">×1.2 DC · 1mo early</div>}
+                    </td>
+                    <td className="px-4 py-1.5 text-xs text-muted-foreground">{r.note}</td>
+                    <td className="px-4 py-1.5 text-center">
+                      <button onClick={()=>{
+                          const n=[...retVelBySku];
+                          n[i]=n[i]==null?Array(6).fill(0).map((_,si)=>si===0?retVel[i]:0):null;
+                          setRetVelBySku(n);
+                        }}
+                        className={`rounded-full px-2 py-0.5 text-[10px] font-semibold border ${useSkuVel?"border-amber-400 bg-amber-50 text-amber-700":"border-border text-muted-foreground hover:text-foreground"}`}>
+                        {useSkuVel?"▼ SKU":"▸ SKU"}
+                      </button>
+                    </td>
+                    <td className="px-4 py-1.5 text-center">
+                      <button onClick={()=>{
+                          const n=[...retActive];n[i]=!n[i];setRetActive(n);
+                          if(!n[i]&&retCommitted[i]){const c2=[...retCommitted];c2[i]=false;setRetCommitted(c2);}
+                        }}
+                        className={`rounded-full px-3 py-0.5 text-xs font-bold ${retActive[i]?"text-white":"border border-border text-muted-foreground"}`}
+                        style={retActive[i]?{backgroundColor:retCommitted[i]?"#1C2340":"#10B981"}:{}}>
+                        {retCommitted[i]?"ON":retActive[i]?"SI":"NO"}
+                      </button>
+                    </td>
+                    <td className="px-4 py-1.5 text-center">
+                      <SetButton active={retActive[i]} committed={retCommitted[i]}
+                        onToggle={()=>toggleArr(retCommitted,i,setRetCommitted)}/>
+                    </td>
+                  </tr>
+                  {useSkuVel&&(
+                    <tr className="border-t border-amber-100 bg-amber-50/30">
+                      <td className="px-4 py-2 text-[10px] text-amber-700 font-semibold uppercase tracking-wide" colSpan={2}>↳ Vel. por SKU (u/s/w)</td>
+                      {["XD","PW","HM","WM","WD","Matcha"].map((sku,si)=>(
+                        <td key={sku} className="px-2 py-1.5 text-center">
+                          <div className="text-[9px] uppercase text-muted-foreground mb-0.5">{sku}</div>
+                          <input type="number" step="0.1" min={0}
+                            value={skuVels[si]??0}
+                            onChange={e=>{
+                              const n=[...retVelBySku];
+                              const sv=[...(n[i]??Array(6).fill(0))];
+                              sv[si]=parseFloat(e.target.value)||0;
+                              n[i]=sv;
+                              setRetVelBySku(n);
+                            }}
+                            className="rounded border border-amber-300 bg-white px-1 py-0.5 text-xs font-mono text-center w-14 focus:outline-none focus:ring-1 focus:ring-amber-400"/>
+                        </td>
+                      ))}
+                      <td colSpan={3} className="px-3 py-2 text-xs text-muted-foreground">
+                        Σ {skuVels.reduce((s,v)=>s+v,0).toFixed(2)} u/s/w · {Math.round(retStores[i]*skuVels.reduce((s,v)=>s+v,0)*WEEKS_PER_MONTH/UNITS_PER_CASE*1.2).toLocaleString()} cs/mo
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
               );
             })}
           </tbody>
@@ -886,7 +933,7 @@ function SimuladorTab(p:SimProps) {
       </Collapsible>
 
       <Collapsible title="Block 3 — New SKUs"
-        subtitle="Fully incremental · 0% cannibalization · ramp-up: month 1=40% · month 2=70% · month 3+=100%"
+        subtitle="Sprouts-only · cannibalize Matcha option · ramp 40%/70%/100%"
         badge={skuDeltaTotal!==0?<span className="rounded-full bg-pink-100 px-2 py-0.5 text-[10px] font-bold text-pink-700">+{skuDeltaTotal.toLocaleString()} cs/mo</span>:undefined}>
         <table className="w-full text-sm">
           <thead>
@@ -896,6 +943,7 @@ function SimuladorTab(p:SimProps) {
               <th className="px-4 py-2.5 text-right">Vel. (u/s/w)</th>
               <th className="px-4 py-2.5 text-right">Entry month</th>
               <th className="px-4 py-2.5 text-right">Δ stabilized</th>
+              <th className="px-4 py-2.5 text-center">Cannibalize</th>
               <th className="px-4 py-2.5 text-center">Activate</th>
               <th className="px-4 py-2.5 text-center">Set</th>
               <th className="px-2 py-2.5"/>
@@ -925,6 +973,19 @@ function SimuladorTab(p:SimProps) {
                   </td>
                   <td className="px-4 py-1.5 text-right font-mono font-semibold" style={{color:s.active?"#A3224A":"#6B7280"}}>
                     {s.active?`+${delta.toLocaleString()}`:"—"}
+                  </td>
+                  <td className="px-4 py-1.5 text-center">
+                    <div className="flex flex-col items-center gap-0.5">
+                      <label className="flex items-center gap-1 cursor-pointer">
+                        <input type="checkbox" checked={!!s.cannibalizesMatcha}
+                          onChange={e=>patchSku(i,{cannibalizesMatcha:e.target.checked})}
+                          className="rounded border-border w-3.5 h-3.5 accent-pink-500"/>
+                        <span className="text-[10px] text-muted-foreground">Matcha</span>
+                      </label>
+                      {s.cannibalizesMatcha&&(
+                        <span className="text-[9px] text-pink-600 font-semibold leading-tight">→ Sprouts</span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-4 py-1.5 text-center">
                     <button onClick={()=>{
@@ -1062,11 +1123,13 @@ function SimuladorTab(p:SimProps) {
 }
 
 // ─── Seasonality Tab ──────────────────────────────────────────────────────────
-function SeasonalityTab({seasonIdx,onSeasonIdxChange,velChains,onVelChainsChange}:{
+function SeasonalityTab({seasonIdx,onSeasonIdxChange,velChains,onVelChainsChange,promoMultipliers,onPromoMultipliersChange}:{
   seasonIdx:Record<number,number>;
   onSeasonIdxChange:(idx:Record<number,number>)=>void;
   velChains:VelChain[];
   onVelChainsChange:(chains:VelChain[])=>void;
+  promoMultipliers:number[];
+  onPromoMultipliersChange:(v:number[])=>void;
 }) {
   const months=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   const indices=months.map((_,i)=>seasonIdx[i+1]??0);
@@ -1086,8 +1149,8 @@ function SeasonalityTab({seasonIdx,onSeasonIdxChange,velChains,onVelChainsChange
       <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h3 className="text-sm font-bold mb-1" style={{color:"#1C2340"}}>Seasonality indices — updated Aug 2026</h3>
-            <p className="text-xs text-muted-foreground mb-5">Source: Excel budget model · 1.0 = average month · editable</p>
+            <h3 className="text-sm font-bold mb-1" style={{color:"#1C2340"}}>Seasonality indices — derived from budget model</h3>
+            <p className="text-xs text-muted-foreground mb-5">Derived from Excel Normal scenario monthly pattern · sum = 12.0 · editable (affects all 3 scenarios)</p>
           </div>
           <button onClick={()=>onSeasonIdxChange({...DEFAULT_SEASON_IDX})}
             className="rounded-full border border-border px-3 py-1 text-xs font-semibold text-muted-foreground hover:text-foreground">
@@ -1154,6 +1217,52 @@ function SeasonalityTab({seasonIdx,onSeasonIdxChange,velChains,onVelChainsChange
           </tbody>
         </table>
       </div>
+      {/* Promo multipliers per month */}
+      <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+        <div className="flex items-start justify-between gap-4 mb-4">
+          <div>
+            <h3 className="text-sm font-bold" style={{color:"#1C2340"}}>Promo multipliers — por mes</h3>
+            <p className="text-xs text-muted-foreground">1.0 = sin cambio · 1.5 = +50% demanda · Aplica a los 3 escenarios</p>
+          </div>
+          <button onClick={()=>onPromoMultipliersChange(Array(12).fill(1))}
+            className="rounded-full border border-border px-3 py-1 text-xs font-semibold text-muted-foreground hover:text-foreground flex-shrink-0">
+            Reset × 1.0
+          </button>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="text-xs min-w-max w-full">
+            <thead>
+              <tr className="text-[10px] uppercase tracking-wide text-muted-foreground border-b border-border">
+                {FORECAST_MONTHS.map(m=>(
+                  <th key={m.label} className="px-3 py-2 text-center font-semibold">{m.label.slice(0,6)}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                {promoMultipliers.map((v,i)=>(
+                  <td key={i} className="px-2 py-2 text-center">
+                    <input
+                      type="number" step="0.05" min="0.1" max="5" value={v}
+                      onChange={e=>{
+                        const next=[...promoMultipliers];
+                        next[i]=parseFloat(e.target.value)||1;
+                        onPromoMultipliersChange(next);
+                      }}
+                      className={`rounded border px-1.5 py-0.5 text-xs font-mono text-center w-16 focus:outline-none focus:ring-1 focus:ring-amber-400 ${v!==1?"border-amber-300 bg-amber-50 font-semibold text-amber-800":"border-border bg-background"}`}
+                    />
+                    {v!==1&&(
+                      <p className={`text-[9px] font-semibold mt-0.5 ${v>1?"text-emerald-600":"text-red-500"}`}>
+                        {v>1?`+${Math.round((v-1)*100)}%`:`${Math.round((v-1)*100)}%`}
+                      </p>
+                    )}
+                  </td>
+                ))}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1177,6 +1286,7 @@ function SalesPage() {
   const [retStores,setRetStores] = useState<number[]>(NEW_RETAILERS.map(r=>r.stores));
   const [retVel,setRetVel] = useState<number[]>(NEW_RETAILERS.map(r=>r.vel));
   const [retEntry,setRetEntry] = useState<number[]>(NEW_RETAILERS.map(r=>r.entry));
+  const [retVelBySku,setRetVelBySku] = useState<(number[]|null)[]>(NEW_RETAILERS.map(()=>null));
   const [newSkus,setNewSkus] = useState<NewSku[]>(DEFAULT_NEW_SKUS);
   const [velCommitted,setVelCommitted] = useState<boolean[]>(DEFAULT_VEL_CHAINS.map(()=>false));
   const [retCommitted,setRetCommitted] = useState<boolean[]>(NEW_RETAILERS.map(()=>false));
@@ -1184,6 +1294,7 @@ function SalesPage() {
   const [mixOverrides,setMixOverrides] = useState<Record<string,Record<string,number>>>({});
   const [mixOverrideActive,setMixOverrideActive] = useState(false);
   const [mixCommitted,setMixCommitted] = useState(false);
+  const [promoMultipliers,setPromoMultipliers] = useState<number[]>(Array(12).fill(1));
 
   useEffect(()=>{
     setVelNew(prev=>velChains.map((c,i)=>prev[i]??c.velCurrent));
@@ -1191,8 +1302,8 @@ function SalesPage() {
 
   const forecast = useMemo(()=>calcForecast(
     scenario, velActive,velNew, retActive,retStores,retVel,retEntry,
-    velChains,seasonIdx,newSkus,
-  ),[scenario,velActive,velNew,retActive,retStores,retVel,retEntry,velChains,seasonIdx,newSkus]);
+    velChains,seasonIdx,newSkus,promoMultipliers,retVelBySku,
+  ),[scenario,velActive,velNew,retActive,retStores,retVel,retEntry,velChains,seasonIdx,newSkus,promoMultipliers,retVelBySku]);
 
   const committedCount = velCommitted.filter(Boolean).length
     + retCommitted.filter(Boolean).length
@@ -1205,7 +1316,8 @@ function SalesPage() {
     retActive.map((a,i)=>a&&retCommitted[i]), retStores,retVel,retEntry,
     velChains,seasonIdx,
     newSkus.map((s,i)=>({...s,active:s.active&&!!skuCommitted[i]})),
-  ),[scenario,velActive,velCommitted,velNew,retActive,retCommitted,retStores,retVel,retEntry,velChains,seasonIdx,newSkus,skuCommitted]);
+    promoMultipliers, retVelBySku,
+  ),[scenario,velActive,velCommitted,velNew,retActive,retCommitted,retStores,retVel,retEntry,velChains,seasonIdx,newSkus,skuCommitted,promoMultipliers,retVelBySku]);
 
   const skuTabForecast = committedCount>0?committedForecast:forecast;
   const skuTabNewSkus = committedCount>0
@@ -1226,6 +1338,7 @@ function SalesPage() {
       velCommitted, retCommitted, skuCommitted, mixCommitted,
       mixOverrides, mixOverrideActive,
       committedAt: committedCount>0 ? new Date().toISOString() : null,
+      promoMultipliers, retVelBySku,
     };
     saveForecastState(state);
   },[scenario,seasonIdx,velChains,velActive,velNew,retActive,retStores,retVel,retEntry,newSkus,
@@ -1308,6 +1421,7 @@ function SalesPage() {
                                   retVel={retVel} setRetVel={setRetVel}
                                   retEntry={retEntry} setRetEntry={setRetEntry}
                                   retCommitted={retCommitted} setRetCommitted={setRetCommitted}
+                                  retVelBySku={retVelBySku} setRetVelBySku={setRetVelBySku}
                                   newSkus={newSkus} setNewSkus={setNewSkus}
                                   skuCommitted={skuCommitted} setSkuCommitted={setSkuCommitted}
                                   mixOverrides={mixOverrides} setMixOverrides={setMixOverrides}
@@ -1319,7 +1433,8 @@ function SalesPage() {
                                     mixOverrides={mixOverrides} mixOverrideActive={mixOverrideActive&&(committedCount===0||mixCommitted)}
                                     committedCount={committedCount}/>}/>}
       {tab==="estacionalidad"&& <SeasonalityTab seasonIdx={seasonIdx} onSeasonIdxChange={setSeasonIdx}
-                                  velChains={velChains} onVelChainsChange={setVelChains}/>}
+                                  velChains={velChains} onVelChainsChange={setVelChains}
+                                  promoMultipliers={promoMultipliers} onPromoMultipliersChange={setPromoMultipliers}/>}
       {tab==="salesdb"       && <SalesDBTab/>}
     </div>
   );
