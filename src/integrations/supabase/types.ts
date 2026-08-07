@@ -140,6 +140,7 @@ export type Database = {
         Row: {
           bol_date: string | null
           bol_number: string | null
+          case_value: number | null
           collected_at: string | null
           created_at: string
           created_by: string | null
@@ -170,6 +171,7 @@ export type Database = {
         Insert: {
           bol_date?: string | null
           bol_number?: string | null
+          case_value?: number | null
           collected_at?: string | null
           created_at?: string
           created_by?: string | null
@@ -200,6 +202,7 @@ export type Database = {
         Update: {
           bol_date?: string | null
           bol_number?: string | null
+          case_value?: number | null
           collected_at?: string | null
           created_at?: string
           created_by?: string | null
@@ -289,6 +292,132 @@ export type Database = {
         }
         Relationships: []
       }
+      finance_actuals: {
+        Row: {
+          ap: number | null
+          ar: number | null
+          bs_detail: Json | null
+          business_contribution: number | null
+          capital_contrib: number | null
+          cash: number | null
+          cash_bop: number | null
+          cash_eop: number | null
+          cash_from_ops: number | null
+          chg_ap: number | null
+          chg_ar: number | null
+          chg_cash: number | null
+          chg_inventory: number | null
+          chg_wc: number | null
+          cogs: number | null
+          commercial_debt: number | null
+          distr_fees: number | null
+          ebitda: number | null
+          freight_out: number | null
+          gen_exp: number | null
+          gm_pct: number | null
+          gross_margin: number | null
+          gross_sales: number | null
+          id: string
+          inventory: number | null
+          mkt_trade: number | null
+          net_sales: number | null
+          period: string
+          period_label: string
+          pnl_detail: Json | null
+          selling_exp: number | null
+          source: string | null
+          storage: number | null
+          team: number | null
+          total_assets: number | null
+          total_equity: number | null
+          total_liab: number | null
+          trade_spend: number | null
+          uploaded_at: string | null
+        }
+        Insert: {
+          ap?: number | null
+          ar?: number | null
+          bs_detail?: Json | null
+          business_contribution?: number | null
+          capital_contrib?: number | null
+          cash?: number | null
+          cash_bop?: number | null
+          cash_eop?: number | null
+          cash_from_ops?: number | null
+          chg_ap?: number | null
+          chg_ar?: number | null
+          chg_cash?: number | null
+          chg_inventory?: number | null
+          chg_wc?: number | null
+          cogs?: number | null
+          commercial_debt?: number | null
+          distr_fees?: number | null
+          ebitda?: number | null
+          freight_out?: number | null
+          gen_exp?: number | null
+          gm_pct?: number | null
+          gross_margin?: number | null
+          gross_sales?: number | null
+          id?: string
+          inventory?: number | null
+          mkt_trade?: number | null
+          net_sales?: number | null
+          period: string
+          period_label: string
+          pnl_detail?: Json | null
+          selling_exp?: number | null
+          source?: string | null
+          storage?: number | null
+          team?: number | null
+          total_assets?: number | null
+          total_equity?: number | null
+          total_liab?: number | null
+          trade_spend?: number | null
+          uploaded_at?: string | null
+        }
+        Update: {
+          ap?: number | null
+          ar?: number | null
+          bs_detail?: Json | null
+          business_contribution?: number | null
+          capital_contrib?: number | null
+          cash?: number | null
+          cash_bop?: number | null
+          cash_eop?: number | null
+          cash_from_ops?: number | null
+          chg_ap?: number | null
+          chg_ar?: number | null
+          chg_cash?: number | null
+          chg_inventory?: number | null
+          chg_wc?: number | null
+          cogs?: number | null
+          commercial_debt?: number | null
+          distr_fees?: number | null
+          ebitda?: number | null
+          freight_out?: number | null
+          gen_exp?: number | null
+          gm_pct?: number | null
+          gross_margin?: number | null
+          gross_sales?: number | null
+          id?: string
+          inventory?: number | null
+          mkt_trade?: number | null
+          net_sales?: number | null
+          period?: string
+          period_label?: string
+          pnl_detail?: Json | null
+          selling_exp?: number | null
+          source?: string | null
+          storage?: number | null
+          team?: number | null
+          total_assets?: number | null
+          total_equity?: number | null
+          total_liab?: number | null
+          trade_spend?: number | null
+          uploaded_at?: string | null
+        }
+        Relationships: []
+      }
       fp_movements: {
         Row: {
           cases: number
@@ -345,49 +474,85 @@ export type Database = {
       }
       ip_movements: {
         Row: {
+          actual_payment_date: string | null
+          actual_receive_date: string | null
+          cogs_per_unit: number | null
           concept: Database["public"]["Enums"]["ip_concept"]
           created_at: string
           created_by: string | null
+          estimated_payment_date: string | null
+          estimated_receive_date: string | null
           id: string
           lot_number: string | null
           material: string
           movement_date: string
           notes: string | null
+          other_costs: number | null
+          paid: boolean | null
+          price_per_unit: number | null
           quantity: number
+          received: boolean | null
+          shipping_price: number | null
+          total_price: number | null
           type: Database["public"]["Enums"]["movement_type"]
           unit: string
           updated_at: string
           vendor: string | null
+          warehouse: string | null
         }
         Insert: {
+          actual_payment_date?: string | null
+          actual_receive_date?: string | null
+          cogs_per_unit?: number | null
           concept: Database["public"]["Enums"]["ip_concept"]
           created_at?: string
           created_by?: string | null
+          estimated_payment_date?: string | null
+          estimated_receive_date?: string | null
           id?: string
           lot_number?: string | null
           material: string
           movement_date: string
           notes?: string | null
+          other_costs?: number | null
+          paid?: boolean | null
+          price_per_unit?: number | null
           quantity: number
+          received?: boolean | null
+          shipping_price?: number | null
+          total_price?: number | null
           type: Database["public"]["Enums"]["movement_type"]
           unit: string
           updated_at?: string
           vendor?: string | null
+          warehouse?: string | null
         }
         Update: {
+          actual_payment_date?: string | null
+          actual_receive_date?: string | null
+          cogs_per_unit?: number | null
           concept?: Database["public"]["Enums"]["ip_concept"]
           created_at?: string
           created_by?: string | null
+          estimated_payment_date?: string | null
+          estimated_receive_date?: string | null
           id?: string
           lot_number?: string | null
           material?: string
           movement_date?: string
           notes?: string | null
+          other_costs?: number | null
+          paid?: boolean | null
+          price_per_unit?: number | null
           quantity?: number
+          received?: boolean | null
+          shipping_price?: number | null
+          total_price?: number | null
           type?: Database["public"]["Enums"]["movement_type"]
           unit?: string
           updated_at?: string
           vendor?: string | null
+          warehouse?: string | null
         }
         Relationships: []
       }

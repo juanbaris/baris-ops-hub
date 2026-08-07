@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useRef, useState, useMemo, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, useMemo, type ReactNode } from "react";
 import { useInvoicedActuals, type MonthActual } from "@/hooks/use-invoiced-actuals";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -847,7 +847,7 @@ function SimuladorTab(p:SimProps) {
               const totalVel=useSkuVel?skuVels.reduce((s,v)=>s+v,0):retVel[i];
               const delta=Math.round(retStores[i]*totalVel*WEEKS_PER_MONTH/UNITS_PER_CASE*1.2);
               return (
-                <React.Fragment key={i}>
+                <Fragment key={i}>
                   <tr className={`border-t border-border/60 ${rowClass(retActive[i],retCommitted[i],"bg-orange-50/20")}`}>
                     <td className="px-4 py-1.5 font-semibold">{r.name}</td>
                     <td className="px-4 py-1.5 text-right">
@@ -925,7 +925,7 @@ function SimuladorTab(p:SimProps) {
                       </td>
                     </tr>
                   )}
-                </React.Fragment>
+                </Fragment>
               );
             })}
           </tbody>

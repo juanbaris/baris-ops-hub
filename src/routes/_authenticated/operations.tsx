@@ -193,7 +193,7 @@ function FPInputTab({ movements, loading, onAdded }: { movements: FPRow[]; loadi
     if (!form.cases || Number(form.cases) <= 0) { toast.error("Cases required"); return; }
     if (!form.lot_number && form.concept === "Production") { toast.error("Lot number required for Production"); return; }
     setSaving(true);
-    const { error } = await supabase.from("fp_movements").insert({
+    const payload = {
       movement_date: form.movement_date,
       type: form.type,
       sku: form.sku,
@@ -204,9 +204,7 @@ function FPInputTab({ movements, loading, onAdded }: { movements: FPRow[]; loadi
       cogs_per_case: form.cogs_per_case ? Number(form.cogs_per_case) : null,
       po_number_ref: form.po_number_ref || null,
       notes: form.notes || null,
-    });
-    setSaving(false);
-    if (error) { toast.error(error.message); return; }
+    };
     const res = editingFP
       ? await supabase.from("fp_movements").update(payload).eq("id", editingFP.id)
       : await supabase.from("fp_movements").insert(payload);
@@ -1385,7 +1383,7 @@ function ProductionTab({ fpMovements, ipMovements, onAdded }: {
 
   // BOM lines with calculated quantities and COGS
   const bomLines = useMemo(() => {
-    if (cases <= 0) return bom.map(line => ({ ...line, qty: 0, cogsContrib: 0, availableLots: [] as any[] }));
+    if (cases <= 0) return bom.map(line => ({ ...line, qty: 0, cogsContrib: 0, availableLots: [] as any[], cogs: null as number | null }));
     return bom.filter(l => (l.pct ?? 0) > 0 || (l.perCase ?? 0) > 0).map(line => {
       const qty = calcBomQty(line, cases);
       // Find available lots for this material
