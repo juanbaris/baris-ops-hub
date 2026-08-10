@@ -527,6 +527,21 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
 }
 // ─── I&P Input Tab ────────────────────────────────────────────────────────────
 function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loading: boolean; onAdded: () => void }) {
+  const [uploadingId, setUploadingId] = useState<string | null>(null);
+  const receiptRef = useRef<HTMLInputElement>(null);
+  const pendingUploadId = useRef<string | null>(null);
+
+  async function uploadReceipt(file: File, movementId: string) {
+    setUploadingId(movementId);
+    const ext = file.name.split('.').pop();
+    const path = `${movementId}/receipt_${Date.now()}.${ext}`;
+    const { error } = await supabase.storage
+      .from('ip-receipts')
+      .upload(path, file, { upsert: true, contentType: file.type || undefined });
+    if (error) toast.error('Upload failed: ' + error.message);
+    else toast.success('Receipt saved ✓');
+    setUploadingId(null);
+  }
   const [form, setForm] = useState({
     movement_date: ymd(), material: "", vendor: "",
     type: "In" as MoveType, quantity: "", unit: "lbs",
@@ -686,6 +701,13 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
 
   return (
     <div className="space-y-5">
+      {/* Hidden file input for IP receipt upload */}
+      <input ref={receiptRef} type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden"
+        onChange={e => {
+          const f = e.target.files?.[0];
+          if (f && pendingUploadId.current) uploadReceipt(f, pendingUploadId.current);
+          e.target.value = '';
+        }} />
       <div className="rounded-2xl border border-border bg-card shadow-sm p-5">
         {editing && (
           <div className="mb-3 rounded-xl border px-4 py-2 text-sm font-semibold"
@@ -879,6 +901,12 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
                           onChange={() => toggleFlag(r, "paid")}
                           className="h-3.5 w-3.5 cursor-pointer accent-emerald-600" />
                         <span className={`text-[9px] font-semibold ${paid.color}`}>{paid.label}</span>
+                        <button
+                          title="Upload payment receipt"
+                          onClick={() => { pendingUploadId.current = r.id; receiptRef.current?.click(); }}
+                          className={`text-[10px] mt-0.5 ${uploadingId === r.id ? 'animate-pulse text-amber-500' : 'text-muted-foreground hover:text-emerald-600'}`}>
+                          {uploadingId === r.id ? '⏳' : '📎'}
+                        </button>
                       </div>
                     </td>
                     <td className="px-3 py-1.5 text-right">
@@ -1006,6 +1034,122 @@ function IPSummaryTab({ movements }: { movements: IPRow[] }) {
         </select>
         <span className="text-xs text-muted-foreground">{shown.length} materials with stock</span>
       </div>
+
+      {/* ── Payment tracking ── */}
+      {(() => {
+        const rr = movements as any[];
+        // Monthly paid vs pending
+        const monthly: Record<string,{paid:number;pending:number}> = {};
+        for (const m of rr) {
+          const mon = (m.movement_date ?? '').slice(0,7);
+          if (!mon) continue;
+          const cost = Number(m.total_cost ?? 0);
+          if (!monthly[mon]) monthly[mon] = {paid:0,pending:0};
+          if (m.paid) monthly[mon].paid += cost;
+          else monthly[mon].pending += cost;
+        }
+        const months = Object.keys(monthly).sort().reverse().slice(0,12);
+        // Weekly pending: unpaid with est. payment date
+        const pending = rr
+          .filter(m => !m.paid && m.estimated_payment_date)
+          .sort((a,b) => a.estimated_payment_date.localeCompare(b.estimated_payment_date));
+        const totalPending = rr.filter(m => !m.paid).reduce((s,m) => s + Number(m.total_cost ?? 0), 0);
+        const totalPaid    = rr.filter(m =>  m.paid).reduce((s,m) => s + Number(m.total_cost ?? 0), 0);
+        return (
+          <div className="space-y-4">
+            {/* KPIs */}
+            <div className="grid grid-cols-3 gap-3">
+              <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Total Paid</p>
+                <p className="text-xl font-bold font-mono text-emerald-600">${Math.round(totalPaid).toLocaleString()}</p>
+              </div>
+              <div className="rounded-2xl border border-orange-200 bg-orange-50 p-4 shadow-sm">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Pending Payment</p>
+                <p className="text-xl font-bold font-mono text-orange-600">${Math.round(totalPending).toLocaleString()}</p>
+                <p className="text-[10px] text-muted-foreground">{rr.filter(m=>!m.paid).length} movements</p>
+              </div>
+              <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Next due</p>
+                <p className="text-sm font-bold font-mono" style={{color:"#1C2340"}}>
+                  {pending[0]?.estimated_payment_date ?? "—"}
+                </p>
+              </div>
+            </div>
+            {/* Monthly paid vs pending */}
+            <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+              <div className="px-5 py-3 border-b border-border bg-muted/30">
+                <p className="text-sm font-bold" style={{color:"#1C2340"}}>Monthly payments — paid vs pending</p>
+              </div>
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
+                    <th className="px-4 py-2.5 text-left">Month</th>
+                    <th className="px-4 py-2.5 text-right text-emerald-700">Paid</th>
+                    <th className="px-4 py-2.5 text-right text-orange-600">Pending</th>
+                    <th className="px-4 py-2.5 text-right">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {months.map(mon => (
+                    <tr key={mon} className="border-t border-border/60 hover:bg-muted/20">
+                      <td className="px-4 py-1.5 font-semibold" style={{color:"#1C2340"}}>{mon}</td>
+                      <td className="px-4 py-1.5 text-right font-mono text-emerald-600">
+                        {monthly[mon].paid > 0 ? `$${Math.round(monthly[mon].paid).toLocaleString()}` : "—"}
+                      </td>
+                      <td className="px-4 py-1.5 text-right font-mono text-orange-600">
+                        {monthly[mon].pending > 0 ? `$${Math.round(monthly[mon].pending).toLocaleString()}` : "—"}
+                      </td>
+                      <td className="px-4 py-1.5 text-right font-mono text-muted-foreground">
+                        ${Math.round(monthly[mon].paid + monthly[mon].pending).toLocaleString()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {/* Weekly pending */}
+            {pending.length > 0 && (
+              <div className="rounded-2xl border border-orange-200 bg-card shadow-sm overflow-hidden">
+                <div className="px-5 py-3 border-b border-orange-200 bg-orange-50/40">
+                  <p className="text-sm font-bold text-orange-700">Pending payments — by due date ({pending.length} movements)</p>
+                </div>
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
+                      <th className="px-4 py-2.5 text-left">Due date</th>
+                      <th className="px-4 py-2.5 text-left">Material</th>
+                      <th className="px-4 py-2.5 text-left">Vendor</th>
+                      <th className="px-4 py-2.5 text-right">Qty</th>
+                      <th className="px-4 py-2.5 text-right">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pending.slice(0,20).map((m:any) => {
+                      const daysLeft = Math.ceil((new Date(m.estimated_payment_date).getTime()-Date.now())/86400000);
+                      const color = daysLeft < 0 ? "text-red-600" : daysLeft <= 7 ? "text-orange-600" : "text-muted-foreground";
+                      return (
+                        <tr key={m.id} className="border-t border-border/60 hover:bg-muted/20">
+                          <td className={`px-4 py-1.5 font-mono font-semibold ${color}`}>
+                            {m.estimated_payment_date}
+                            {daysLeft < 0 && <span className="ml-1 text-[9px]">({Math.abs(daysLeft)}d late)</span>}
+                            {daysLeft >= 0 && daysLeft <= 7 && <span className="ml-1 text-[9px]">({daysLeft}d)</span>}
+                          </td>
+                          <td className="px-4 py-1.5 font-semibold" style={{color:"#1C2340"}}>{m.material}</td>
+                          <td className="px-4 py-1.5 text-muted-foreground">{m.vendor ?? "—"}</td>
+                          <td className="px-4 py-1.5 text-right font-mono">{Number(m.quantity).toLocaleString()} {m.unit}</td>
+                          <td className="px-4 py-1.5 text-right font-mono text-orange-700">
+                            {m.total_cost ? `$${Math.round(Number(m.total_cost)).toLocaleString()}` : "—"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
         <div className="px-5 py-3 border-b border-border bg-muted/30">
