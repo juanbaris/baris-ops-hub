@@ -40,7 +40,7 @@ type BaselineRow = {
 };
 
 /** PO statuses that count as committed (not yet shipped). */
-const COMMITTED_STATUSES = ["Open", "Accepted", "Send to 3PL", "Shipment"];
+const COMMITTED_STATUSES = ["Open", "Accepted", "Sent to 3PL", "Shipment"];
 
 /** Calculate stock from baseline + movements after baseline date */
 function calcStockFromBaseline(
@@ -2851,7 +2851,7 @@ function OperationsPage() {
     setLoadingIP(false);
   }
   async function loadOrders() {
-    const { data } = await supabase.from("orders").select("*");
+    const { data } = await supabase.from("customer_orders").select("*");
     setOrders(data ?? []);
   }
   async function loadBaseline() {
