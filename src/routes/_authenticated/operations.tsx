@@ -41,7 +41,7 @@ type BaselineRow = {
 };
 
 /** PO statuses that count as committed (not yet shipped). */
-const COMMITTED_STATUSES = ["Open", "Accepted", "Send to 3PL", "Shipment"];
+const COMMITTED_STATUSES = ["Open", "Accepted", "Sent to 3PL", "Shipment"];
 
 /** Calculate stock from baseline + movements after baseline date */
 function calcStockFromBaseline(
@@ -202,6 +202,7 @@ function FPStockTab({ movements, orders, loading, baseline, lotMap }: { movement
                   <th className="px-4 py-2.5 text-left">SKU</th>
                   <th className="px-4 py-2.5 text-left">Item #</th>
                   {!isLineage && <th className="px-4 py-2.5 text-left">Warehouse</th>}
+                  <th className="px-4 py-2.5 text-right text-amber-700">Inv. $</th>
                   <th className="px-4 py-2.5 text-right">{showValue ? "Stock $" : "Stock"}</th>
                   <th className="px-4 py-2.5 text-right">{showValue ? "Committed $" : "Committed"}</th>
                   <th className="px-4 py-2.5 text-right">{showValue ? "Available $" : "Available"}</th>
@@ -227,6 +228,11 @@ function FPStockTab({ movements, orders, loading, baseline, lotMap }: { movement
                       <td className="px-4 py-2 font-semibold" style={{color:"#1C2340"}}>{s.sku}</td>
                       <td className="px-4 py-2 font-mono text-xs text-muted-foreground">{SKU_ITEMS[s.sku]}</td>
                       {!isLineage && <td className="px-4 py-2 text-xs text-muted-foreground">{s.warehouse}</td>}
+                      <td className="px-4 py-2 text-right font-mono font-semibold" style={{color:"#A3224A"}}>
+                        {cogsBySku[s.sku]
+                          ? `$${Math.round(s.cases * cogsBySku[s.sku]).toLocaleString()}`
+                          : <span className="text-muted-foreground text-xs">—</span>}
+                      </td>
                       <td className="px-4 py-2 text-right font-mono font-semibold">
                         {showValue && cogsBySku[s.sku] ? `$${Math.round(s.cases * cogsBySku[s.sku] / 1000).toLocaleString()}K` : Math.round(s.cases).toLocaleString()}
                       </td>
@@ -433,7 +439,7 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
             </tr>
           </thead>
           <tbody>
-            {loading ? <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">Loading…</td></tr>
+            {loading ? <tr><td colSpan={10} className="p-8 text-center text-muted-foreground">Loading…</td></tr>
               : filtered.length === 0 ? <tr><td colSpan={11} className="p-8 text-center text-muted-foreground">No movements match filters</td></tr>
               : filtered.map(r => (
                 <tr key={r.id} className="border-t border-border/60 hover:bg-muted/20">
@@ -2893,7 +2899,7 @@ function OperationsPage() {
     setLoadingIP(false);
   }
   async function loadOrders() {
-    const { data } = await supabase.from("orders").select("*");
+    const { data } = await supabase.from("customer_orders").select("*");
     setOrders(data ?? []);
   }
   async function loadBaseline() {
