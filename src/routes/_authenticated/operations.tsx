@@ -19,7 +19,7 @@ type MoveType = Database["public"]["Enums"]["movement_type"];
 
 const SKUS: SKU[] = ["XD","PW","HM","WM","WD","Matcha"];
 const SKU_ITEMS: Record<SKU, string> = { XD:"88021", PW:"77670", HM:"77671", WM:"93562", WD:"23141", Matcha:"77672" };
-const WAREHOUSES: Warehouse[] = ["Lineage Newark","Cold Chain","Empire","Heinlein","OOE"];
+const WAREHOUSES: Warehouse[] = ["Lineage Newark","Lineage Linden","Cold Chain","Empire","Heinlein","OOE"];
 const FP_CONCEPTS: FPConcept[] = ["Production","Sale","Sample","Damage","Transfer","Free"];
 const IP_CONCEPTS: IPConcept[] = ["Procurement","Consumption","Damage","Transfer"];
 const FACILITIES: Facility[] = ["Heinlein","Empire","OOE"];
@@ -255,7 +255,7 @@ function FPStockTab({ movements, orders, loading, baseline, lotMap }: { movement
   );
 }
 // ─── FP Input Tab ─────────────────────────────────────────────────────────────
-function FPInputTab({ movements, loading, onAdded, lotMap = {} }: { movements: FPRow[]; loading: boolean; onAdded: () => void; lotMap?: Record<string, LotCard> }) {
+function FPInputTab({ movements, loading, onAdded }: { movements: FPRow[]; loading: boolean; onAdded: () => void }) {
   const [form, setForm] = useState({
     movement_date: ymd(), type: "In" as MoveType, sku: "XD" as SKU,
     cases: "", warehouse: "Lineage Newark" as Warehouse,
@@ -2893,7 +2893,7 @@ function OperationsPage() {
     setLoadingIP(false);
   }
   async function loadOrders() {
-    const { data } = await supabase.from("customer_orders").select("*");
+    const { data } = await supabase.from("orders").select("*");
     setOrders(data ?? []);
   }
   async function loadBaseline() {
@@ -2930,7 +2930,7 @@ function OperationsPage() {
     <div>
       <PageHeader
         title="Operations"
-        subtitle="Inventory, production, and procurement planning"
+        description="Inventory, production, and procurement planning"
       />
 
       <div className="flex gap-1 overflow-x-auto border-b border-border mb-6 pb-0">
@@ -2952,9 +2952,9 @@ function OperationsPage() {
       </div>
 
       {tab === "stock"       && <FPStockTab movements={fpMovements} orders={orders} loading={loadingFP} baseline={baseline} lotMap={lotMap} />}
-      {tab === "summary"     && <FPSummaryTab />}
-      {tab === "lots"        && <LotMasterTab />}
-      {tab === "fp"          && <FPInputTab movements={fpMovements} loading={loadingFP} onAdded={reload} lotMap={lotMap} />}
+      {tab === "summary"     && <FPSummaryTab movements={fpMovements} orders={orders} loading={loadingFP} />}
+      {tab === "lots"        && <LotMasterTab movements={fpMovements} loading={loadingFP} />}
+      {tab === "fp"          && <FPInputTab movements={fpMovements} loading={loadingFP} onAdded={reload} />}
       {tab === "ipsummary"   && <IPSummaryTab movements={ipMovements} />}
       {tab === "ip"          && <IPInputTab movements={ipMovements} loading={loadingIP} onAdded={reload} />}
       {tab === "production"  && <ProductionTab fpMovements={fpMovements} ipMovements={ipMovements} onAdded={reload} />}
