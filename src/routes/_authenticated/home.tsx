@@ -480,7 +480,7 @@ function HomePage() {
   }, [invoiced]);
 
   const openOrders = useMemo(() =>
-    orders.filter(o => o.status !== "Invoiced" && o.status !== "BOL Confirmed").length, [orders]);
+    orders.filter(o => o.status !== "Invoiced").length, [orders]); // snapshot: all non-invoiced regardless of period
 
   // ── Current stock ────────────────────────────────────────────────────────────
   const currentStock = useMemo(() => {
