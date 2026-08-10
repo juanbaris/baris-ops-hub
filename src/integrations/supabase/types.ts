@@ -472,6 +472,51 @@ export type Database = {
         }
         Relationships: []
       }
+      fp_stock_baseline: {
+        Row: {
+          baseline_date: string
+          cases: number
+          cases_available: number | null
+          cogs_per_case: number | null
+          created_at: string | null
+          expiry_date: string | null
+          id: string
+          lot_number: string | null
+          notes: string | null
+          pallet_id: string | null
+          sku: string
+          warehouse: string
+        }
+        Insert: {
+          baseline_date: string
+          cases?: number
+          cases_available?: number | null
+          cogs_per_case?: number | null
+          created_at?: string | null
+          expiry_date?: string | null
+          id?: string
+          lot_number?: string | null
+          notes?: string | null
+          pallet_id?: string | null
+          sku: string
+          warehouse?: string
+        }
+        Update: {
+          baseline_date?: string
+          cases?: number
+          cases_available?: number | null
+          cogs_per_case?: number | null
+          created_at?: string | null
+          expiry_date?: string | null
+          id?: string
+          lot_number?: string | null
+          notes?: string | null
+          pallet_id?: string | null
+          sku?: string
+          warehouse?: string
+        }
+        Relationships: []
+      }
       ip_movements: {
         Row: {
           actual_payment_date: string | null
