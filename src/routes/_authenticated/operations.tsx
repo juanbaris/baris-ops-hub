@@ -253,6 +253,39 @@ function FPStockTab({ movements, orders, loading, baseline, lotMap }: { movement
                   );
                 })}
               </tbody>
+              <tfoot>
+                <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
+                  <td className="px-4 py-2 text-xs font-semibold" colSpan={isLineage ? 2 : 3}>
+                    TOTAL ({rows.length} SKUs)
+                  </td>
+                  <td className="px-4 py-2 text-right font-mono font-semibold" style={{color:"#f87171"}}>
+                    ${Math.round(rows.reduce((s,r)=>s+(cogsBySku[r.sku]?r.cases*cogsBySku[r.sku]:0),0)).toLocaleString()}
+                  </td>
+                  <td className="px-4 py-2 text-right font-mono font-semibold">
+                    {rows.reduce((s,r)=>s+Math.round(r.cases),0).toLocaleString()}
+                  </td>
+                  <td className="px-4 py-2 text-right font-mono text-slate-300">
+                    {(() => {
+                      const tot = rows.reduce((s,r)=>{
+                        const skuStock=Math.round(bySku[r.sku]??0);
+                        const comm=Math.round(committed[r.sku]??0);
+                        const share=skuStock>0?r.cases/skuStock:0;
+                        return s+Math.round(comm*share);
+                      },0);
+                      return tot>0?tot.toLocaleString():"—";
+                    })()}
+                  </td>
+                  <td className="px-4 py-2 text-right font-mono font-semibold text-emerald-400">
+                    {rows.reduce((s,r)=>{
+                      const skuStock=Math.round(bySku[r.sku]??0);
+                      const comm=Math.round(committed[r.sku]??0);
+                      const share=skuStock>0?r.cases/skuStock:0;
+                      return s+Math.round(r.cases)-Math.round(comm*share);
+                    },0).toLocaleString()}
+                  </td>
+                  <td colSpan={3}/>
+                </tr>
+              </tfoot>
             </table>
           </div>
         );
