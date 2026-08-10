@@ -24,6 +24,70 @@ const IP_CONCEPTS: IPConcept[] = ["Procurement","Consumption","Damage","Transfer
 const FACILITIES: Facility[] = ["Heinlein","Empire","OOE"];
 const FULL_TRUCK = 6630;
 
+type BaselineRow = {
+  id: string;
+  baseline_date: string;
+  sku: string;
+  warehouse: string;
+  lot_number: string | null;
+  cases: number;
+  cases_available: number | null;
+  expiry_date: string | null;
+  cogs_per_case: number | null;
+  pallet_id: string | null;
+  notes: string | null;
+  created_at: string;
+};
+
+/** PO statuses that count as committed (not yet shipped). */
+const COMMITTED_STATUSES = ["Open", "Accepted", "Send to 3PL", "Shipment"];
+
+/** Calculate stock from baseline + movements after baseline date */
+function calcStockFromBaseline(
+  baseline: BaselineRow[],
+  movements: FPRow[],
+): { bySku: Record<string, number>; bySkuWh: Record<string, { sku: SKU; warehouse: Warehouse; cases: number }> } {
+  const bySku: Record<string, number> = {};
+  const bySkuWh: Record<string, { sku: SKU; warehouse: Warehouse; cases: number }> = {};
+
+  // If no baseline, fall back to summing all movements (legacy behavior)
+  if (baseline.length === 0) {
+    for (const r of movements) {
+      const delta = r.type === "In" ? Number(r.cases) : -Number(r.cases);
+      bySku[r.sku] = (bySku[r.sku] ?? 0) + delta;
+      const k = `${r.sku}|${r.warehouse}`;
+      if (!bySkuWh[k]) bySkuWh[k] = { sku: r.sku as SKU, warehouse: r.warehouse as Warehouse, cases: 0 };
+      bySkuWh[k].cases += delta;
+    }
+    return { bySku, bySkuWh };
+  }
+
+  // Find the latest baseline date
+  const baselineDate = baseline.reduce((max, b) => b.baseline_date > max ? b.baseline_date : max, "");
+
+  // Seed from baseline
+  for (const b of baseline) {
+    if (b.baseline_date !== baselineDate) continue; // only use latest baseline
+    bySku[b.sku] = (bySku[b.sku] ?? 0) + b.cases;
+    const wh = b.warehouse as Warehouse;
+    const k = `${b.sku}|${wh}`;
+    if (!bySkuWh[k]) bySkuWh[k] = { sku: b.sku as SKU, warehouse: wh, cases: 0 };
+    bySkuWh[k].cases += b.cases;
+  }
+
+  // Add only movements AFTER the baseline date
+  for (const r of movements) {
+    if (r.movement_date <= baselineDate) continue;
+    const delta = r.type === "In" ? Number(r.cases) : -Number(r.cases);
+    bySku[r.sku] = (bySku[r.sku] ?? 0) + delta;
+    const k = `${r.sku}|${r.warehouse}`;
+    if (!bySkuWh[k]) bySkuWh[k] = { sku: r.sku as SKU, warehouse: r.warehouse as Warehouse, cases: 0 };
+    bySkuWh[k].cases += delta;
+  }
+
+  return { bySku, bySkuWh };
+}
+
 import { FPSummaryTab } from "@/components/fp/fp-summary-tab";
 import { LotMasterTab } from "@/components/fp/lot-master-tab";
 
@@ -48,32 +112,28 @@ const STATUS_PILL: Record<string, string> = {
   OK: "bg-emerald-100 text-emerald-700",
 };
 
-function FPStockTab({ movements, orders, loading }: { movements: FPRow[]; orders: any[]; loading: boolean }) {
+function FPStockTab({ movements, orders, loading, baseline }: { movements: FPRow[]; orders: any[]; loading: boolean; baseline: BaselineRow[] }) {
   const { bySkuMonthKey } = useSalesForecast();
   const forecastNextMonth = useMemo(() => {
     const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() + 1);
     const key = `${d.getFullYear()}-${d.getMonth() + 1}`;
     return Object.fromEntries(SKUS.map(sku => [sku, bySkuMonthKey[sku]?.[key] ?? FORECAST_FALLBACK[sku]])) as Record<SKU, number>;
   }, [bySkuMonthKey]);
-  const stock = useMemo(() => {
-    const map: Record<string, { sku: SKU; warehouse: Warehouse; cases: number }> = {};
-    for (const r of movements) {
-      const k = `${r.sku}|${r.warehouse}`;
-      if (!map[k]) map[k] = { sku: r.sku as SKU, warehouse: r.warehouse as Warehouse, cases: 0 };
-      map[k].cases += r.type === "In" ? Number(r.cases) : -Number(r.cases);
-    }
-    return Object.values(map).sort((a,b) => a.sku.localeCompare(b.sku));
-  }, [movements]);
 
-  const bySku = useMemo(() => {
-    const m: Record<string, number> = {};
-    for (const r of movements) m[r.sku] = (m[r.sku] ?? 0) + (r.type === "In" ? Number(r.cases) : -Number(r.cases));
-    return m;
-  }, [movements]);
+  const { bySku, bySkuWh } = useMemo(() => calcStockFromBaseline(baseline, movements), [baseline, movements]);
+
+  const stock = useMemo(() => {
+    return Object.values(bySkuWh).sort((a,b) => a.sku.localeCompare(b.sku));
+  }, [bySkuWh]);
+
+  const baselineDate = useMemo(() => {
+    if (baseline.length === 0) return null;
+    return baseline.reduce((max, b) => b.baseline_date > max ? b.baseline_date : max, "");
+  }, [baseline]);
 
   const committed = useMemo(() => {
     const m: Record<string, number> = {};
-    const open = (orders ?? []).filter(o => o.status !== "Invoiced");
+    const open = (orders ?? []).filter(o => COMMITTED_STATUSES.includes(o.status));
     for (const sku of SKUS) m[sku] = open.reduce((s,o) => s + (Number(o[SKU_KEYS[sku]]) || 0), 0);
     return m;
   }, [orders]);
@@ -115,7 +175,11 @@ function FPStockTab({ movements, orders, loading }: { movements: FPRow[]; orders
               <p className="text-sm font-semibold" style={{color:"#1C2340"}}>
                 {isLineage ? '📦 Lineage Newark' : '🏭 Other Warehouses'}
               </p>
-              <p className="text-xs text-muted-foreground">Calculated from all fp_movements · last updated: {ymd()}</p>
+              <p className="text-xs text-muted-foreground">
+                {baselineDate
+                  ? `Baseline: ${baselineDate} + movements after`
+                  : `Calculated from all fp_movements`} · as of {ymd()}
+              </p>
             </div>
             <table className="w-full text-sm">
               <thead>
@@ -2046,7 +2110,8 @@ function calcProdSchedule(
 ) {
   const SK: Record<string,string>={XD:"xd_cases",PW:"pw_cases",HM:"hm_cases",WM:"wm_cases",WD:"wd_cases",Matcha:"matcha_cases"};
   const committed: Record<string,number>={};
-  for(const sku of SKUS) committed[sku]=orders.reduce((s,o)=>s+(Number(o[SK[sku]])||0),0);
+  const openOrders = orders.filter(o => COMMITTED_STATUSES.includes(o.status));
+  for(const sku of SKUS) committed[sku]=openOrders.reduce((s,o)=>s+(Number(o[SK[sku]])||0),0);
   const plan: Record<string,number[]>={};
   const stockProj: Record<string,number[]>={};
   const ingNeeded: Record<string,number>={};
@@ -2101,7 +2166,7 @@ function calcProdSchedule(
   }
   return {plan,stockProj,ingNeeded,ingByMonth};
 }
-function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any[] }) {
+function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; orders: any[]; baseline: BaselineRow[] }) {
   const [procTab, setProcTab] = useState<ProcSubTab>("schedule");
   const [safetyWoh,  setSafetyWoh]  = useState(5);
   const [minRun,     setMinRun]     = useState(1000);
@@ -2183,11 +2248,7 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
   const planSkuByMonthKey = useMemo(()=>skuForecastByMonthKey(planForecast),[planForecast]);
   const fcstOps = useMemo(()=>buildOpsForecast(planSkuByMonthKey),[planSkuByMonthKey]);
 
-  const bySku = useMemo(()=>{
-    const m:Record<string,number>={};
-    for(const r of movements) m[r.sku]=(m[r.sku]??0)+(r.type==="In"?Number(r.cases):-Number(r.cases));
-    return m;
-  },[movements]);
+  const { bySku } = useMemo(()=>calcStockFromBaseline(baseline, movements),[baseline, movements]);
 
   const {plan,stockProj,ingNeeded,ingByMonth} = useMemo(
     ()=>calcProdSchedule(bySku,orders,safetyWoh,minRun,freqMonths,fcstOps,wipBySku,skuMinRuns,manualProd,optimizeTruck),
@@ -2374,7 +2435,7 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
               <tbody>
                 {SKUS.map(sku=>{
                   const SK: Record<string,string>={XD:"xd_cases",PW:"pw_cases",HM:"hm_cases",WM:"wm_cases",WD:"wd_cases",Matcha:"matcha_cases"};
-                  const comm=orders.reduce((s,o)=>s+(Number(o[SK[sku]])||0),0);
+                  const comm=orders.filter(o=>COMMITTED_STATUSES.includes(o.status)).reduce((s,o)=>s+(Number(o[SK[sku]])||0),0);
                   const avail=Math.max(0,(bySku[sku]??0)-comm);
                   const w=wip[sku]??{cases:"",due:""};
                   const wipCases=parseInt(w.cases)||0;
@@ -2442,12 +2503,12 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
                 })}
                 <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
                   <td className="px-4 py-2 font-semibold sticky left-0 text-xs" style={{backgroundColor:"#1C2340"}}>Total cases</td>
-                  <td className="px-3 py-2 text-right font-mono text-xs">{SKUS.reduce((s,sku)=>s+Math.max(0,(bySku[sku]??0)-orders.reduce((a,o)=>a+(Number(o[{XD:"xd_cases",PW:"pw_cases",HM:"hm_cases",WM:"wm_cases",WD:"wd_cases",Matcha:"matcha_cases"}[sku]])||0),0)),0).toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right font-mono text-xs">{SKUS.reduce((s,sku)=>s+Math.max(0,(bySku[sku]??0)-orders.filter(o=>COMMITTED_STATUSES.includes(o.status)).reduce((a,o)=>a+(Number(o[{XD:"xd_cases",PW:"pw_cases",HM:"hm_cases",WM:"wm_cases",WD:"wd_cases",Matcha:"matcha_cases"}[sku]])||0),0)),0).toLocaleString()}</td>
                   <td className="px-3 py-2 text-center font-mono text-xs text-emerald-300">
                     {SKUS.reduce((s,sku)=>s+(wipBySku[sku]??0),0).toLocaleString()}
                   </td>
                   <td className="px-3 py-2 text-right font-mono text-xs">
-                    {SKUS.reduce((s,sku)=>s+Math.max(0,(bySku[sku]??0)-orders.reduce((a,o)=>a+(Number(o[{XD:"xd_cases",PW:"pw_cases",HM:"hm_cases",WM:"wm_cases",WD:"wd_cases",Matcha:"matcha_cases"}[sku]])||0),0))+(wipBySku[sku]??0),0).toLocaleString()}
+                    {SKUS.reduce((s,sku)=>s+Math.max(0,(bySku[sku]??0)-orders.filter(o=>COMMITTED_STATUSES.includes(o.status)).reduce((a,o)=>a+(Number(o[{XD:"xd_cases",PW:"pw_cases",HM:"hm_cases",WM:"wm_cases",WD:"wd_cases",Matcha:"matcha_cases"}[sku]])||0),0))+(wipBySku[sku]??0),0).toLocaleString()}
                   </td>
                   <td className="px-3 py-2"></td>
                   {totalByMonth.map((t,i)=>{
@@ -2775,6 +2836,7 @@ function OperationsPage() {
   const [fpMovements, setFpMovements] = useState<FPRow[]>([]);
   const [ipMovements, setIpMovements] = useState<IPRow[]>([]);
   const [orders, setOrders] = useState<any[]>([]);
+  const [baseline, setBaseline] = useState<BaselineRow[]>([]);
   const [loadingFP, setLoadingFP] = useState(true);
   const [loadingIP, setLoadingIP] = useState(true);
 
@@ -2792,10 +2854,17 @@ function OperationsPage() {
     const { data } = await supabase.from("orders").select("*");
     setOrders(data ?? []);
   }
+  async function loadBaseline() {
+    const { data } = await supabase
+      .from("fp_stock_baseline")
+      .select("*")
+      .order("baseline_date", { ascending: false });
+    setBaseline((data ?? []) as BaselineRow[]);
+  }
 
-  useEffect(() => { loadFP(); loadIP(); loadOrders(); }, []);
+  useEffect(() => { loadFP(); loadIP(); loadOrders(); loadBaseline(); }, []);
 
-  function reload() { loadFP(); loadIP(); loadOrders(); }
+  function reload() { loadFP(); loadIP(); loadOrders(); loadBaseline(); }
 
   const TABS: { id: OpsTab; label: string; emoji: string }[] = [
     { id: "stock",       label: "FP Stock",             emoji: "📊" },
@@ -2834,7 +2903,7 @@ function OperationsPage() {
         ))}
       </div>
 
-      {tab === "stock"       && <FPStockTab movements={fpMovements} orders={orders} loading={loadingFP} />}
+      {tab === "stock"       && <FPStockTab movements={fpMovements} orders={orders} loading={loadingFP} baseline={baseline} />}
       {tab === "summary"     && <FPSummaryTab movements={fpMovements} orders={orders} loading={loadingFP} />}
       {tab === "lots"        && <LotMasterTab movements={fpMovements} loading={loadingFP} />}
       {tab === "fp"          && <FPInputTab movements={fpMovements} loading={loadingFP} onAdded={reload} />}
@@ -2842,7 +2911,7 @@ function OperationsPage() {
       {tab === "ip"          && <IPInputTab movements={ipMovements} loading={loadingIP} onAdded={reload} />}
       {tab === "production"  && <ProductionTab fpMovements={fpMovements} ipMovements={ipMovements} onAdded={reload} />}
       {tab === "cogs"        && <COGSSimulatorTab />}
-      {tab === "procurement" && <ProcurementTab movements={fpMovements} orders={orders} />}
+      {tab === "procurement" && <ProcurementTab movements={fpMovements} orders={orders} baseline={baseline} />}
     </div>
   );
 }
