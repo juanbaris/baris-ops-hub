@@ -1043,7 +1043,7 @@ function IPSummaryTab({ movements }: { movements: IPRow[] }) {
         for (const m of rr) {
           const mon = (m.movement_date ?? '').slice(0,7);
           if (!mon) continue;
-          const cost = Number(m.total_cost ?? 0);
+          const cost = (Number(m.total_price ?? 0)) + (Number(m.shipping_price ?? 0)) + (Number(m.other_costs ?? 0));
           if (!monthly[mon]) monthly[mon] = {paid:0,pending:0};
           if (m.paid) monthly[mon].paid += cost;
           else monthly[mon].pending += cost;
@@ -1053,8 +1053,8 @@ function IPSummaryTab({ movements }: { movements: IPRow[] }) {
         const pending = rr
           .filter(m => !m.paid && m.estimated_payment_date)
           .sort((a,b) => a.estimated_payment_date.localeCompare(b.estimated_payment_date));
-        const totalPending = rr.filter(m => !m.paid).reduce((s,m) => s + Number(m.total_cost ?? 0), 0);
-        const totalPaid    = rr.filter(m =>  m.paid).reduce((s,m) => s + Number(m.total_cost ?? 0), 0);
+        const totalPending = rr.filter(m => !m.paid).reduce((s,m) => s + Number(m.total_price ?? 0) + Number(m.shipping_price ?? 0) + Number(m.other_costs ?? 0), 0);
+        const totalPaid    = rr.filter(m =>  m.paid).reduce((s,m) => s + Number(m.total_price ?? 0) + Number(m.shipping_price ?? 0) + Number(m.other_costs ?? 0), 0);
         return (
           <div className="space-y-4">
             {/* KPIs */}
@@ -1138,7 +1138,9 @@ function IPSummaryTab({ movements }: { movements: IPRow[] }) {
                           <td className="px-4 py-1.5 text-muted-foreground">{m.vendor ?? "—"}</td>
                           <td className="px-4 py-1.5 text-right font-mono">{Number(m.quantity).toLocaleString()} {m.unit}</td>
                           <td className="px-4 py-1.5 text-right font-mono text-orange-700">
-                            {m.total_cost ? `$${Math.round(Number(m.total_cost)).toLocaleString()}` : "—"}
+                            {(m.total_price || m.shipping_price || m.other_costs)
+                            ? `$${Math.round(Number(m.total_price??0)+Number(m.shipping_price??0)+Number(m.other_costs??0)).toLocaleString()}`
+                            : "—"}
                           </td>
                         </tr>
                       );
