@@ -255,7 +255,7 @@ function FPStockTab({ movements, orders, loading, baseline, lotMap }: { movement
   );
 }
 // ─── FP Input Tab ─────────────────────────────────────────────────────────────
-function FPInputTab({ movements, loading, onAdded }: { movements: FPRow[]; loading: boolean; onAdded: () => void }) {
+function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[]; loading: boolean; onAdded: () => void; lotMap: Record<string, LotCard> }) {
   const [form, setForm] = useState({
     movement_date: ymd(), type: "In" as MoveType, sku: "XD" as SKU,
     cases: "", warehouse: "Lineage Newark" as Warehouse,
@@ -2954,7 +2954,7 @@ function OperationsPage() {
       {tab === "stock"       && <FPStockTab movements={fpMovements} orders={orders} loading={loadingFP} baseline={baseline} lotMap={lotMap} />}
       {tab === "summary"     && <FPSummaryTab movements={fpMovements} orders={orders} loading={loadingFP} />}
       {tab === "lots"        && <LotMasterTab movements={fpMovements} loading={loadingFP} />}
-      {tab === "fp"          && <FPInputTab movements={fpMovements} loading={loadingFP} onAdded={reload} />}
+      {tab === "fp"          && <FPInputTab movements={fpMovements} loading={loadingFP} onAdded={reload} lotMap={lotMap} />}
       {tab === "ipsummary"   && <IPSummaryTab movements={ipMovements} />}
       {tab === "ip"          && <IPInputTab movements={ipMovements} loading={loadingIP} onAdded={reload} />}
       {tab === "production"  && <ProductionTab fpMovements={fpMovements} ipMovements={ipMovements} onAdded={reload} />}
