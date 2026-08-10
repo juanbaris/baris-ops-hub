@@ -337,7 +337,7 @@ function HomePage() {
   const [budget, setBudget] = useState<Record<number, number>>(BUDGET_FALLBACK);
   const [loading, setLoading] = useState(true);
   const [quoteIdx] = useState(() => Math.floor(Math.random() * QUOTES.length));
-  const [revUnit, setRevUnit] = useState<"usd" | "cases">("usd");
+  const [revUnit, setRevUnit] = useState<"usd" | "cases" | "units">("usd");
   const [period, setPeriod] = useState<"month" | "quarter" | "year" | "ytd">("month");
   const [exporting, setExporting] = useState(false);
 
@@ -386,6 +386,11 @@ function HomePage() {
         start: new Date(y, m, 1).toISOString().slice(0, 10),
         end: new Date(y, m + 1, 0).toISOString().slice(0, 10),
         label: `${MONTHS[m]} ${y}`,
+      };
+      case "lastmonth": return {
+        start: new Date(y, m - 1, 1).toISOString().slice(0, 10),
+        end: new Date(y, m, 0).toISOString().slice(0, 10),
+        label: `${MONTHS[m === 0 ? 11 : m - 1]} ${m === 0 ? y - 1 : y}`,
       };
       case "quarter": return {
         start: new Date(y, q * 3, 1).toISOString().slice(0, 10),
@@ -443,6 +448,7 @@ function HomePage() {
   // Keep MTD for backward compat
   const revenueMTD = revenueForPeriod;
   const casesMTD = casesForPeriod;
+  const unitsMTD = casesForPeriod * 8; // 8 units per case
 
   const pendingToCollect = useMemo(() => {
     // Correct logic: invoiced POs where invoice_date >= (today - payment_terms)
@@ -474,7 +480,7 @@ function HomePage() {
   }, [invoiced]);
 
   const openOrders = useMemo(() =>
-    orders.filter(o => ["Open", "Acknowledged", "Shipment"].includes(o.status)).length, [orders]);
+    orders.filter(o => o.status !== "Invoiced" && o.status !== "BOL Confirmed").length, [orders]);
 
   // ── Current stock ────────────────────────────────────────────────────────────
   const currentStock = useMemo(() => {
@@ -599,7 +605,7 @@ function HomePage() {
 
       {/* Period filter */}
       <div className="flex gap-1 rounded-xl bg-muted p-1 w-fit">
-        {([["month", "This month"], ["quarter", `Q${q + 1}`], ["year", "Full year"], ["ytd", "YTD"]] as const).map(([val, label]) => (
+        {([["month", "This month"], ["lastmonth", "Last month"], ["quarter", `Q${q + 1}`], ["year", "Full year"], ["ytd", "YTD"]] as const).map(([val, label]) => (
           <button key={val} onClick={() => setPeriod(val)}
             className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${period === val ? "text-white shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
             style={period === val ? { backgroundColor: "#1C2340" } : {}}>
@@ -623,14 +629,21 @@ function HomePage() {
                 style={revUnit === "usd" ? { backgroundColor: "#1C2340" } : {}}>$</button>
               <button onClick={() => setRevUnit("cases")}
                 className={`px-2 py-0.5 ${revUnit === "cases" ? "text-white" : "text-muted-foreground"}`}
-                style={revUnit === "cases" ? { backgroundColor: "#1C2340" } : {}}>Units</button>
+                style={revUnit === "cases" ? { backgroundColor: "#1C2340" } : {}}>Cases</button>
+              <button onClick={() => setRevUnit("units")}
+                className={`px-2 py-0.5 ${revUnit === "units" ? "text-white" : "text-muted-foreground"}`}
+                style={revUnit === "units" ? { backgroundColor: "#1C2340" } : {}}>Units</button>
             </div>
           </div>
           <div className="text-2xl font-bold font-mono" style={{ color: "#1C2340" }}>
-            {revUnit === "usd" ? fmtFull$(revenueMTD) : casesMTD.toLocaleString()}
+            {revUnit === "usd" ? fmtFull$(revenueMTD)
+              : revUnit === "cases" ? casesMTD.toLocaleString()
+              : unitsMTD.toLocaleString()}
           </div>
           <div className="text-xs mt-1 text-muted-foreground">
-            {revUnit === "usd" ? `${MONTHS[today.getMonth()]} ${today.getFullYear()} · gross sales` : "cases invoiced this month"}
+            {revUnit === "usd" ? `${periodRange.label} · gross sales`
+              : revUnit === "cases" ? `${casesMTD.toLocaleString()} cases invoiced`
+              : `${unitsMTD.toLocaleString()} units (cases × 8)`}
           </div>
         </div>
 
@@ -644,7 +657,7 @@ function HomePage() {
           subColor={avgFillRate == null ? "text-muted-foreground" : avgFillRate >= 97 ? "text-emerald-600" : avgFillRate >= 90 ? "text-orange-500" : "text-red-600"} />
         <KPICard icon="📦" label="Open Orders"
           value={String(openOrders)}
-          sub="Open + Acknowledged + Shipment" />
+          sub="All non-invoiced POs" />
       </div>
 
       {/* Weekly Meeting section */}
