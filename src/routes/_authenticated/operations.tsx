@@ -22,6 +22,7 @@ const WAREHOUSES: Warehouse[] = ["Lineage Newark","Cold Chain","Empire","Heinlei
 const FP_CONCEPTS: FPConcept[] = ["Production","Sale","Sample","Damage","Transfer","Free"];
 const IP_CONCEPTS: IPConcept[] = ["Procurement","Consumption","Damage","Transfer"];
 const FACILITIES: Facility[] = ["Heinlein","Empire","OOE"];
+const FULL_TRUCK = 6630;
 
 import { FPSummaryTab } from "@/components/fp/fp-summary-tab";
 import { LotMasterTab } from "@/components/fp/lot-master-tab";
@@ -29,7 +30,6 @@ import { LotMasterTab } from "@/components/fp/lot-master-tab";
 type OpsTab = "stock" | "fp" | "ip" | "production" | "cogs" | "procurement" | "summary" | "lots" | "ipsummary";
 
 function ymd(d = new Date()) { return d.toISOString().slice(0,10); }
-
 // ─── FP Stock Tab ─────────────────────────────────────────────────────────────
 const SKU_KEYS: Record<SKU, string> = { XD:"xd_cases", PW:"pw_cases", HM:"hm_cases", WM:"wm_cases", WD:"wd_cases", Matcha:"matcha_cases" };
 /** Fallback used only until the shared sales forecast is available. */
@@ -50,7 +50,6 @@ const STATUS_PILL: Record<string, string> = {
 
 function FPStockTab({ movements, orders, loading }: { movements: FPRow[]; orders: any[]; loading: boolean }) {
   const { bySkuMonthKey } = useSalesForecast();
-  // Next month's demand comes straight from the Sales "Forecast by SKU" tab.
   const forecastNextMonth = useMemo(() => {
     const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() + 1);
     const key = `${d.getFullYear()}-${d.getMonth() + 1}`;
@@ -66,7 +65,6 @@ function FPStockTab({ movements, orders, loading }: { movements: FPRow[]; orders
     return Object.values(map).sort((a,b) => a.sku.localeCompare(b.sku));
   }, [movements]);
 
-  // Summary by SKU
   const bySku = useMemo(() => {
     const m: Record<string, number> = {};
     for (const r of movements) m[r.sku] = (m[r.sku] ?? 0) + (r.type === "In" ? Number(r.cases) : -Number(r.cases));
@@ -82,7 +80,6 @@ function FPStockTab({ movements, orders, loading }: { movements: FPRow[]; orders
 
   return (
     <div className="space-y-5">
-      {/* SKU summary cards */}
       <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
         {SKUS.map(sku => {
           const qty = Math.round(bySku[sku] ?? 0);
@@ -108,7 +105,6 @@ function FPStockTab({ movements, orders, loading }: { movements: FPRow[]; orders
         })}
       </div>
 
-      {/* Detail by SKU × Warehouse — split into two cards */}
       {(['Lineage Newark', 'other'] as const).map(wh => {
         const isLineage = wh === 'Lineage Newark';
         const rows = stock.filter(s => s.cases > 0 && (isLineage ? s.warehouse === 'Lineage Newark' : s.warehouse !== 'Lineage Newark'));
@@ -171,7 +167,6 @@ function FPStockTab({ movements, orders, loading }: { movements: FPRow[]; orders
     </div>
   );
 }
-
 // ─── FP Input Tab ─────────────────────────────────────────────────────────────
 function FPInputTab({ movements, loading, onAdded }: { movements: FPRow[]; loading: boolean; onAdded: () => void }) {
   const [form, setForm] = useState({
@@ -254,7 +249,6 @@ function FPInputTab({ movements, loading, onAdded }: { movements: FPRow[]; loadi
 
   return (
     <div className="space-y-5">
-      {/* Form */}
       <div className="rounded-2xl border border-border bg-card shadow-sm p-5">
         {editingFP && (
           <div className="mb-3 rounded-xl border px-4 py-2 text-sm font-semibold"
@@ -314,7 +308,6 @@ function FPInputTab({ movements, loading, onAdded }: { movements: FPRow[]; loadi
         )}
       </div>
 
-      {/* Movements table */}
       <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
         <div className="px-5 py-3 border-b border-border bg-muted/30 flex items-center justify-between gap-3 flex-wrap">
           <p className="text-sm font-semibold" style={{color:"#1C2340"}}>FP Movements <span className="text-muted-foreground font-normal text-xs">({filtered.length} records)</span></p>
@@ -389,7 +382,6 @@ function FPInputTab({ movements, loading, onAdded }: { movements: FPRow[]; loadi
     </div>
   );
 }
-
 // ─── I&P Input Tab ────────────────────────────────────────────────────────────
 function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loading: boolean; onAdded: () => void }) {
   const [form, setForm] = useState({
@@ -551,7 +543,6 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
 
   return (
     <div className="space-y-5">
-      {/* ── Form ── */}
       <div className="rounded-2xl border border-border bg-card shadow-sm p-5">
         {editing && (
           <div className="mb-3 rounded-xl border px-4 py-2 text-sm font-semibold"
@@ -660,7 +651,6 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
         </div>
       </div>
 
-      {/* ── Filters ── */}
       <div className="flex flex-wrap items-center gap-2">
         <select value={filterType} onChange={e => setFilterType(e.target.value)}
           className="rounded-lg border border-border bg-background px-2 py-1 text-xs focus:outline-none">
@@ -683,7 +673,6 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
         </span>
       </div>
 
-      {/* ── Table ── */}
       <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
         <table className="w-full text-xs min-w-max">
           <thead>
@@ -776,7 +765,6 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
     </div>
   );
 }
-
 // ─── I&P Summary Tab ──────────────────────────────────────────────────────────
 function IPSummaryTab({ movements }: { movements: IPRow[] }) {
   const [filterMaterial, setFilterMaterial] = useState("all");
@@ -944,27 +932,20 @@ function IPSummaryTab({ movements }: { movements: IPRow[] }) {
         </table>
       </div>
 
-      {/* Historical inventory over time */}
       <IPHistoryTable movements={movements} />
     </div>
   );
 }
-
 // ─── BOM constants (from COGS Simulator · Source: Super BOM Consolidado) ─────
-// Weight per unit ≈ 0.344 lbs (5.5oz), 8 units/case → ~2.75 lbs of ingredients/case
 const UNITS_PER_CASE = 8;
-const LBS_PER_UNIT = 0.344; // ≈ 5.5oz, derived from COGS Simulator
+const LBS_PER_UNIT = 0.344;
 const SCRAP: Record<string, number> = { rasp: 0.10, choc: 0.08, other: 0 };
 
-// BOM: pct by weight in final product per SKU
-// materials: IQFRasp, RASGDark72, CorinthianWhite, ValcourMilk, PistachioPaste,
-//            HazelnutPaste, MatchaPowder, Spirulina, CocoaButter, SoyLecithin, SeaSalt,
-//            CupED/PW/HM/WM/WD/Matcha, LidED/PW/HM/WM/WD/Matcha, Sealer, Case
 type BomLine = {
-  material: string; // matches ip_movements.material
+  material: string;
   unit: "lbs" | "Piece" | "cases";
-  pct?: number;      // % by weight (for bulk ingredients, lbs)
-  perCase?: number;  // fixed qty per case (for packaging)
+  pct?: number;
+  perCase?: number;
   scrapGroup: "rasp" | "choc" | "other";
 };
 const BOM: Record<string, BomLine[]> = {
@@ -1040,13 +1021,11 @@ const BOM: Record<string, BomLine[]> = {
   ],
 };
 
-// Calculate qty needed from BOM for a given number of cases
 function calcBomQty(line: BomLine, cases: number): number {
   if (line.perCase !== undefined) return line.perCase * cases;
   const baseQty = (line.pct ?? 0) * cases * UNITS_PER_CASE * LBS_PER_UNIT;
   return baseQty / (1 - SCRAP[line.scrapGroup]);
 }
-
 // ─── FP Transfer Form ─────────────────────────────────────────────────────────
 function FPTransferForm({ fpMovements, onAdded }: { fpMovements: FPRow[]; onAdded: () => void }) {
   const [form, setForm] = useState({
@@ -1059,7 +1038,6 @@ function FPTransferForm({ fpMovements, onAdded }: { fpMovements: FPRow[]; onAdde
     <label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">{children}</label>
   );
 
-  // Look up COGS from existing FP movements for selected lot
   const lotCogs = useMemo(() => {
     if (!form.lot) return null;
     const match = fpMovements.find(m => m.lot_number === form.lot && m.type === "In");
@@ -1078,30 +1056,17 @@ function FPTransferForm({ fpMovements, onAdded }: { fpMovements: FPRow[]; onAdde
     const cases = Number(form.cases);
     const noteBase = `Transfer ${form.from_wh} → ${form.to_wh}${form.notes ? " · " + form.notes : ""}`;
 
-    // OUT from source warehouse
     const { error: e1 } = await supabase.from("fp_movements").insert({
-      movement_date: form.date,
-      type: "Out" as const,
-      sku: form.sku,
-      cases,
-      warehouse: form.from_wh as Warehouse,
-      lot_number: form.lot,
-      concept: "Transfer" as const,
-      cogs_per_case: lotCogs ?? null,
-      notes: noteBase,
+      movement_date: form.date, type: "Out" as const, sku: form.sku, cases,
+      warehouse: form.from_wh as Warehouse, lot_number: form.lot,
+      concept: "Transfer" as const, cogs_per_case: lotCogs ?? null, notes: noteBase,
     });
     if (e1) { toast.error(e1.message); setSaving(false); return; }
 
-    // IN to destination warehouse (COGS = original + freight)
     const { error: e2 } = await supabase.from("fp_movements").insert({
-      movement_date: form.date,
-      type: "In" as const,
-      sku: form.sku,
-      cases,
-      warehouse: form.to_wh as Warehouse,
-      lot_number: form.lot,
-      concept: "Transfer" as const,
-      cogs_per_case: newCogs ?? lotCogs ?? null,
+      movement_date: form.date, type: "In" as const, sku: form.sku, cases,
+      warehouse: form.to_wh as Warehouse, lot_number: form.lot,
+      concept: "Transfer" as const, cogs_per_case: newCogs ?? lotCogs ?? null,
       notes: noteBase + (freight > 0 ? ` · freight $${freight.toFixed(2)}/case` : ""),
     });
     if (e2) { toast.error(e2.message); setSaving(false); return; }
@@ -1154,7 +1119,6 @@ function FPTransferForm({ fpMovements, onAdded }: { fpMovements: FPRow[]; onAdde
           <input className={`${inp} mt-1`} value={form.notes}
             onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="Optional" /></div>
       </div>
-      {/* COGS preview */}
       {form.lot && (
         <div className="mb-4 rounded-xl bg-muted/30 border border-border px-4 py-2.5 flex gap-6 text-xs">
           <span>Source COGS: <span className="font-mono font-bold" style={{ color:"#1C2340" }}>
@@ -1283,7 +1247,6 @@ function IPHistoryTable({ movements }: { movements: IPRow[] }) {
     </div>
   );
 }
-
 // ─── Production Tab ───────────────────────────────────────────────────────────
 function ProductionTab({ fpMovements, ipMovements, onAdded }: {
   fpMovements: FPRow[]; ipMovements: IPRow[]; onAdded: () => void;
@@ -1294,7 +1257,7 @@ function ProductionTab({ fpMovements, ipMovements, onAdded }: {
   const [form, setForm] = useState({
     run_date: ymd(), facility: "Heinlein" as Facility, sku: "XD" as SKU,
     cases_produced: "", lot_number: "", notes: "",
-    override_cogs: "",   // if blank → auto-calculated
+    override_cogs: "",
   });
   const [saving, setSaving] = useState(false);
   const [editingRun, setEditingRun] = useState<any | null>(null);
@@ -1367,7 +1330,6 @@ function ProductionTab({ fpMovements, ipMovements, onAdded }: {
   const cases = Number(form.cases_produced) || 0;
   const bom = BOM[form.sku] ?? [];
 
-  // IP stock available: build lot → qty + cogs map
   const ipStock = useMemo(() => {
     const map = new Map<string, { material: string; lot: string; qty: number; cogs: number | null; unit: string }>();
     for (const r of ipMovements) {
@@ -1381,24 +1343,20 @@ function ProductionTab({ fpMovements, ipMovements, onAdded }: {
     return map;
   }, [ipMovements]);
 
-  // BOM lines with calculated quantities and COGS
   const bomLines = useMemo(() => {
     if (cases <= 0) return bom.map(line => ({ ...line, qty: 0, cogsContrib: 0, availableLots: [] as any[], cogs: null as number | null }));
     return bom.filter(l => (l.pct ?? 0) > 0 || (l.perCase ?? 0) > 0).map(line => {
       const qty = calcBomQty(line, cases);
-      // Find available lots for this material
       const availableLots = [...ipStock.entries()]
         .filter(([, v]) => v.material === line.material && v.qty > 0)
         .map(([, v]) => v)
         .sort((a, b) => a.lot.localeCompare(b.lot));
-      // Use first available lot for COGS estimate
       const cogs = availableLots[0]?.cogs ?? null;
       const cogsContrib = cogs != null ? qty * cogs : 0;
       return { ...line, qty, cogsContrib, availableLots, cogs };
     });
   }, [bom, cases, ipStock]);
 
-  // Auto-calculate COGS/case from BOM
   const tolling = 0.65;
   const autoCogs = useMemo(() => {
     if (cases <= 0) return 0;
@@ -1425,12 +1383,10 @@ function ProductionTab({ fpMovements, ipMovements, onAdded }: {
       if (error) { toast.error(error.message); setSaving(false); return; }
       toast.success("Production run updated");
     } else {
-      // 1. Insert production run
       const { data: runData, error: runErr } = await supabase
         .from("production_runs").insert(runPayload).select().single();
       if (runErr || !runData) { toast.error(runErr?.message ?? "Failed"); setSaving(false); return; }
 
-      // 2. FP IN at Heinlein
       const fpWh: Warehouse = form.facility === "Heinlein" ? "Heinlein" : form.facility === "Empire" ? "Empire" : "OOE";
       await supabase.from("fp_movements").insert({
         movement_date: form.run_date, type: "In" as const,
@@ -1440,7 +1396,6 @@ function ProductionTab({ fpMovements, ipMovements, onAdded }: {
         notes: `Production run · ${form.facility} · ${form.run_date}`,
       });
 
-      // 3. IP OUT for each BOM ingredient (use first available lot per material)
       for (const line of bomLines) {
         if (line.qty <= 0) continue;
         const lot = line.availableLots[0];
@@ -1475,11 +1430,9 @@ function ProductionTab({ fpMovements, ipMovements, onAdded }: {
   }
 
   async function removeRun(id: string) {
-    // Find the run first so we can delete linked movements
     const runToDelete = runs.find(r => r.id === id);
     if (!runToDelete) { toast.error("Run not found"); return; }
 
-    // Delete linked FP IN movement (same lot, date, sku, concept=Production)
     await supabase.from("fp_movements")
       .delete()
       .eq("lot_number", runToDelete.lot_number)
@@ -1488,20 +1441,18 @@ function ProductionTab({ fpMovements, ipMovements, onAdded }: {
       .eq("movement_date", runToDelete.run_date)
       .eq("type", "In");
 
-    // Delete linked IP OUT movements (same run date, concept=Consumption, notes contain lot)
     await supabase.from("ip_movements")
       .delete()
       .eq("concept", "Consumption")
       .eq("movement_date", runToDelete.run_date)
       .ilike("notes", `%${runToDelete.lot_number}%`);
 
-    // Delete the run itself
     const { error } = await supabase.from("production_runs").delete().eq("id", id);
     if (error) { toast.error(error.message); return; }
     setConfirmId(null);
     toast.success(`Production run deleted · FP movement and IP consumptions removed`);
     loadRuns();
-    onAdded(); // reload FP and IP movements
+    onAdded();
   }
 
   const inp = "rounded-lg border border-border bg-background px-3 py-1.5 text-sm w-full focus:outline-none focus:ring-2 focus:ring-primary/30";
@@ -1511,7 +1462,6 @@ function ProductionTab({ fpMovements, ipMovements, onAdded }: {
 
   return (
     <div className="space-y-5">
-      {/* Mode toggle */}
       <div className="flex gap-1 rounded-xl bg-muted p-1 w-fit">
         {(["production","transfer"] as const).map(m => (
           <button key={m} onClick={() => setActiveForm(m)}
@@ -1522,12 +1472,10 @@ function ProductionTab({ fpMovements, ipMovements, onAdded }: {
         ))}
       </div>
 
-      {/* ── Transfer form ── */}
       {activeForm === "transfer" && (
         <FPTransferForm fpMovements={fpMovements} onAdded={onAdded} />
       )}
 
-      {/* ── Production form ── */}
       {activeForm === "production" && (
         <div className="rounded-2xl border border-border bg-card shadow-sm p-5">
           {editingRun && (
@@ -1594,7 +1542,6 @@ function ProductionTab({ fpMovements, ipMovements, onAdded }: {
               <input className={`${inp} mt-1`} value={form.notes} onChange={e => set("notes", e.target.value)} /></div>
           </div>
 
-          {/* BOM preview */}
           {cases > 0 && (
             <div className="rounded-xl border border-border bg-muted/20 p-3 mb-4">
               <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2">
@@ -1674,7 +1621,6 @@ function ProductionTab({ fpMovements, ipMovements, onAdded }: {
         </div>
       )}
 
-      {/* Production history */}
       <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
         <div className="px-5 py-3 border-b border-border bg-muted/30">
           <p className="text-sm font-semibold" style={{ color:"#1C2340" }}>Production History</p>
@@ -1737,7 +1683,6 @@ function ProductionTab({ fpMovements, ipMovements, onAdded }: {
     </div>
   );
 }
-
 // ─── COGS Simulator Tab ───────────────────────────────────────────────────────
 const BOM_DATA: Record<string, { lbs_per_case: number; ingredients: Record<string, number> }> = {
   PW:     { lbs_per_case: 2.5, ingredients: { "IQF Raspberry": 0.825, "Chocolate": 1.428, "Pistachio Paste": 0.200, "Cocoa Butter": 0.042, "Spirulina": 0.001 } },
@@ -1777,8 +1722,7 @@ function COGSSimulatorTab() {
     const bom = BOM_DATA[sku];
     if (!bom) return { rm: 0, total: 0, breakdown: [] };
     const breakdown = Object.entries(bom.ingredients).map(([ing, lbs]) => ({
-      ingredient: ing,
-      lbs,
+      ingredient: ing, lbs,
       price: prices[ing] ?? DEFAULT_PRICES[ing] ?? 3.0,
       cost: lbs * (prices[ing] ?? DEFAULT_PRICES[ing] ?? 3.0),
     }));
@@ -1789,21 +1733,14 @@ function COGSSimulatorTab() {
   const allIngredients = [...new Set(Object.values(BOM_DATA).flatMap(b => Object.keys(b.ingredients)))].sort();
   const detail = calcCOGS(selectedSku);
 
-  // Price sensitivity: what % change in each ingredient moves total COGS
-  const baseCOGS = calcCOGS(selectedSku).total;
-
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-
-        {/* Ingredient price inputs */}
         <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
           <div className="px-5 py-3 border-b border-border bg-muted/30 flex items-center justify-between">
             <p className="text-sm font-bold" style={{color:"#1C2340"}}>Ingredient Prices ($/lb)</p>
             <button onClick={() => setPrices({...DEFAULT_PRICES})}
-              className="rounded-lg px-3 py-1 text-xs border border-border hover:bg-muted">
-              ↺ Reset
-            </button>
+              className="rounded-lg px-3 py-1 text-xs border border-border hover:bg-muted">↺ Reset</button>
           </div>
           <div className="divide-y divide-border/60">
             {allIngredients.map(ing => {
@@ -1819,8 +1756,7 @@ function COGSSimulatorTab() {
                         {diff > 0 ? "+" : ""}{diff.toFixed(1)}%
                       </span>
                     )}
-                    <input type="number" step="0.01" min="0"
-                      value={current}
+                    <input type="number" step="0.01" min="0" value={current}
                       onChange={e => setPrice(ing, e.target.value)}
                       className="w-20 text-right rounded-lg border border-border bg-background px-2 py-1 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/30" />
                   </div>
@@ -1840,7 +1776,6 @@ function COGSSimulatorTab() {
           </div>
         </div>
 
-        {/* COGS breakdown for selected SKU */}
         <div className="space-y-4">
           <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
             <div className="px-5 py-3 border-b border-border bg-muted/30 flex items-center gap-3">
@@ -1880,11 +1815,10 @@ function COGSSimulatorTab() {
             </div>
           </div>
 
-          {/* GM preview at $36.96 */}
           <div className="rounded-2xl border border-border bg-card shadow-sm p-4">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Gross Margin preview at standard price</p>
             {[["UNFI/KeHe", 36.96], ["RFD", 38.50]].map(([dist, price]) => {
-              const net = (price as number) * 0.82; // ~18% deductions
+              const net = (price as number) * 0.82;
               const gm = ((net - detail.total) / net * 100);
               return (
                 <div key={dist as string} className="flex items-center justify-between py-1.5 border-b border-border/40 last:border-0">
@@ -1899,7 +1833,6 @@ function COGSSimulatorTab() {
         </div>
       </div>
 
-      {/* All SKUs comparison table */}
       <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
         <div className="px-5 py-3 border-b border-border bg-muted/30">
           <p className="text-sm font-bold" style={{color:"#1C2340"}}>All SKUs COGS Comparison</p>
@@ -1948,7 +1881,6 @@ function COGSSimulatorTab() {
     </div>
   );
 }
-
 // ─── Procurement Planning Tab (full) ─────────────────────────────────────────
 const BOM_PCT: Record<string, Record<string, number>> = {
   XD:     { "IQF Raspberry":45.0, "RASG Dark 72%":55.0 },
@@ -1980,14 +1912,12 @@ const FORECAST_MONTHS_OPS = Array.from({ length: 12 }, (_, i) => {
   d.setMonth(d.getMonth() + i);
   return d.toLocaleString("en-US", { month: "short", year: "2-digit" });
 });
-/** Month keys ("YYYY-M") aligned with FORECAST_MONTHS_OPS labels. */
 const FORECAST_KEYS_OPS = Array.from({ length: 12 }, (_, i) => {
   const d = new Date();
   d.setDate(1);
   d.setMonth(d.getMonth() + i);
   return `${d.getFullYear()}-${d.getMonth() + 1}`;
 });
-/** Builds the 12-month per-SKU demand from the Sales module forecast. */
 function buildOpsForecast(bySkuMonthKey: Record<string, Record<string, number>>): Record<string, number[]> {
   return Object.fromEntries(SKUS.map(sku => [
     sku,
@@ -1996,6 +1926,9 @@ function buildOpsForecast(bySkuMonthKey: Record<string, Record<string, number>>)
 }
 
 type ProcSubTab = "schedule"|"stock_proj"|"bom_cogs"|"shopping"|"raw_materials";
+
+const MANUAL_PROD_KEY = "baris.ops.manualProd.v1";
+const SKU_MINS_KEY = "baris.ops.skuMins.v1";
 
 /** Production requirements coming from the Sales simulator (committed scenario wins). */
 function CommittedRequirements({ planScenario, onPlanScenarioChange }: { planScenario: SalesScenario; onPlanScenarioChange: (s: SalesScenario) => void }) {
@@ -2098,7 +2031,19 @@ function calcCOGSFull(prices: Record<string,number>, costs: typeof DEFAULT_PROD_
   }));
 }
 
-function calcProdSchedule(stockBySku:Record<string,number>, orders:any[], safetyWoh:number, minRun:number, freqMonths:number, FORECAST_SKU_OPS:Record<string,number[]>, wipBySku:Record<string,number>={}) {
+/** ─── MODIFIED calcProdSchedule with manual overrides, per-SKU mins, truck opt ── */
+function calcProdSchedule(
+  stockBySku: Record<string,number>,
+  orders: any[],
+  safetyWoh: number,
+  minRun: number,
+  freqMonths: number,
+  FORECAST_SKU_OPS: Record<string,number[]>,
+  wipBySku: Record<string,number>,
+  skuMinRuns: Record<string,number>,
+  manualProd: Record<string,number[]>,
+  optimizeTruck: boolean,
+) {
   const SK: Record<string,string>={XD:"xd_cases",PW:"pw_cases",HM:"hm_cases",WM:"wm_cases",WD:"wd_cases",Matcha:"matcha_cases"};
   const committed: Record<string,number>={};
   for(const sku of SKUS) committed[sku]=orders.reduce((s,o)=>s+(Number(o[SK[sku]])||0),0);
@@ -2109,19 +2054,32 @@ function calcProdSchedule(stockBySku:Record<string,number>, orders:any[], safety
   for(const sku of SKUS) {
     let running=Math.max(0,(stockBySku[sku]??0)-(committed[sku]??0))+(wipBySku[sku]??0);
     plan[sku]=[]; stockProj[sku]=[];
+    const skuMin = Math.max(minRun, skuMinRuns[sku] ?? 0);
     for(let i=0;i<FORECAST_MONTHS_OPS.length;i++) {
       const fcst=FORECAST_SKU_OPS[sku]?.[i]??0;
       const woh=fcst>0?(running/fcst)*4:99;
       let produce=0;
-      const isWindow=(i%freqMonths)===0;
-      if(isWindow) {
-        let lookahead=running;
-        for(let j=i;j<Math.min(i+freqMonths*2,FORECAST_MONTHS_OPS.length);j++) lookahead-=FORECAST_SKU_OPS[sku]?.[j]??0;
-        if(lookahead<0||woh<safetyWoh) {
-          const demand=FORECAST_MONTHS_OPS.slice(i,i+freqMonths).reduce((s,_,j)=>s+(FORECAST_SKU_OPS[sku]?.[i+j]??0),0);
-          const buf=Math.round((safetyWoh/4)*(fcst||1));
-          const needed=demand+buf-running;
-          if(needed>0) produce=Math.ceil(needed/minRun)*minRun;
+      const manualVal = manualProd[sku]?.[i] ?? 0;
+      if (manualVal > 0) {
+        // Manual override takes precedence
+        produce = manualVal;
+      } else {
+        // Auto-planner logic
+        const isWindow=(i%freqMonths)===0;
+        if(isWindow) {
+          let lookahead=running;
+          for(let j=i;j<Math.min(i+freqMonths*2,FORECAST_MONTHS_OPS.length);j++) lookahead-=FORECAST_SKU_OPS[sku]?.[j]??0;
+          if(lookahead<0||woh<safetyWoh) {
+            const demand=FORECAST_MONTHS_OPS.slice(i,i+freqMonths).reduce((s,_,j)=>s+(FORECAST_SKU_OPS[sku]?.[i+j]??0),0);
+            const buf=Math.round((safetyWoh/4)*(fcst||1));
+            const needed=demand+buf-running;
+            if(needed>0) {
+              produce=Math.ceil(needed/skuMin)*skuMin;
+              if (optimizeTruck && produce > 0) {
+                produce = Math.ceil(produce / FULL_TRUCK) * FULL_TRUCK;
+              }
+            }
+          }
         }
       }
       plan[sku].push(produce);
@@ -2143,7 +2101,6 @@ function calcProdSchedule(stockBySku:Record<string,number>, orders:any[], safety
   }
   return {plan,stockProj,ingNeeded,ingByMonth};
 }
-
 function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any[] }) {
   const [procTab, setProcTab] = useState<ProcSubTab>("schedule");
   const [safetyWoh,  setSafetyWoh]  = useState(5);
@@ -2153,11 +2110,37 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
   const [prodCosts,  setProdCosts]  = useState({...DEFAULT_PROD_COSTS});
   const [scrap,      setScrap]      = useState({raspberry:0.10,chocolate:0.08});
   const [ingInv,     setIngInv]     = useState<Record<string,string>>(Object.fromEntries(ALL_INGS.map(k=>[k,""])));
-  // WIP = cases currently being produced (manual entry), counted as available stock.
   const WIP_KEY="baris.ops.wip.v1";
   const [wip, setWip] = useState<Record<string,{cases:string;due:string}>>(
     Object.fromEntries(SKUS.map(s=>[s,{cases:"",due:""}])));
   const [shopScope, setShopScope] = useState<"next"|"3m"|"all">("next");
+  // ─── NEW: truck optimization ───
+  const [optimizeTruck, setOptimizeTruck] = useState(false);
+  // ─── NEW: per-SKU minimum runs ───
+  const [skuMinRuns, setSkuMinRuns] = useState<Record<string,number>>(
+    () => {
+      try { const raw = window.localStorage.getItem(SKU_MINS_KEY); if (raw) return JSON.parse(raw); } catch {}
+      return Object.fromEntries(SKUS.map(s=>[s,0]));
+    }
+  );
+  const [showSkuMins, setShowSkuMins] = useState(false);
+  // ─── NEW: manual production overrides ───
+  const [manualProd, setManualProd] = useState<Record<string,number[]>>(
+    () => {
+      try { const raw = window.localStorage.getItem(MANUAL_PROD_KEY); if (raw) return JSON.parse(raw); } catch {}
+      return Object.fromEntries(SKUS.map(s=>[s, FORECAST_MONTHS_OPS.map(()=>0)]));
+    }
+  );
+
+  // Persist per-SKU mins
+  useEffect(()=>{
+    try { window.localStorage.setItem(SKU_MINS_KEY, JSON.stringify(skuMinRuns)); } catch {}
+  },[skuMinRuns]);
+  // Persist manual overrides
+  useEffect(()=>{
+    try { window.localStorage.setItem(MANUAL_PROD_KEY, JSON.stringify(manualProd)); } catch {}
+  },[manualProd]);
+
   useEffect(()=>{
     try{
       const raw=window.localStorage.getItem(WIP_KEY);
@@ -2171,10 +2154,26 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
       return next;
     });
   }
+  function updateSkuMin(sku:string, val:number){
+    setSkuMinRuns(prev=>({...prev,[sku]:val}));
+  }
+  function updateManualProd(sku:string, monthIdx:number, val:number){
+    setManualProd(prev=>{
+      const arr=[...(prev[sku]??FORECAST_MONTHS_OPS.map(()=>0))];
+      arr[monthIdx]=val;
+      return {...prev,[sku]:arr};
+    });
+  }
+  function clearAllManual(){
+    setManualProd(Object.fromEntries(SKUS.map(s=>[s, FORECAST_MONTHS_OPS.map(()=>0)])));
+    toast.success("All manual overrides cleared");
+  }
+
+  const hasAnyManual = useMemo(()=>SKUS.some(sku=>(manualProd[sku]??[]).some(v=>v>0)),[manualProd]);
+
   const wipBySku = useMemo(()=>Object.fromEntries(SKUS.map(s=>[s,parseInt(wip[s]?.cases??"")||0])),[wip]);
   const { bySkuMonthKey } = useSalesForecast();
   const [planScenario, setPlanScenario] = useState<SalesScenario>("Normal");
-  // Local forecast from selected plan scenario (no levers = pure scenario base cases)
   const planForecast = useMemo(()=>calcForecast(
     planScenario,
     DEFAULT_VEL_CHAINS.map(()=>false as boolean), DEFAULT_VEL_CHAINS.map(ch=>ch.velCurrent),
@@ -2190,7 +2189,10 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
     return m;
   },[movements]);
 
-  const {plan,stockProj,ingNeeded,ingByMonth} = useMemo(()=>calcProdSchedule(bySku,orders,safetyWoh,minRun,freqMonths,fcstOps,wipBySku),[bySku,orders,safetyWoh,minRun,freqMonths,fcstOps,wipBySku]);
+  const {plan,stockProj,ingNeeded,ingByMonth} = useMemo(
+    ()=>calcProdSchedule(bySku,orders,safetyWoh,minRun,freqMonths,fcstOps,wipBySku,skuMinRuns,manualProd,optimizeTruck),
+    [bySku,orders,safetyWoh,minRun,freqMonths,fcstOps,wipBySku,skuMinRuns,manualProd,optimizeTruck]
+  );
   const cogs = useMemo(()=>calcCOGSFull(ingPrices,prodCosts,scrap),[ingPrices,prodCosts,scrap]);
 
   const totalByMonth = FORECAST_MONTHS_OPS.map((_,i)=>SKUS.reduce((s,sku)=>s+(plan[sku]?.[i]??0),0));
@@ -2201,7 +2203,6 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
     if(shopScope==="3m") return [nextRunIdx,Math.min(nextRunIdx+2,FORECAST_MONTHS_OPS.length-1)] as const;
     return [0,FORECAST_MONTHS_OPS.length-1] as const;
   },[shopScope,nextRunIdx]);
-  /** Ingredient lbs required for the selected shopping-list window. */
   const ingWindow = useMemo(()=>{
     const out:Record<string,number>={};
     if(!shopRange) return out;
@@ -2215,6 +2216,25 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
     ? totalByMonth.slice(shopRange[0],shopRange[1]+1).reduce((a,b)=>a+b,0) : 0;
   const totalProduce = SKUS.reduce((s,sku)=>s+(plan[sku]??[]).reduce((a,b)=>a+b,0),0);
   const weightedCOGS = SKUS.reduce((s,sku)=>s+(cogs[sku]?.per_case??0)*(SKU_MIX_PCT[sku]??0),0);
+
+  // ─── NEW: compute WoH coverage per SKU when manual overrides exist ───
+  const manualCoverage = useMemo(()=>{
+    if (!hasAnyManual) return null;
+    const result: Record<string,{woh:number;monthsCovered:number}> = {};
+    for (const sku of SKUS) {
+      const finalStock = stockProj[sku]?.[stockProj[sku].length-1] ?? 0;
+      const avgMonthlyFcst = (fcstOps[sku]??[]).reduce((a,b)=>a+b,0) / 12;
+      const woh = avgMonthlyFcst > 0 ? (finalStock / avgMonthlyFcst) * 4 : 99;
+      // Count months until stock goes negative
+      let monthsCov = 0;
+      for (const s of (stockProj[sku]??[])) {
+        if (s <= 0) break;
+        monthsCov++;
+      }
+      result[sku] = { woh: Math.round(woh*10)/10, monthsCovered: monthsCov };
+    }
+    return result;
+  },[hasAnyManual,stockProj,fcstOps]);
 
   const inp="rounded border border-border bg-background px-2 py-1 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-primary/30";
   const SUBTABS: {id:ProcSubTab;label:string}[] = [
@@ -2235,7 +2255,7 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
             <span className="text-xs text-muted-foreground">weeks</span>
           </div>
           <div className="flex items-center gap-2">
-            <label className="text-xs font-semibold text-muted-foreground">Minimum run</label>
+            <label className="text-xs font-semibold text-muted-foreground">Minimum run (global)</label>
             <input type="number" min={500} step={500} value={minRun} onChange={e=>setMinRun(Number(e.target.value))} className={`${inp} w-20 text-center`}/>
             <span className="text-xs text-muted-foreground">cases</span>
           </div>
@@ -2246,6 +2266,20 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
               <option value={3}>Quarterly</option><option value={4}>Every 4 months</option><option value={6}>Biannual</option>
             </select>
           </div>
+          {/* NEW: Truck optimization toggle */}
+          <div className="flex items-center gap-2">
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input type="checkbox" checked={optimizeTruck} onChange={e=>setOptimizeTruck(e.target.checked)}
+                className="h-4 w-4 accent-emerald-600 cursor-pointer rounded" />
+              <span className="text-xs font-semibold text-muted-foreground">🚛 Full truck</span>
+            </label>
+            <span className="text-[10px] text-muted-foreground">({FULL_TRUCK.toLocaleString()} cases)</span>
+          </div>
+          {/* NEW: Per-SKU mins toggle */}
+          <button onClick={()=>setShowSkuMins(v=>!v)}
+            className={`rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${showSkuMins ? "border-blue-400 bg-blue-50 text-blue-700" : "border-border text-muted-foreground hover:text-foreground"}`}>
+            {showSkuMins ? "▾ SKU mins" : "▸ SKU mins"}
+          </button>
           <div className="ml-auto flex gap-6 text-center">
             <div><p className="text-[10px] text-muted-foreground uppercase tracking-wide">Total to produce</p>
               <p className="text-xl font-bold font-mono" style={{color:"#A3224A"}}>{totalProduce.toLocaleString()} cases</p></div>
@@ -2253,7 +2287,51 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
               <p className="text-xl font-bold font-mono" style={{color:"#1C2340"}}>${weightedCOGS.toFixed(2)}/case</p></div>
           </div>
         </div>
+        {/* Per-SKU minimums panel */}
+        {showSkuMins && (
+          <div className="mt-4 pt-4 border-t border-border">
+            <p className="text-xs font-semibold text-muted-foreground mb-2">Minimum production per SKU (overrides global min when higher)</p>
+            <div className="flex flex-wrap gap-3">
+              {SKUS.map(sku=>(
+                <div key={sku} className="flex items-center gap-1.5">
+                  <span className="text-xs font-semibold w-14" style={{color:"#1C2340"}}>{sku}</span>
+                  <input type="number" min={0} step={500} value={skuMinRuns[sku]||""} placeholder={String(minRun)}
+                    onChange={e=>updateSkuMin(sku, parseInt(e.target.value)||0)}
+                    className={`${inp} w-20 text-center ${(skuMinRuns[sku]??0)>0?"bg-blue-50 border-blue-300":""}`}/>
+                  <span className="text-[10px] text-muted-foreground">cases</span>
+                </div>
+              ))}
+              <button onClick={()=>setSkuMinRuns(Object.fromEntries(SKUS.map(s=>[s,0])))}
+                className="rounded border border-border px-2 py-1 text-[10px] text-muted-foreground hover:bg-muted self-center">
+                Reset all
+              </button>
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Manual override banner */}
+      {hasAnyManual && (
+        <div className="rounded-xl border-2 border-blue-300 bg-blue-50 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-bold text-blue-800">✏️ Manual production overrides active</p>
+            <p className="text-xs text-blue-600 mt-0.5">
+              Blue cells = your manual entries. Auto-planner adjusts remaining months around them.
+              {manualCoverage && (
+                <span className="ml-2">
+                  Coverage: {SKUS.filter(s=>(manualProd[s]??[]).some(v=>v>0)).map(s=>
+                    `${s}: ${manualCoverage[s]?.monthsCovered ?? 0} months (${manualCoverage[s]?.woh ?? 0}w end-WoH)`
+                  ).join(" · ")}
+                </span>
+              )}
+            </p>
+          </div>
+          <button onClick={clearAllManual}
+            className="rounded-lg border border-blue-400 px-4 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100">
+            Clear all overrides
+          </button>
+        </div>
+      )}
 
       {/* Sub-tabs */}
       <div className="flex gap-1 overflow-x-auto border-b border-border">
@@ -2270,10 +2348,14 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
       {procTab==="schedule" && (
         <div className="space-y-3">
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
-            🏭 Yellow cells = planned runs · Frequency: {["","monthly","bimonthly","quarterly","four-monthly","","semiannual"][freqMonths]} · Safety {safetyWoh}w · Min {minRun.toLocaleString()} cases
+            🏭 Yellow cells = auto-planned runs · Frequency: {["","monthly","bimonthly","quarterly","four-monthly","","semiannual"][freqMonths]} · Safety {safetyWoh}w · Global min {minRun.toLocaleString()} cases
+            {optimizeTruck && ` · 🚛 Truck optimization ON (${FULL_TRUCK.toLocaleString()} cases/truck)`}
           </div>
           <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-700">
-            🛠️ "In production now" = cases currently being manufactured. They count as available stock, so the planner shifts or shrinks the suggested runs. Once the run is finished, log it in Production (creates the real In movement) and clear the cell here.
+            ✏️ Click any month cell to enter a <strong>manual production override</strong>. Blue cells = manual entries (override auto-planner). Yellow = auto-suggested. The planner recalculates stock, WoH, and materials around your manual values.
+          </div>
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs text-emerald-700">
+            🛠️ "In production now" = cases currently being manufactured. They count as available stock. Once the run is finished, log it in Production and clear the cell.
           </div>
           <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
             <table className="text-xs min-w-max w-full">
@@ -2282,9 +2364,11 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
                   <th className="px-4 py-2.5 text-left sticky left-0" style={{backgroundColor:"#1C2340"}}>SKU</th>
                   <th className="px-3 py-2.5 text-right">Stock avail.</th>
                   <th className="px-3 py-2.5 text-center min-w-[150px]">In production now</th>
-                  <th className="px-3 py-2.5 text-right">Available + WIP</th>
-                  {FORECAST_MONTHS_OPS.map(m=><th key={m} className="px-3 py-2.5 text-center min-w-[75px]">{m}</th>)}
+                  <th className="px-3 py-2.5 text-right">Avail + WIP</th>
+                  <th className="px-3 py-2.5 text-center min-w-[60px]">SKU min</th>
+                  {FORECAST_MONTHS_OPS.map(m=><th key={m} className="px-3 py-2.5 text-center min-w-[85px]">{m}</th>)}
                   <th className="px-4 py-2.5 text-right">Total</th>
+                  <th className="px-3 py-2.5 text-right">End WoH</th>
                 </tr>
               </thead>
               <tbody>
@@ -2295,6 +2379,10 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
                   const w=wip[sku]??{cases:"",due:""};
                   const wipCases=parseInt(w.cases)||0;
                   const skuTotal=(plan[sku]??[]).reduce((a,b)=>a+b,0);
+                  const endStock = stockProj[sku]?.[stockProj[sku].length-1] ?? 0;
+                  const avgFcst = (fcstOps[sku]??[]).reduce((a,b)=>a+b,0)/12;
+                  const endWoh = avgFcst>0?(endStock/avgFcst)*4:99;
+                  const skuMinVal = skuMinRuns[sku] ?? 0;
                   return (
                     <tr key={sku} className="border-t border-border/60 hover:bg-muted/20">
                       <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{sku} <span className="text-muted-foreground font-normal text-[10px]">({SKU_ITEMS[sku as SKU]})</span></td>
@@ -2312,14 +2400,42 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
                       <td className="px-3 py-1.5 text-right font-mono font-semibold" style={{color:wipCases>0?"#10B981":undefined}}>
                         {(avail+wipCases).toLocaleString()}
                       </td>
-                      {(plan[sku]??[]).map((prod,i)=>(
-                        <td key={i} className={`px-3 py-1.5 text-center font-mono font-semibold ${prod>0?"text-amber-900":"text-muted-foreground"}`}
-                          style={prod>0?{backgroundColor:"#FEF08A"}:{}}>
-                          {prod>0?prod.toLocaleString():"—"}
-                        </td>
-                      ))}
+                      <td className="px-3 py-1.5 text-center">
+                        <input type="number" min={0} step={500} value={skuMinVal||""} placeholder="—"
+                          onChange={e=>updateSkuMin(sku, parseInt(e.target.value)||0)}
+                          className={`${inp} w-16 text-center ${skuMinVal>0?"bg-blue-50 border-blue-300":""}`}
+                          title={`Per-SKU minimum for ${sku} (0 = use global min ${minRun})`}/>
+                      </td>
+                      {(plan[sku]??[]).map((prod,i)=>{
+                        const isManual = (manualProd[sku]?.[i] ?? 0) > 0;
+                        const isAuto = !isManual && prod > 0;
+                        return (
+                          <td key={i} className="px-1 py-1 text-center"
+                            style={isManual?{backgroundColor:"#DBEAFE"}:isAuto?{backgroundColor:"#FEF08A"}:{}}>
+                            <input type="number" min={0} step={500}
+                              value={isManual ? (manualProd[sku]?.[i]??0) : (prod > 0 ? prod : "")}
+                              placeholder={prod > 0 && !isManual ? String(prod) : "—"}
+                              onChange={e=>{
+                                const val = parseInt(e.target.value) || 0;
+                                updateManualProd(sku, i, val);
+                              }}
+                              className={`w-full text-center border rounded px-1 py-1 text-xs font-mono font-semibold focus:outline-none focus:ring-1 focus:ring-primary/30
+                                ${isManual
+                                  ? "border-blue-400 bg-blue-50 text-blue-900"
+                                  : isAuto
+                                    ? "border-amber-300 bg-amber-50/50 text-amber-900"
+                                    : "border-transparent bg-transparent text-muted-foreground"
+                                }`}
+                              title={isManual ? `Manual override: ${prod.toLocaleString()} cases` : isAuto ? `Auto-suggested: ${prod.toLocaleString()} cases (click to override)` : "No production planned (enter value to override)"}
+                            />
+                          </td>
+                        );
+                      })}
                       <td className="px-4 py-1.5 text-right font-mono font-bold" style={{color:skuTotal>0?"#A3224A":"#10B981"}}>
                         {skuTotal>0?skuTotal.toLocaleString():"✓"}
+                      </td>
+                      <td className={`px-3 py-1.5 text-right font-mono text-xs font-semibold ${endWoh<4?"text-red-600":endWoh<safetyWoh?"text-orange-500":"text-emerald-600"}`}>
+                        {endWoh<99?`${endWoh.toFixed(1)}w`:"∞"}
                       </td>
                     </tr>
                   );
@@ -2333,13 +2449,18 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
                   <td className="px-3 py-2 text-right font-mono text-xs">
                     {SKUS.reduce((s,sku)=>s+Math.max(0,(bySku[sku]??0)-orders.reduce((a,o)=>a+(Number(o[{XD:"xd_cases",PW:"pw_cases",HM:"hm_cases",WM:"wm_cases",WD:"wd_cases",Matcha:"matcha_cases"}[sku]])||0),0))+(wipBySku[sku]??0),0).toLocaleString()}
                   </td>
-                  {totalByMonth.map((t,i)=>(
-                    <td key={i} className="px-3 py-2 text-center font-mono font-bold text-amber-300"
-                      style={t>0?{backgroundColor:"rgba(254,240,138,0.15)"}:{}}>
-                      {t>0?t.toLocaleString():"—"}
-                    </td>
-                  ))}
+                  <td className="px-3 py-2"></td>
+                  {totalByMonth.map((t,i)=>{
+                    const hasManual = SKUS.some(sku=>(manualProd[sku]?.[i]??0)>0);
+                    return (
+                      <td key={i} className="px-3 py-2 text-center font-mono font-bold"
+                        style={hasManual?{backgroundColor:"rgba(191,219,254,0.3)",color:"#93C5FD"}:t>0?{backgroundColor:"rgba(254,240,138,0.15)",color:"#FDE047"}:{}}>
+                        {t>0?t.toLocaleString():"—"}
+                      </td>
+                    );
+                  })}
                   <td className="px-4 py-2 text-right font-mono font-bold text-emerald-400">{totalProduce.toLocaleString()}</td>
+                  <td className="px-3 py-2"></td>
                 </tr>
               </tbody>
             </table>
@@ -2368,10 +2489,11 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
                       const isCrit=stock<0||woh<2;
                       const isLow=!isCrit&&woh<safetyWoh;
                       const isProd=(plan[sku]?.[i]??0)>0;
+                      const isManual=(manualProd[sku]?.[i]??0)>0;
                       return (
                         <td key={i} className="px-3 py-1.5 text-center font-mono text-xs"
-                          style={{backgroundColor:isCrit?"#FEE2E2":isLow?"#FEF3C7":isProd?"#DCFCE7":undefined,
-                            color:isCrit?"#DC2626":isLow?"#92400E":"#1C2340",fontWeight:isProd?"bold":undefined}}>
+                          style={{backgroundColor:isCrit?"#FEE2E2":isLow?"#FEF3C7":isManual?"#DBEAFE":isProd?"#DCFCE7":undefined,
+                            color:isCrit?"#DC2626":isLow?"#92400E":"#1C2340",fontWeight:isProd||isManual?"bold":undefined}}>
                           {stock.toLocaleString()}
                           {woh<99&&<div className="text-[9px] opacity-60">{woh.toFixed(1)}w</div>}
                         </td>
@@ -2383,7 +2505,7 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
             </table>
           </div>
           <div className="flex gap-3 text-xs flex-wrap">
-            {[["bg-red-100","🔴 Critical (< 2w or negative)"],["bg-yellow-100",`🟡 Low (< ${safetyWoh}w safety)`],["bg-green-100","🟢 Production month"]].map(([cls,label])=>(
+            {[["bg-red-100","🔴 Critical (< 2w or negative)"],["bg-yellow-100",`🟡 Low (< ${safetyWoh}w safety)`],["bg-green-100","🟢 Auto production month"],["bg-blue-100","🔵 Manual override month"]].map(([cls,label])=>(
               <div key={label} className={`flex items-center gap-1.5 rounded px-3 py-1 ${cls}`}><span>{label}</span></div>
             ))}
           </div>
@@ -2647,80 +2769,84 @@ function ProcurementTab({ movements, orders }: { movements: FPRow[]; orders: any
     </div>
   );
 }
-
-// ─── Main ─────────────────────────────────────────────────────────────────────
+// ─── Main Operations Page ─────────────────────────────────────────────────────
 function OperationsPage() {
   const [tab, setTab] = useState<OpsTab>("stock");
   const [fpMovements, setFpMovements] = useState<FPRow[]>([]);
-  const [fpMovementsAll, setFpMovementsAll] = useState<FPRow[]>([]);
   const [ipMovements, setIpMovements] = useState<IPRow[]>([]);
   const [orders, setOrders] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loadingFP, setLoadingFP] = useState(true);
+  const [loadingIP, setLoadingIP] = useState(true);
 
-  async function loadAll() {
-    const [fp, fpAll, ip, ord] = await Promise.all([
-      supabase.from("fp_movements").select("*").neq("concept","Historical").order("movement_date", { ascending: false }),
-      supabase.from("fp_movements").select("*").order("movement_date", { ascending: false }),
-      supabase.from("ip_movements").select("*").order("movement_date", { ascending: false }),
-      supabase.from("customer_orders").select("*").neq("status", "Invoiced").order("po_date", { ascending: false }),
-    ]);
-    setFpMovements(fp.data ?? []);
-    setFpMovementsAll(fpAll.data ?? []);
-    setIpMovements(ip.data ?? []);
-    setOrders(ord.data ?? []);
-    setLoading(false);
+  async function loadFP() {
+    const { data } = await supabase.from("fp_movements").select("*").order("movement_date", { ascending: false });
+    setFpMovements(data ?? []);
+    setLoadingFP(false);
+  }
+  async function loadIP() {
+    const { data } = await supabase.from("ip_movements").select("*").order("movement_date", { ascending: false });
+    setIpMovements(data ?? []);
+    setLoadingIP(false);
+  }
+  async function loadOrders() {
+    const { data } = await supabase.from("orders").select("*");
+    setOrders(data ?? []);
   }
 
-  useEffect(() => { loadAll(); }, []);
+  useEffect(() => { loadFP(); loadIP(); loadOrders(); }, []);
 
-  const tabs: { id: OpsTab; label: string }[] = [
-    { id:"stock",       label:"FP Stock" },
-    { id:"fp",          label:"FP Input" },
-    { id:"ip",          label:"I&P Input" },
-    { id:"ipsummary",   label:"I&P Summary" },
-    { id:"production",  label:"Production" },
-    { id:"procurement", label:"Procurement Planning" },
-    { id:"cogs",        label:"COGS Simulator" },
-    { id:"summary",     label:"FP Summary" },
+  function reload() { loadFP(); loadIP(); loadOrders(); }
+
+  const TABS: { id: OpsTab; label: string; emoji: string }[] = [
+    { id: "stock",       label: "FP Stock",             emoji: "📊" },
+    { id: "summary",     label: "FP Summary",           emoji: "📋" },
+    { id: "lots",        label: "Lot Master",           emoji: "📦" },
+    { id: "fp",          label: "FP Movements",         emoji: "📥" },
+    { id: "ipsummary",   label: "I&P Summary",          emoji: "🧪" },
+    { id: "ip",          label: "I&P Movements",        emoji: "🧴" },
+    { id: "production",  label: "Production",           emoji: "🏭" },
+    { id: "cogs",        label: "COGS Simulator",       emoji: "💰" },
+    { id: "procurement", label: "Procurement Planning", emoji: "📅" },
   ];
-  const refTabs: { id: OpsTab; label: string }[] = [{ id: "lots", label: "Lot Master" }];
 
   return (
-    <>
-      <PageHeader title="Operations" subtitle="Finished product, ingredients & packaging, and production runs." />
+    <div>
+      <PageHeader
+        title="Operations"
+        description="Inventory, production, and procurement planning"
+      />
 
-      <div className="mb-5 flex gap-1 border-b border-border">
-        {tabs.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)}
-            className={`px-4 py-2 text-sm font-semibold border-b-2 transition-colors ${tab === t.id ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
-            style={tab === t.id ? {borderColor:"#A3224A", color:"#A3224A"} : {}}>
-            {t.label}
-          </button>
-        ))}
-        <div className="mx-2 my-1.5 w-px self-stretch bg-border" />
-        {refTabs.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)}
-            className="border-b-2 px-4 py-2 text-sm font-semibold transition-colors"
-            style={tab === t.id ? { borderColor: "#6B7280", color: "#6B7280" } : { borderColor: "transparent", color: "#9CA3AF" }}>
+      <div className="flex gap-1 overflow-x-auto border-b border-border mb-6 pb-0">
+        {TABS.map(t => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 -mb-px transition-colors ${
+              tab === t.id
+                ? "border-primary text-primary"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+            style={tab === t.id ? { borderColor: "#A3224A", color: "#A3224A" } : {}}
+          >
+            <span>{t.emoji}</span>
             {t.label}
           </button>
         ))}
       </div>
 
-      {tab === "stock"       && <FPStockTab movements={fpMovements} orders={orders} loading={loading} />}
-      {tab === "fp"          && <FPInputTab movements={fpMovementsAll} loading={loading} onAdded={loadAll} />}
-      {tab === "ip"          && <IPInputTab movements={ipMovements} loading={loading} onAdded={loadAll} />}
+      {tab === "stock"       && <FPStockTab movements={fpMovements} orders={orders} loading={loadingFP} />}
+      {tab === "summary"     && <FPSummaryTab movements={fpMovements} orders={orders} loading={loadingFP} />}
+      {tab === "lots"        && <LotMasterTab movements={fpMovements} loading={loadingFP} />}
+      {tab === "fp"          && <FPInputTab movements={fpMovements} loading={loadingFP} onAdded={reload} />}
       {tab === "ipsummary"   && <IPSummaryTab movements={ipMovements} />}
-      {tab === "production"  && <ProductionTab fpMovements={fpMovementsAll} ipMovements={ipMovements} onAdded={loadAll} />}
-      {tab === "procurement" && <ProcurementTab movements={fpMovements} orders={orders} />}
+      {tab === "ip"          && <IPInputTab movements={ipMovements} loading={loadingIP} onAdded={reload} />}
+      {tab === "production"  && <ProductionTab fpMovements={fpMovements} ipMovements={ipMovements} onAdded={reload} />}
       {tab === "cogs"        && <COGSSimulatorTab />}
-      {tab === "summary"     && <FPSummaryTab />}
-      {tab === "lots"        && <LotMasterTab />}
-    </>
+      {tab === "procurement" && <ProcurementTab movements={fpMovements} orders={orders} />}
+    </div>
   );
 }
 
 export const Route = createFileRoute("/_authenticated/operations")({
   component: OperationsPage,
-  head: () => ({ meta: [{ title: "Operations · BARIS" }] }),
 });
