@@ -1287,6 +1287,12 @@ function BalanceTab({ realMonths, actuals }: { realMonths: number; actuals: Reco
     const unitsSold = grossSalesK > 0 ? Math.round((grossSalesK * 1000) / 37) : 0;
     return { grossSales: grossSalesK, unitsSold, cogsPerUnit, logisticsPct, deductionPct, fixedCostsK: FIXED_COSTS_BEST_ESTIMATE[monthNum] ?? {} };
   }
+  function forecastCumulativeNI(idx: number): number {
+    if (latestRealIdx < 0 || idx <= latestRealIdx) return 0;
+    let acc = 0;
+    for (let i = latestRealIdx + 1; i <= idx; i++) acc += computeMonthlyNetIncome(buildContextForMonth(i));
+    return acc;
+  }
   function forecastCash(idx: number): number {
     if (latestRealIdx < 0) return 0;
     const baseCash = ['bofa_x6854','citi_bank','mercury_checking','mercury_treasury']
@@ -1338,25 +1344,36 @@ function BalanceTab({ realMonths, actuals }: { realMonths: number; actuals: Reco
   function getValue(row: BSNode, idx: number): number | null {
     if (row.kind === "section") return null;
     const real = bsByPeriod[PERIODS[idx]];
+    const isForecast = !real && idx > latestRealIdx && latestRealIdx >= 0;
+    const isBlank = !real && !isForecast; // months before the first real snapshot with no data
 
+    // ── Groups: sum children ──
     if (row.kind === "group") {
+      if (isBlank) return null;
       const items = (childMap[row.id] || [])
         .map(cid => BS_ROWS.find(r => r.id === cid))
         .filter((r): r is BSNode => r != null);
-      return items.reduce((acc, r) => acc + (getValue(r, idx) ?? 0), 0);
+      const vals = items.map(r => getValue(r, idx)).filter((v): v is number => v != null);
+      return vals.length ? vals.reduce((a,b)=>a+b,0) : null;
     }
 
+    // ── Totals ──
     if (row.kind === "total") {
-      // Prefer summing real children when available, else forecast formula
-      const children = (childMap[row.id] || [])
-        .map(cid => BS_ROWS.find(r => r.id === cid))
-        .filter((r): r is BSNode => r != null && r.kind !== "total");
-      if (real && children.length > 0) {
-        return children.reduce((s, c) => s + (getValue(c, idx) ?? 0), 0);
+      if (isBlank) return null;
+      if (real) {
+        // Sum real children for this total's own group
+        const gid = row.id === "t-bank" ? "g-bank" : row.id === "t-ar" ? "g-ar" : row.id === "t-inv" ? "g-inv"
+          : row.id === "t-fixed" ? "g-fixed" : row.id === "t-cc" ? "g-cc" : row.id === "t-other-liab" ? "g-other-liab"
+          : row.id === "t-capital" ? "g-capital" : null;
+        if (gid) return getValue(BS_ROWS.find(r=>r.id===gid)!, idx);
       }
-      if (row.id === "t-bank") return real ? getValue(BS_ROWS.find(r=>r.id==="g-bank")!, idx) : (idx > latestRealIdx ? forecastCash(idx) : null);
-      if (row.id === "t-ar") return real ? getValue(BS_ROWS.find(r=>r.id==="g-ar")!, idx) : (idx > latestRealIdx ? forecastAR(idx) : null);
-      if (row.id === "t-inv") return real ? getValue(BS_ROWS.find(r=>r.id==="g-inv")!, idx) : (idx > latestRealIdx ? forecastInventory(idx) : null);
+      if (row.id === "t-bank") return real ? getValue(BS_ROWS.find(r=>r.id==="g-bank")!, idx) : forecastCash(idx);
+      if (row.id === "t-ar")   return real ? getValue(BS_ROWS.find(r=>r.id==="g-ar")!, idx)   : forecastAR(idx);
+      if (row.id === "t-inv")  return real ? getValue(BS_ROWS.find(r=>r.id==="g-inv")!, idx)  : forecastInventory(idx);
+      if (row.id === "t-fixed") return real ? getValue(BS_ROWS.find(r=>r.id==="g-fixed")!, idx) : 6.26;
+      if (row.id === "t-cc") return real ? getValue(BS_ROWS.find(r=>r.id==="g-cc")!, idx) : 0;
+      if (row.id === "t-other-liab") return 10.34;
+      if (row.id === "t-capital") return 3457.57;
       if (row.id === "t-curr-assets") {
         return (getValue(BS_ROWS.find(r=>r.id==="t-bank")!, idx) ?? 0)
           + (getValue(BS_ROWS.find(r=>r.id==="t-ar")!, idx) ?? 0)
@@ -1377,14 +1394,35 @@ function BalanceTab({ realMonths, actuals }: { realMonths: number; actuals: Reco
           + (getValue(BS_ROWS.find(r=>r.id==="net_inc_eq")!, idx) ?? 0);
       }
       if (row.id === "t-liab-equity") return (getValue(BS_ROWS.find(r=>r.id==="t-liab")!, idx) ?? 0) + (getValue(BS_ROWS.find(r=>r.id==="t-equity")!, idx) ?? 0);
-      return row.forecastFn ? row.forecastFn(D, idx) : null;
+      return null;
     }
 
-    // Item
+    // ── Items ──
+    if (isBlank) return null;
     if (real && row.actualKey && real[row.actualKey] != null) {
       return Number(real[row.actualKey]) / 1000;
     }
-    return row.forecastFn ? row.forecastFn(D, idx) : null;
+    // Forecast items (idx > last real): use fixed forecast values for balance-sheet lines that don't move
+    if (isForecast) {
+      if (row.id === "loans_sh") return 12.96;
+      if (row.id === "equip") return 11.19;
+      if (row.id === "accum_dep") return -4.93;
+      if (row.id === "due_sh") return 1.0;
+      if (row.id === "accrued") return 10.34;
+      if (row.id === "cap1") return 225;
+      if (row.id === "cap2") return 399.87;
+      if (row.id === "cap3") return 685.97;
+      if (row.id === "cap4") return 2146.73;
+      if (row.id === "common_stock") return 1.10;
+      if (row.id === "open_bal_eq") return -1.87;
+      if (row.id === "ret_earn") return -1548.94;
+      if (row.id === "net_inc_eq") {
+        // Cumulative Net Income: last real retained + net income since, from the P&L roll-forward
+        return -366.29 + forecastCumulativeNI(idx);
+      }
+      return 0;
+    }
+    return null;
   }
 
   const indentPx = [0, 16, 28, 40];
