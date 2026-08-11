@@ -954,8 +954,14 @@ function CashFlowTab({ actuals }: { actuals: Record<string, any> }) {
     for (const p of PERIODS) if (actuals[p]?.bs_detail) map[p] = actuals[p].bs_detail;
     return map;
   }, [actuals]);
-  const isRealMonth = (idx: number) => !!bsByPeriod[PERIODS[idx]] && !!actuals[PERIODS[idx]]?.pnl_detail;
+  const isPnlReal = (idx: number) => !!actuals[PERIODS[idx]]?.pnl_detail;
+  const isBsReal = (idx: number) => !!bsByPeriod[PERIODS[idx]];
+  const isRealMonth = isPnlReal; // "real" badge/color follows P&L close, since that's what we have Jan-Jun
   const latestRealIdx = useMemo(() => {
+    const withPnl = PERIODS.map((p,i) => actuals[p]?.pnl_detail ? i : -1).filter(i => i >= 0);
+    return withPnl.length ? Math.max(...withPnl) : -1;
+  }, [actuals]);
+  const latestBsIdx = useMemo(() => {
     const withBs = PERIODS.map((p,i) => bsByPeriod[p] ? i : -1).filter(i => i >= 0);
     return withBs.length ? Math.max(...withBs) : -1;
   }, [bsByPeriod]);
@@ -973,20 +979,23 @@ function CashFlowTab({ actuals }: { actuals: Record<string, any> }) {
     const unitsSold = grossSalesK > 0 ? Math.round((grossSalesK * 1000) / 37) : 0;
     return { grossSales: grossSalesK, unitsSold, cogsPerUnit, logisticsPct, deductionPct, fixedCostsK: FIXED_COSTS_BEST_ESTIMATE[monthNum] ?? {} };
   }
-  function forecastAR(idx: number): number {
+  // Real Gross Sales for a pnl_detail month (for AR/Inventory estimate when no bs_detail exists)
+  function realGrossSalesK(idx: number): number {
+    const d = actuals[PERIODS[idx]]?.pnl_detail;
+    if (!d) return 0;
+    return (Number(d.sales_product ?? 0) + Number(d.shipping_income ?? 0)) / 1000;
+  }
+  function estimateAR(idx: number, gsK: number): number {
     const mixKeheUnfi = (assumptions.get('sales_mix_kehe', 50.5) + assumptions.get('sales_mix_unfi', 27.1)) / 100;
     const mixRainforest = assumptions.get('sales_mix_rainforest', 22.3) / 100;
     const deductionPct = assumptions.get('deduction_pct_overall', 19.78) / 100;
-    const netOf = (gsK: number) => gsK * (1 - deductionPct);
-    const thisMonthKU = netOf(fcGrossByMonth[idx] ?? 0) * mixKeheUnfi;
-    const prevRF = netOf(fcGrossByMonth[idx-1] ?? fcGrossByMonth[idx] ?? 0) * mixRainforest;
-    const thisRF = netOf(fcGrossByMonth[idx] ?? 0) * mixRainforest;
-    return thisMonthKU + prevRF + thisRF;
+    const netOf = (v: number) => v * (1 - deductionPct);
+    const prevGs = idx > 0 ? (isPnlReal(idx-1) ? realGrossSalesK(idx-1) : (fcGrossByMonth[idx-1] ?? gsK)) : gsK;
+    return netOf(gsK) * mixKeheUnfi + netOf(gsK) * mixRainforest + netOf(prevGs) * mixRainforest;
   }
-  function forecastInventory(idx: number): number {
-    const gs = fcGrossByMonth[idx] ?? 0;
+  function estimateInventory(gsK: number): number {
     const cogsPerUnit = assumptions.get('cogs_per_unit', 22.27), pricePerCase = 37;
-    const units = gs*1000/pricePerCase;
+    const units = gsK*1000/pricePerCase;
     return (units * cogsPerUnit * 45/30) / 1000;
   }
 
@@ -1019,32 +1028,47 @@ function CashFlowTab({ actuals }: { actuals: Record<string, any> }) {
     return (income + cogs + exp + Number(d.other_income ?? 0)) / 1000;
   }
 
-  // ── Unified per-month series: real where available, forecast rolled from last real close otherwise ──
+  // ── Unified per-month series ──
+  // Net Income: real (pnl_detail) where available, else forecast.
+  // AR/Inventory: real (bs_detail) where available; else estimated — from REAL gross sales if the
+  // month has a P&L close but no balance snapshot, or from the sales FORECAST otherwise.
+  // Cash: real (bs_detail) where available; else rolled forward from the last real cash balance
+  // using each subsequent month's Net Income and ΔAR/ΔInventory (real or estimated, per above).
   const netIncome: number[] = [], ar: number[] = [], inventory: number[] = [], cash: number[] = [];
-  let rollingCash = 0, prevAR = 0, prevInv = 0;
   for (let i = 0; i < 12; i++) {
-    if (isRealMonth(i)) {
-      netIncome[i] = realNetIncome(i) ?? 0;
+    netIncome[i] = isPnlReal(i) ? (realNetIncome(i) ?? 0) : (latestRealIdx >= 0 && i > latestRealIdx ? computeMonthlyNetIncome(buildContextForMonth(i)) : 0);
+
+    if (isBsReal(i)) {
       ar[i] = realAR(i) ?? 0;
       inventory[i] = realInventory(i) ?? 0;
-      cash[i] = realCash(i) ?? 0;
-      rollingCash = cash[i]; prevAR = ar[i]; prevInv = inventory[i];
+    } else if (isPnlReal(i)) {
+      const gs = realGrossSalesK(i);
+      ar[i] = estimateAR(i, gs);
+      inventory[i] = estimateInventory(gs);
     } else if (latestRealIdx >= 0 && i > latestRealIdx) {
-      const ni = computeMonthlyNetIncome(buildContextForMonth(i));
-      const thisAR = forecastAR(i), thisInv = forecastInventory(i);
-      rollingCash += ni - (thisAR - prevAR) - (thisInv - prevInv);
-      netIncome[i] = ni; ar[i] = thisAR; inventory[i] = thisInv; cash[i] = rollingCash;
-      prevAR = thisAR; prevInv = thisInv;
+      const gs = fcGrossByMonth[i] ?? 0;
+      ar[i] = estimateAR(i, gs);
+      inventory[i] = estimateInventory(gs);
     } else {
-      netIncome[i] = 0; ar[i] = 0; inventory[i] = 0; cash[i] = 0;
+      ar[i] = 0; inventory[i] = 0;
     }
+  }
+  // Cash: start from the earliest known real cash balance, roll forward with NI − ΔAR − ΔInv every month after it.
+  const firstCashIdx = PERIODS.findIndex((_,i) => isBsReal(i));
+  for (let i = 0; i < 12; i++) {
+    if (isBsReal(i)) { cash[i] = realCash(i) ?? 0; continue; }
+    if (firstCashIdx < 0 || i < firstCashIdx) { cash[i] = 0; continue; }
+    const prevCash = i === 0 ? 0 : cash[i-1];
+    const prevAR = i === 0 ? ar[i] : ar[i-1];
+    const prevInv = i === 0 ? inventory[i] : inventory[i-1];
+    cash[i] = prevCash + netIncome[i] - (ar[i] - prevAR) - (inventory[i] - prevInv);
   }
   const chgAR = ar.map((v,i) => i === 0 ? 0 : -(v - ar[i-1]));
   const chgInv = inventory.map((v,i) => i === 0 ? 0 : -(v - inventory[i-1]));
   const cfo = netIncome.map((ni,i) => ni + chgAR[i] + chgInv[i]);
   const cashBop = cash.map((v,i) => i === 0 ? v - cfo[i] : cash[i-1]);
 
-  const lastRealCash = latestRealIdx >= 0 ? cash[latestRealIdx] : 0;
+  const lastRealCash = latestBsIdx >= 0 ? cash[latestBsIdx] : (latestRealIdx >= 0 ? cash[latestRealIdx] : 0);
   const decCash = cash[11];
   const last3 = [9,10,11].map(i => netIncome[i]).filter((_,idx,arr)=>true);
   const avgBurn = (netIncome[Math.max(0,11-2)] + netIncome[Math.max(0,11-1)] + netIncome[11]) / 3;
@@ -1330,9 +1354,9 @@ function BalanceTab({ realMonths, actuals }: { realMonths: number; actuals: Reco
       if (real && children.length > 0) {
         return children.reduce((s, c) => s + (getValue(c, idx) ?? 0), 0);
       }
-      if (row.id === "t-bank") return real ? getValue(BS_ROWS.find(r=>r.id==="g-bank")!, idx) : forecastCash(idx);
-      if (row.id === "t-ar") return real ? getValue(BS_ROWS.find(r=>r.id==="g-ar")!, idx) : forecastAR(idx);
-      if (row.id === "t-inv") return real ? getValue(BS_ROWS.find(r=>r.id==="g-inv")!, idx) : forecastInventory(idx);
+      if (row.id === "t-bank") return real ? getValue(BS_ROWS.find(r=>r.id==="g-bank")!, idx) : (idx > latestRealIdx ? forecastCash(idx) : null);
+      if (row.id === "t-ar") return real ? getValue(BS_ROWS.find(r=>r.id==="g-ar")!, idx) : (idx > latestRealIdx ? forecastAR(idx) : null);
+      if (row.id === "t-inv") return real ? getValue(BS_ROWS.find(r=>r.id==="g-inv")!, idx) : (idx > latestRealIdx ? forecastInventory(idx) : null);
       if (row.id === "t-curr-assets") {
         return (getValue(BS_ROWS.find(r=>r.id==="t-bank")!, idx) ?? 0)
           + (getValue(BS_ROWS.find(r=>r.id==="t-ar")!, idx) ?? 0)
