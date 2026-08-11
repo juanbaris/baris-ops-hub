@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useInvoicedActuals } from "@/hooks/use-invoiced-actuals";
 import { supabase } from "@/integrations/supabase/client";
 import { useSalesForecast } from "@/hooks/use-sales-forecast";
+import { forecastFromState, type Scenario } from "@/lib/sales-forecast";
 
 // ─── Data (values in $K) ──────────────────────────────────────────────────────
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'] as const;
@@ -91,7 +92,120 @@ function useFinanceRevenue() {
   }, [byLabel, effectiveForecast, isCommitted, scenario, loading]);
 }
 
+// ─── Finance-local scenario picker (Pessimistic/Normal/Optimistic) ────────────
+// This does NOT touch the shared Sales forecast state/localStorage — it's a
+// read-only "what if" lens purely for the Finance P&L, using the same levers
+// (velocity, retailers, seasonality, promo) the Sales team already configured.
+function useFinanceScenarioForecast(scenarioOverride: Scenario) {
+  const { state } = useSalesForecast();
+  return useMemo(() => {
+    const rows = forecastFromState({ ...state, scenario: scenarioOverride });
+    const byMonthKey: Record<string, number> = {}; // "2026-8" -> gross sales $ (not $K)
+    for (const r of rows) byMonthKey[`${r.year}-${r.month}`] = r.revenue;
+    return byMonthKey;
+  }, [state, scenarioOverride]);
+}
+
+// ─── July real Gross Sales from Fulfillment (Invoiced pipeline) ──────────────
+// Accountfully hasn't closed July yet, but we already know what was invoiced.
+function useJulyRealFromFulfillment() {
+  const { byLabel, loading } = useInvoicedActuals();
+  return useMemo(() => {
+    const row = byLabel['Jul 2026'];
+    return { julyGrossSales: row ? row.revenue : null, loading };
+  }, [byLabel, loading]);
+}
+
+// ─── Finance Assumptions (editable forecast drivers, persisted in Supabase) ──
+type AssumptionKey =
+  | 'cogs_per_unit' | 'logistics_pct_of_gross' | 'deduction_pct_overall'
+  | 'deduction_pct_kehe' | 'deduction_pct_unfi' | 'deduction_pct_rainforest'
+  | 'sales_mix_kehe' | 'sales_mix_unfi' | 'sales_mix_rainforest';
+
+type Assumption = {
+  key: AssumptionKey; label: string; value: number; auto_calculated_value: number | null;
+  is_manual_override: boolean; unit: 'currency'|'percent'|'number'; notes: string | null;
+};
+
+function useFinanceAssumptions() {
+  const [rows, setRows] = useState<Record<string, Assumption>>({});
+  const [loading, setLoading] = useState(true);
+
+  async function load() {
+    const { data } = await supabase.from("finance_assumptions").select("*");
+    if (data) {
+      const map: Record<string, Assumption> = {};
+      for (const r of data as any[]) map[r.key] = r;
+      setRows(map);
+    }
+    setLoading(false);
+  }
+  useEffect(() => { load(); }, []);
+
+  async function saveOverride(key: AssumptionKey, value: number) {
+    await supabase.from("finance_assumptions")
+      .update({ value, is_manual_override: true, updated_at: new Date().toISOString() })
+      .eq("key", key);
+    await load();
+  }
+
+  async function resetToAuto(key: AssumptionKey) {
+    const row = rows[key];
+    if (!row || row.auto_calculated_value == null) return;
+    await supabase.from("finance_assumptions")
+      .update({ value: row.auto_calculated_value, is_manual_override: false, updated_at: new Date().toISOString() })
+      .eq("key", key);
+    await load();
+  }
+
+  function get(key: AssumptionKey, fallback = 0): number {
+    return rows[key]?.value ?? fallback;
+  }
+
+  return { rows, loading, get, saveOverride, resetToAuto, reload: load };
+}
+
+// ─── Recalculate assumptions from real finance_actuals (call after a new month is loaded) ──
+async function recalcAssumptionsFromActuals(actuals: Record<string, any>) {
+  const periods = Object.keys(actuals).filter(p => actuals[p]?.pnl_detail).sort();
+  if (!periods.length) return;
+
+  let totalCogs = 0, totalUnits = 0, totalGross = 0, totalLogistics = 0, totalDeductions = 0;
+  for (const p of periods) {
+    const row = actuals[p];
+    const d = row.pnl_detail ?? {};
+    const gross = Number(d.sales_product ?? 0) + Number(d.shipping_income ?? 0);
+    const units = Number(row.units_sold ?? 0);
+    const cogs = Math.abs(Number(d.product_costs ?? 0));
+    const logistics = Math.abs(Number(d.freight_in ?? 0)) + Math.abs(Number(d.freight_out_actual ?? 0))
+      + Math.abs(Number(d.merchant_fees ?? 0)) + Math.abs(Number(d.warehouse_fulfillment ?? 0));
+    const deductions = Math.abs(Number(d.consumer_returns ?? 0)) + Math.abs(Number(d.distributor_fees ?? 0))
+      + Math.abs(Number(d.dsd_programs ?? 0)) + Math.abs(Number(d.kehe_allowance ?? 0))
+      + Math.abs(Number(d.payment_terms ?? 0)) + Math.abs(Number(d.promos ?? 0))
+      + Math.abs(Number(d.unfi_allowance ?? 0)) + Math.abs(Number(d.returns_refunds ?? 0));
+    totalGross += gross; totalUnits += units; totalCogs += cogs;
+    totalLogistics += logistics; totalDeductions += deductions;
+  }
+  if (totalUnits <= 0 || totalGross <= 0) return;
+
+  const cogsPerUnit = totalCogs / totalUnits;
+  const logisticsPct = (totalLogistics / totalGross) * 100;
+  const deductionPct = (totalDeductions / totalGross) * 100;
+
+  for (const [key, autoVal] of [
+    ['cogs_per_unit', cogsPerUnit],
+    ['logistics_pct_of_gross', logisticsPct],
+    ['deduction_pct_overall', deductionPct],
+  ] as [AssumptionKey, number][]) {
+    const { data } = await supabase.from("finance_assumptions").select("is_manual_override").eq("key", key).maybeSingle();
+    const patch: any = { auto_calculated_value: autoVal, updated_at: new Date().toISOString() };
+    if (!data?.is_manual_override) patch.value = autoVal; // only overwrite the used value if not manually overridden
+    await supabase.from("finance_assumptions").update(patch).eq("key", key);
+  }
+}
+
 // ─── Chart wrapper using Chart.js via CDN ─────────────────────────────────────
+
 declare global { interface Window { Chart: any } }
 
 function useChart(canvasRef: React.RefObject<HTMLCanvasElement | null>, builder: () => any, deps: any[]) {
@@ -269,65 +383,79 @@ function DashboardTab({ period, refMonth, m, realMonths }: { period: Period; ref
 // ─── P&L helpers (expandable tree) ──────────────────────────────────────────
 // Each PLRow is either: section (dark header), group (expandable), item (leaf), total, pct
 type PLRowKind = "section"|"group"|"item"|"total"|"pct";
+
+// Forecast context for months without a real Accountfully close: grossSales/unitsSold
+// come from the Sales-forecast scenario (or, for July, from Fulfillment invoiced data),
+// and cost lines are derived from the editable assumptions (COGS/unit, %logistics, %deductions).
+type ForecastContext = {
+  grossSales: number;     // $K for this month
+  unitsSold: number;      // cases for this month
+  cogsPerUnit: number;    // $/case
+  logisticsPct: number;   // 0-1, of gross sales
+  deductionPct: number;   // 0-1, of gross sales (blended)
+  fixedCostsK: Record<string, number>; // $K, keyed by PLRow id, from Best Estimate
+};
+
 interface PLRow {
   id: string; parentId?: string; label: string; kind: PLRowKind;
-  actualKey?: string;           // key in pnl_detail JSONB
-  forecastFn?: (m: typeof D, i: number) => number;  // for forecast months
+  actualKey?: string;                                  // key in pnl_detail JSONB
+  forecastFn?: (ctx: ForecastContext) => number;        // for forecast (non-actual) months, in $K
   indent: 0|1|2|3;
   bold?: boolean; italic?: boolean; isNeg?: boolean;
 }
 
 // Full P&L tree matching Accountfully exactly
 const PL_ROWS: PLRow[] = [
+  {id:"units_sold",label:"Units Sold (cases)",kind:"pct",indent:0,italic:true},
   {id:"s-income",label:"INCOME",kind:"section",indent:0},
   {id:"g-4000",label:"4000 · Sales",kind:"group",indent:0},
-    {id:"sales_product",parentId:"g-4000",label:"Sales of Product Income",kind:"item",indent:1,actualKey:"sales_product",forecastFn:(m,i)=>m.gross_sales[i]},
+    {id:"sales_product",parentId:"g-4000",label:"Sales of Product Income",kind:"item",indent:1,actualKey:"sales_product",forecastFn:(c)=>c.grossSales},
     {id:"shipping_income",parentId:"g-4000",label:"Shipping Income",kind:"item",indent:1,actualKey:"shipping_income",forecastFn:()=>0},
-    {id:"t-4000",parentId:"g-4000",label:"Total 4000 Sales",kind:"total",indent:1,forecastFn:(m,i)=>m.gross_sales[i]},
+    {id:"t-4000",parentId:"g-4000",label:"Total 4000 Sales",kind:"total",indent:1,forecastFn:(c)=>c.grossSales},
   {id:"g-4500",label:"4500 · Deductions to Income",kind:"group",indent:0},
     {id:"g-disc",parentId:"g-4500",label:"Discounts",kind:"group",indent:1},
       {id:"consumer_returns",parentId:"g-disc",label:"Consumer Returns",kind:"item",indent:2,actualKey:"consumer_returns",forecastFn:()=>0},
-      {id:"distributor_fees",parentId:"g-disc",label:"Distributor Fees",kind:"item",indent:2,actualKey:"distributor_fees",forecastFn:(m,i)=>m.distr_fees[i]*0.28},
-      {id:"dsd_programs",parentId:"g-disc",label:"DSD Programs",kind:"item",indent:2,actualKey:"dsd_programs",forecastFn:(m,i)=>m.trade_spend[i]*0.35},
-      {id:"kehe_allowance",parentId:"g-disc",label:"KeHE Allowance",kind:"item",indent:2,actualKey:"kehe_allowance",forecastFn:(m,i)=>m.distr_fees[i]*0.42},
-      {id:"payment_terms",parentId:"g-disc",label:"Payment Terms",kind:"item",indent:2,actualKey:"payment_terms",forecastFn:(m,i)=>m.distr_fees[i]*0.30},
-      {id:"promos",parentId:"g-disc",label:"Promos",kind:"item",indent:2,actualKey:"promos",forecastFn:(m,i)=>m.trade_spend[i]*0.65},
-      {id:"unfi_allowance",parentId:"g-disc",label:"UNFI Allowance",kind:"item",indent:2,actualKey:"unfi_allowance",forecastFn:()=>0},
+      {id:"distributor_fees",parentId:"g-disc",label:"Distributor Fees",kind:"item",indent:2,actualKey:"distributor_fees",forecastFn:(c)=>-c.grossSales*c.deductionPct*0.10},
+      {id:"dsd_programs",parentId:"g-disc",label:"DSD Programs",kind:"item",indent:2,actualKey:"dsd_programs",forecastFn:(c)=>-c.grossSales*c.deductionPct*0.16},
+      {id:"kehe_allowance",parentId:"g-disc",label:"KeHE Allowance",kind:"item",indent:2,actualKey:"kehe_allowance",forecastFn:(c)=>-c.grossSales*c.deductionPct*0.05},
+      {id:"payment_terms",parentId:"g-disc",label:"Payment Terms",kind:"item",indent:2,actualKey:"payment_terms",forecastFn:(c)=>-c.grossSales*c.deductionPct*0.04},
+      {id:"promos",parentId:"g-disc",label:"Promos",kind:"item",indent:2,actualKey:"promos",forecastFn:(c)=>-c.grossSales*c.deductionPct*0.60},
+      {id:"unfi_allowance",parentId:"g-disc",label:"UNFI Allowance",kind:"item",indent:2,actualKey:"unfi_allowance",forecastFn:(c)=>-c.grossSales*c.deductionPct*0.05},
       {id:"t-disc",parentId:"g-disc",label:"Total Discounts",kind:"total",indent:2},
     {id:"returns_refunds",parentId:"g-4500",label:"Returns / Refunds",kind:"item",indent:1,actualKey:"returns_refunds",forecastFn:()=>0},
-    {id:"t-4500",parentId:"g-4500",label:"Total Deductions to Income",kind:"total",indent:1,forecastFn:(m,i)=>m.trade_spend[i]+m.distr_fees[i]},
-  {id:"t-income",label:"Total Income",kind:"total",indent:0,bold:true,forecastFn:(m,i)=>m.net_sales[i]},
+    {id:"t-4500",parentId:"g-4500",label:"Total Deductions to Income",kind:"total",indent:1,forecastFn:(c)=>-c.grossSales*c.deductionPct},
+  {id:"t-income",label:"Total Income",kind:"total",indent:0,bold:true},
 
   {id:"s-cogs",label:"COST OF GOODS SOLD",kind:"section",indent:0},
   {id:"g-5000",label:"5000 · Cost of goods sold",kind:"group",indent:0},
-    {id:"product_costs",parentId:"g-5000",label:"Product Costs",kind:"item",indent:1,actualKey:"product_costs",forecastFn:(m,i)=>-m.cogs[i]},
-    {id:"t-5000",parentId:"g-5000",label:"Total 5000",kind:"total",indent:1,forecastFn:(m,i)=>-m.cogs[i]},
+    {id:"product_costs",parentId:"g-5000",label:"Product Costs",kind:"item",indent:1,actualKey:"product_costs",forecastFn:(c)=>-(c.unitsSold*c.cogsPerUnit)/1000},
+    {id:"t-5000",parentId:"g-5000",label:"Total 5000",kind:"total",indent:1,forecastFn:(c)=>-(c.unitsSold*c.cogsPerUnit)/1000},
   {id:"g-6000",label:"6000 · Logistics & Fulfillment",kind:"group",indent:0},
-    {id:"freight_in",parentId:"g-6000",label:"Freight In",kind:"item",indent:1,actualKey:"freight_in",forecastFn:()=>0},
-    {id:"freight_out_actual",parentId:"g-6000",label:"Freight Out",kind:"item",indent:1,actualKey:"freight_out_actual",forecastFn:(m,i)=>-m.freight_out[i]},
+    {id:"freight_in",parentId:"g-6000",label:"Freight In",kind:"item",indent:1,actualKey:"freight_in",forecastFn:(c)=>-c.grossSales*c.logisticsPct*0.22},
+    {id:"freight_out_actual",parentId:"g-6000",label:"Freight Out",kind:"item",indent:1,actualKey:"freight_out_actual",forecastFn:(c)=>-c.grossSales*c.logisticsPct*0.06},
     {id:"merchant_fees",parentId:"g-6000",label:"Merchant Account Fees",kind:"item",indent:1,actualKey:"merchant_fees",forecastFn:()=>0},
-    {id:"warehouse_fulfillment",parentId:"g-6000",label:"Warehouse / Fulfillment",kind:"item",indent:1,actualKey:"warehouse_fulfillment",forecastFn:(m,i)=>-m.storage[i]},
-    {id:"t-6000",parentId:"g-6000",label:"Total 6000 Logistics",kind:"total",indent:1,forecastFn:(m,i)=>-(m.storage[i]+m.freight_out[i])},
+    {id:"warehouse_fulfillment",parentId:"g-6000",label:"Warehouse / Fulfillment",kind:"item",indent:1,actualKey:"warehouse_fulfillment",forecastFn:(c)=>-c.grossSales*c.logisticsPct*0.72},
+    {id:"t-6000",parentId:"g-6000",label:"Total 6000 Logistics",kind:"total",indent:1,forecastFn:(c)=>-c.grossSales*c.logisticsPct},
   {id:"t-cogs",label:"Total Cost of Goods Sold",kind:"total",indent:0,bold:true},
 
-  {id:"t-gp",label:"GROSS PROFIT",kind:"total",indent:0,bold:true,forecastFn:(m,i)=>m.gross_margin[i]},
-  {id:"t-gp-pct",label:"Gross Margin %",kind:"pct",indent:0,forecastFn:(m,i)=>m.gm_pct[i]},
+  {id:"t-gp",label:"GROSS PROFIT",kind:"total",indent:0,bold:true},
+  {id:"t-gp-pct",label:"Gross Margin %",kind:"pct",indent:0},
 
   {id:"s-exp",label:"EXPENSES",kind:"section",indent:0},
   {id:"g-6500",label:"6500 · Selling Expenses",kind:"group",indent:0},
-    {id:"broker_commissions",parentId:"g-6500",label:"Broker Commissions & Fees",kind:"item",indent:1,actualKey:"broker_commissions",forecastFn:(m,i)=>m.selling_exp[i]*0.6},
-    {id:"slotting_fees",parentId:"g-6500",label:"Slotting Fees",kind:"item",indent:1,actualKey:"slotting_fees",forecastFn:(m,i)=>m.selling_exp[i]*0.4},
-    {id:"t-6500",parentId:"g-6500",label:"Total 6500 Selling Expenses",kind:"total",indent:1,forecastFn:(m,i)=>m.selling_exp[i]},
+    {id:"broker_commissions",parentId:"g-6500",label:"Broker Commissions & Fees",kind:"item",indent:1,actualKey:"broker_commissions",forecastFn:(c)=>c.fixedCostsK.broker_commissions ?? 0},
+    {id:"slotting_fees",parentId:"g-6500",label:"Slotting Fees",kind:"item",indent:1,actualKey:"slotting_fees",forecastFn:(c)=>c.fixedCostsK.slotting_fees ?? 0},
+    {id:"t-6500",parentId:"g-6500",label:"Total 6500 Selling Expenses",kind:"total",indent:1},
   {id:"g-7000",label:"7000 · Marketing & Trade",kind:"group",indent:0},
-    {id:"demos_merchandising",parentId:"g-7000",label:"Demos & Merchandising",kind:"item",indent:1,actualKey:"demos_merchandising",forecastFn:(m,i)=>m.mkt_trade[i]*0.35},
-    {id:"digital_social",parentId:"g-7000",label:"Digital & Social Media",kind:"item",indent:1,actualKey:"digital_social",forecastFn:(m,i)=>m.mkt_trade[i]*0.35},
-    {id:"events_tradeshows",parentId:"g-7000",label:"Events / Trade Shows",kind:"item",indent:1,actualKey:"events_tradeshows",forecastFn:(m,i)=>m.mkt_trade[i]*0.15},
+    {id:"demos_merchandising",parentId:"g-7000",label:"Demos & Merchandising",kind:"item",indent:1,actualKey:"demos_merchandising",forecastFn:(c)=>c.fixedCostsK.demos_merchandising ?? 0},
+    {id:"digital_social",parentId:"g-7000",label:"Digital & Social Media",kind:"item",indent:1,actualKey:"digital_social",forecastFn:(c)=>c.fixedCostsK.digital_social ?? 0},
+    {id:"events_tradeshows",parentId:"g-7000",label:"Events / Trade Shows",kind:"item",indent:1,actualKey:"events_tradeshows",forecastFn:(c)=>c.fixedCostsK.events_tradeshows ?? 0},
     {id:"printing_promotional",parentId:"g-7000",label:"Printing & Promotional",kind:"item",indent:1,actualKey:"printing_promotional",forecastFn:()=>0},
-    {id:"product_samples",parentId:"g-7000",label:"Product Samples",kind:"item",indent:1,actualKey:"product_samples",forecastFn:(m,i)=>m.mkt_trade[i]*0.15},
-    {id:"t-7000",parentId:"g-7000",label:"Total 7000 Marketing",kind:"total",indent:1,forecastFn:(m,i)=>m.mkt_trade[i]},
+    {id:"product_samples",parentId:"g-7000",label:"Product Samples",kind:"item",indent:1,actualKey:"product_samples",forecastFn:(c)=>c.fixedCostsK.product_samples ?? 0},
+    {id:"t-7000",parentId:"g-7000",label:"Total 7000 Marketing",kind:"total",indent:1},
   {id:"g-8000",label:"8000 · General & Administrative",kind:"group",indent:0},
     {id:"bank_charges",parentId:"g-8000",label:"Bank Charges & Fees",kind:"item",indent:1,actualKey:"bank_charges",forecastFn:()=>0},
-    {id:"dues_subscriptions",parentId:"g-8000",label:"Dues & Subscriptions",kind:"item",indent:1,actualKey:"dues_subscriptions",forecastFn:(m,i)=>m.gen_exp[i]*0.1},
+    {id:"dues_subscriptions",parentId:"g-8000",label:"Dues & Subscriptions",kind:"item",indent:1,actualKey:"dues_subscriptions",forecastFn:(c)=>c.fixedCostsK.dues_subscriptions ?? -1.37},
     {id:"g-facility",parentId:"g-8000",label:"Facility Costs",kind:"group",indent:1},
       {id:"rent",parentId:"g-facility",label:"Rent",kind:"item",indent:2,actualKey:"rent",forecastFn:()=>-0.558},
       {id:"utilities",parentId:"g-facility",label:"Utilities",kind:"item",indent:2,actualKey:"utilities",forecastFn:()=>-0.32},
@@ -340,13 +468,13 @@ const PL_ROWS: PLRow[] = [
       {id:"payroll_processing",parentId:"g-payroll",label:"Payroll Processing Fees",kind:"item",indent:2,actualKey:"payroll_processing",forecastFn:()=>-0.061},
       {id:"payroll_taxes",parentId:"g-payroll",label:"Payroll Taxes",kind:"item",indent:2,actualKey:"payroll_taxes",forecastFn:()=>-1.15285},
       {id:"salaries_operations",parentId:"g-payroll",label:"Salaries & Wages - Operations",kind:"item",indent:2,actualKey:"salaries_operations",forecastFn:()=>-15.07},
-      {id:"t-payroll",parentId:"g-payroll",label:"Total Payroll & Employee Related",kind:"total",indent:2,forecastFn:(m,i)=>m.team[i]},
+      {id:"t-payroll",parentId:"g-payroll",label:"Total Payroll & Employee Related",kind:"total",indent:2},
     {id:"g-profsvcs",parentId:"g-8000",label:"Professional Services",kind:"group",indent:1},
       {id:"accounting_finance",parentId:"g-profsvcs",label:"Accounting & Finance",kind:"item",indent:2,actualKey:"accounting_finance",forecastFn:()=>-1.3},
       {id:"business_consultation",parentId:"g-profsvcs",label:"Business Consultation",kind:"item",indent:2,actualKey:"business_consultation",forecastFn:()=>0},
       {id:"legal_fees",parentId:"g-profsvcs",label:"Legal Fees",kind:"item",indent:2,actualKey:"legal_fees",forecastFn:()=>0},
       {id:"t-profsvcs",parentId:"g-profsvcs",label:"Total Professional Services",kind:"total",indent:2},
-    {id:"quality_rd",parentId:"g-8000",label:"Quality and R&D",kind:"item",indent:1,actualKey:"quality_rd",forecastFn:(m,i)=>m.gen_exp[i]*0.15},
+    {id:"quality_rd",parentId:"g-8000",label:"Quality and R&D",kind:"item",indent:1,actualKey:"quality_rd",forecastFn:(c)=>c.fixedCostsK.quality_rd ?? -0.42},
     {id:"taxes_licenses",parentId:"g-8000",label:"Taxes & Licenses",kind:"item",indent:1,actualKey:"taxes_licenses",forecastFn:()=>0},
     {id:"g-travel",parentId:"g-8000",label:"Travel",kind:"group",indent:1},
       {id:"car_rental_uber",parentId:"g-travel",label:"Car Rental / Uber",kind:"item",indent:2,actualKey:"car_rental_uber",forecastFn:()=>0},
@@ -355,17 +483,17 @@ const PL_ROWS: PLRow[] = [
       {id:"t-travel",parentId:"g-travel",label:"Total Travel",kind:"total",indent:2},
     {id:"uncategorized",parentId:"g-8000",label:"Uncategorized Expense",kind:"item",indent:1,actualKey:"uncategorized",forecastFn:()=>0},
     {id:"vehicle_expenses",parentId:"g-8000",label:"Vehicle Expenses",kind:"item",indent:1,actualKey:"vehicle_expenses",forecastFn:()=>0},
-    {id:"t-8000",parentId:"g-8000",label:"Total 8000 General & Administrative",kind:"total",indent:1,forecastFn:(m,i)=>m.gen_exp[i]+m.team[i]},
-  {id:"t-expenses",label:"Total Expenses",kind:"total",indent:0,bold:true,forecastFn:(m,i)=>m.selling_exp[i]+m.mkt_trade[i]+m.team[i]+m.gen_exp[i]},
+    {id:"t-8000",parentId:"g-8000",label:"Total 8000 General & Administrative",kind:"total",indent:1},
+  {id:"t-expenses",label:"Total Expenses",kind:"total",indent:0,bold:true},
 
-  {id:"t-noi",label:"NET OPERATING INCOME",kind:"total",indent:0,bold:true,forecastFn:(m,i)=>m.ebitda[i]},
+  {id:"t-noi",label:"NET OPERATING INCOME",kind:"total",indent:0,bold:true},
 
   {id:"s-other",label:"OTHER INCOME",kind:"section",indent:0},
   {id:"g-9000",label:"9000 · Other Income",kind:"group",indent:0},
     {id:"other_income",parentId:"g-9000",label:"9000 Other Income",kind:"item",indent:1,actualKey:"other_income",forecastFn:()=>0},
     {id:"t-9000",parentId:"g-9000",label:"Total Other Income",kind:"total",indent:1,forecastFn:()=>0},
 
-  {id:"t-netincome",label:"NET INCOME",kind:"total",indent:0,bold:true,forecastFn:(m,i)=>m.ebitda[i]},
+  {id:"t-netincome",label:"NET INCOME",kind:"total",indent:0,bold:true},
 ];
 
 function buildChildMap(rows: PLRow[]): Record<string,string[]> {
@@ -379,11 +507,17 @@ function buildChildMap(rows: PLRow[]): Record<string,string[]> {
 }
 
 // ─── P&L Table ────────────────────────────────────────────────────────────────
-function PNLTab({ m, realMonths, actuals, fyActualOnly }: { m: typeof D; realMonths: number; actuals: Record<string, any>; fyActualOnly: boolean }) {
+function PNLTab({ realMonths, actuals }: { realMonths: number; actuals: Record<string, any> }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(
     new Set(["g-disc","g-facility","g-payroll","g-profsvcs","g-travel"])
   );
+  const [scenario, setScenario] = useState<Scenario>("Normal");
+  const [assumptionsOpen, setAssumptionsOpen] = useState(false);
   const childMap = useMemo(() => buildChildMap(PL_ROWS), []);
+
+  const scenarioForecast = useFinanceScenarioForecast(scenario); // "2026-8" -> $ (not $K)
+  const { julyGrossSales } = useJulyRealFromFulfillment();       // $ (not $K), or null
+  const assumptions = useFinanceAssumptions();
 
   function toggle(id: string) {
     setCollapsed(prev => {
@@ -401,52 +535,100 @@ function PNLTab({ m, realMonths, actuals, fyActualOnly }: { m: typeof D; realMon
     return isVisible(parent);
   }
 
-  // Get value for a cell (month idx)
+  // ── Build the forecast context for a given month index (0=Jan..11=Dec) ──
+  function buildContext(idx: number): ForecastContext {
+    const monthNum = idx + 1;
+    const cogsPerUnit = assumptions.get('cogs_per_unit', 22.27);
+    const logisticsPct = assumptions.get('logistics_pct_of_gross', 9.8) / 100;
+    const deductionPct = assumptions.get('deduction_pct_overall', 19.78) / 100;
+
+    let grossSalesK: number;
+    if (idx === 6) {
+      // July: real invoiced $ from Fulfillment, if available; else fall back to scenario forecast (unlikely to hit, Aug+ only)
+      grossSalesK = julyGrossSales != null ? julyGrossSales / 1000 : (scenarioForecast[`2026-7`] ?? 0) / 1000;
+    } else {
+      grossSalesK = (scenarioForecast[`2026-${monthNum}`] ?? 0) / 1000;
+    }
+    const unitsSold = grossSalesK > 0 ? Math.round((grossSalesK * 1000) / 37) : 0; // 37 = PRICE_PER_CASE
+
+    return {
+      grossSales: grossSalesK,
+      unitsSold,
+      cogsPerUnit,
+      logisticsPct,
+      deductionPct,
+      fixedCostsK: FIXED_COSTS_BEST_ESTIMATE[monthNum] ?? {},
+    };
+  }
+
+  // Get value for a cell (month idx), in $K
   function getValue(row: PLRow, idx: number): number | null {
     if (row.kind === "section") return null;
+    if (row.id === "units_sold") {
+      const period = PERIODS[idx];
+      const actualUnits = actuals[period]?.units_sold;
+      if (actualUnits != null) return Number(actualUnits);
+      return buildContext(idx).unitsSold;
+    }
     const period = PERIODS[idx];
     const isActual = !!actuals[period]?.pnl_detail;
+    const ctx = isActual ? null : buildContext(idx);
 
     // Special case: NET INCOME = NOI + Other Income
     if (row.id === "t-netincome") {
       const noi = getValue(PL_ROWS.find(r => r.id === "t-noi")!, idx) ?? 0;
-      // Read other_income directly from pnl_detail for actual months
-      const period = PERIODS[idx];
-      const otherInc = actuals[period]?.pnl_detail?.other_income != null
-        ? Number(actuals[period].pnl_detail.other_income) / 1000
+      const otherInc = isActual
+        ? (actuals[period].pnl_detail.other_income != null ? Number(actuals[period].pnl_detail.other_income) / 1000 : 0)
         : 0;
       return noi + otherInc;
     }
+    // Special case: NET OPERATING INCOME = GROSS PROFIT + Total Expenses
+    if (row.id === "t-noi") {
+      const gp = getValue(PL_ROWS.find(r => r.id === "t-gp")!, idx) ?? 0;
+      const exp = getValue(PL_ROWS.find(r => r.id === "t-expenses")!, idx) ?? 0;
+      return gp + exp;
+    }
+    // Special case: GROSS PROFIT = Total Income + Total COGS
+    if (row.id === "t-gp") {
+      const inc = getValue(PL_ROWS.find(r => r.id === "t-income")!, idx) ?? 0;
+      const cogs = getValue(PL_ROWS.find(r => r.id === "t-cogs")!, idx) ?? 0;
+      return inc + cogs;
+    }
+    // Special case: Total Income = Total 4000 Sales + Total 4500 Deductions
+    if (row.id === "t-income") {
+      const s4000 = getValue(PL_ROWS.find(r => r.id === "t-4000")!, idx) ?? 0;
+      const s4500 = getValue(PL_ROWS.find(r => r.id === "t-4500")!, idx) ?? 0;
+      return s4000 + s4500;
+    }
+    // Special case: Total COGS = Total 5000 + Total 6000
+    if (row.id === "t-cogs") {
+      const s5000 = getValue(PL_ROWS.find(r => r.id === "t-5000")!, idx) ?? 0;
+      const s6000 = getValue(PL_ROWS.find(r => r.id === "t-6000")!, idx) ?? 0;
+      return s5000 + s6000;
+    }
+    // Special case: Total Expenses = 6500 + 7000 + 8000
+    if (row.id === "t-expenses") {
+      const s6500 = getValue(PL_ROWS.find(r => r.id === "t-6500")!, idx) ?? 0;
+      const s7000 = getValue(PL_ROWS.find(r => r.id === "t-7000")!, idx) ?? 0;
+      const s8000 = getValue(PL_ROWS.find(r => r.id === "t-8000")!, idx) ?? 0;
+      return s6500 + s7000 + s8000;
+    }
+    // Special case: Total 8000 = its item/group children (payroll/profsvcs/travel/facility totals + loose items)
+    if (row.id === "t-8000") {
+      const children = (childMap["g-8000"] || []).map(cid => PL_ROWS.find(r => r.id === cid)!).filter(Boolean);
+      return children.reduce((s, c) => s + (getValue(c, idx) ?? 0), 0);
+    }
 
-    if (row.kind === "total" || row.kind === "pct") {
-      // Only sum ITEM and GROUP children (skip other totals to avoid double-counting)
-      const children = (childMap[row.id] || [])
-        .map(cid => PL_ROWS.find(r => r.id === cid)!)
-        .filter(Boolean)
-        .filter(c => c.kind !== "total");  // exclude sub-totals
-      if (children.length > 0) {
-        const childSum = children.reduce((s, c) => {
-          const cv = getValue(c, idx);
-          return s + (cv ?? 0);
-        }, 0);
-        if (row.kind === "pct") {
-          // Special case: GP / Net Sales
-          if (row.id === "t-gp-pct") {
-            const ns = getValue(PL_ROWS.find(r => r.id === "t-income")!, idx) ?? 1;
-            const gp = getValue(PL_ROWS.find(r => r.id === "t-gp")!, idx) ?? 0;
-            return ns !== 0 ? gp / ns : 0;
-          }
-          return childSum;
-        }
-        return childSum;
+    if (row.kind === "pct") {
+      if (row.id === "t-gp-pct") {
+        const ns = getValue(PL_ROWS.find(r => r.id === "t-income")!, idx) ?? 1;
+        const gp = getValue(PL_ROWS.find(r => r.id === "t-gp")!, idx) ?? 0;
+        return ns !== 0 ? gp / ns : 0;
       }
-      // No children or total with forecastFn
-      if (row.forecastFn) return row.forecastFn(m, idx);
       return null;
     }
 
-    if (row.kind === "group") {
-      // Group shows the sum of its direct item/group children (not totals)
+    if (row.kind === "total") {
       const children = (childMap[row.id] || [])
         .map(cid => PL_ROWS.find(r => r.id === cid)!)
         .filter(Boolean)
@@ -454,7 +636,19 @@ function PNLTab({ m, realMonths, actuals, fyActualOnly }: { m: typeof D; realMon
       if (children.length > 0) {
         return children.reduce((s, c) => s + (getValue(c, idx) ?? 0), 0);
       }
-      if (row.forecastFn) return row.forecastFn(m, idx);
+      if (!isActual && ctx && row.forecastFn) return row.forecastFn(ctx);
+      return null;
+    }
+
+    if (row.kind === "group") {
+      const children = (childMap[row.id] || [])
+        .map(cid => PL_ROWS.find(r => r.id === cid)!)
+        .filter(Boolean)
+        .filter(c => c.kind !== "total");
+      if (children.length > 0) {
+        return children.reduce((s, c) => s + (getValue(c, idx) ?? 0), 0);
+      }
+      if (!isActual && ctx && row.forecastFn) return row.forecastFn(ctx);
       return null;
     }
 
@@ -463,33 +657,57 @@ function PNLTab({ m, realMonths, actuals, fyActualOnly }: { m: typeof D; realMon
         const val = actuals[period].pnl_detail[row.actualKey];
         return val != null ? Number(val) / 1000 : 0; // convert to $K
       }
-      if (row.forecastFn) return row.forecastFn(m, idx);
+      if (ctx && row.forecastFn) return row.forecastFn(ctx);
       return 0;
     }
     return null;
   }
 
-  // Compute P&L values as gp% from actual income/gp
-  function getGPPct(idx: number): number {
-    const income = getValue(PL_ROWS.find(r => r.id === "t-income")!, idx) ?? 1;
-    const gp = getValue(PL_ROWS.find(r => r.id === "t-gp")!, idx) ?? 0;
-    return income !== 0 ? gp / income : 0;
+  // % this row represents of its parent group/total (shown small, inside the header cell)
+  function pctOfParent(row: PLRow, idx: number): string | null {
+    if (!row.parentId) return null;
+    const parent = PL_ROWS.find(r => r.id === row.parentId);
+    if (!parent) return null;
+    const parentVal = getValue(parent, idx);
+    const val = getValue(row, idx);
+    if (!parentVal || val == null) return null;
+    return `${(Math.abs(val) / Math.abs(parentVal) * 100).toFixed(0)}%`;
   }
 
-  const gs_fy = sum(m.gross_sales);
+  const gsRow = PL_ROWS.find(r => r.id === "t-4000")!;
+  const gsFY = sum(MONTHS.map((_, i) => getValue(gsRow, i) ?? 0));
   const indentPx = [0,16,28,40];
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+      <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
         <span className="flex items-center gap-1">
           <span className="h-2 w-2 rounded-full bg-emerald-500 inline-block"/>
           Actual = Accountfully
         </span>
-        <span className="opacity-60">F = Best Estimate forecast</span>
+        <span className="opacity-60">F = forecast (scenario + assumptions below)</span>
+        <div className="flex items-center gap-1 ml-2">
+          <span className="text-[10px] uppercase tracking-wide">Scenario:</span>
+          {(["Pessimistic","Normal","Optimistic"] as Scenario[]).map(s => (
+            <button key={s} onClick={() => setScenario(s)}
+              className={`rounded-full border px-2 py-0.5 text-[11px] ${scenario===s ? "border-[#1C2340] bg-[#1C2340] text-white" : "border-border hover:bg-muted"}`}>
+              {s}
+            </button>
+          ))}
+        </div>
+        <button onClick={() => setAssumptionsOpen(true)}
+          className="rounded-full border border-border px-2 py-0.5 hover:bg-muted flex items-center gap-1">
+          ⚙️ Assumptions
+        </button>
+        <span className="flex-1" />
         <button onClick={() => setCollapsed(new Set())} className="rounded-full border border-border px-2 py-0.5 hover:bg-muted">Expand all</button>
         <button onClick={() => setCollapsed(new Set(PL_ROWS.filter(r=>r.kind==="group").map(r=>r.id)))} className="rounded-full border border-border px-2 py-0.5 hover:bg-muted">Collapse all</button>
       </div>
+
+      {assumptionsOpen && (
+        <AssumptionsModal assumptions={assumptions} onClose={() => setAssumptionsOpen(false)} />
+      )}
+
       <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
         <table className="w-full text-xs min-w-max">
           <thead>
@@ -497,17 +715,15 @@ function PNLTab({ m, realMonths, actuals, fyActualOnly }: { m: typeof D; realMon
               <th className="text-left px-4 py-2.5 font-semibold text-[10px] uppercase tracking-wide text-muted-foreground w-52 min-w-[200px]">Line</th>
               {MONTHS.map((mo,i) => (
                 <th key={mo} className="text-right px-2 py-2.5 text-[10px] uppercase tracking-wide w-12"
-                  style={{color: i < realMonths ? "#1C2340" : fyActualOnly ? "#D1D5DB" : "#9CA3AF"}}>
+                  style={{color: i < realMonths ? "#1C2340" : "#9CA3AF"}}>
                   {mo}
                   <div className="text-[8px] flex items-center justify-end gap-0.5">
                     {i < realMonths && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 inline-block"/>}
-                    {i < realMonths ? "A" : fyActualOnly ? "—" : "F"}
+                    {i < realMonths ? "A" : i === 6 ? "Real GS" : "F"}
                   </div>
                 </th>
               ))}
-              <th className="text-right px-2 py-2.5 text-[10px] uppercase text-muted-foreground w-14">
-                {fyActualOnly ? `H1'26` : "FY"}
-              </th>
+              <th className="text-right px-2 py-2.5 text-[10px] uppercase text-muted-foreground w-14">FY</th>
               <th className="text-right px-2 py-2.5 text-[10px] uppercase text-muted-foreground w-12">% GS</th>
             </tr>
           </thead>
@@ -518,21 +734,41 @@ function PNLTab({ m, realMonths, actuals, fyActualOnly }: { m: typeof D; realMon
                   <td colSpan={16} className="px-4 py-1.5 text-[9px] font-bold uppercase tracking-widest text-muted-foreground">{row.label}</td>
                 </tr>
               );
+              if (row.id === "units_sold") {
+                const vals = MONTHS.map((_, i) => getValue(row, i));
+                const fyUnits = vals.reduce((s,v)=>(s??0)+(v??0),0)!;
+                return (
+                  <tr key={row.id} className="border-t border-border/40 bg-muted/5 italic">
+                    <td className="px-4 py-1.5 text-muted-foreground" style={{paddingLeft: 16}}>
+                      <span className="flex items-center gap-1.5"><span className="w-4"/>{row.label}</span>
+                    </td>
+                    {vals.map((v, i) => (
+                      <td key={i} className="text-right px-2 py-1.5 font-mono tabular-nums text-muted-foreground">
+                        {v ? Math.round(v).toLocaleString() : "—"}
+                      </td>
+                    ))}
+                    <td className="text-right px-2 py-1.5 font-mono font-semibold tabular-nums text-muted-foreground">
+                      {fyUnits ? Math.round(fyUnits).toLocaleString() : "—"}
+                    </td>
+                    <td className="text-right px-2 py-1.5 text-muted-foreground text-[10px]">—</td>
+                  </tr>
+                );
+              }
+
               const hasChildren = (childMap[row.id] || []).length > 0;
               const isExp = hasChildren && row.kind === "group";
               const isOpen = !collapsed.has(row.id);
               const isTotal = row.kind === "total" || row.kind === "pct";
-              const vals = MONTHS.map((_, i) => row.kind === "pct" ? getGPPct(i) : getValue(row, i));
-              const fySlice = fyActualOnly ? vals.slice(0, realMonths) : vals;
-              const fy = row.kind === "pct" ? (fySlice.reduce((s,v)=>(s??0)+(v??0),0)!/(fyActualOnly ? realMonths : 12)) : fySlice.reduce((s,v)=>(s??0)+(v??0),0)!;
-              const pctGS = gs_fy ? `${(Math.abs(fy!/1000 > 1 ? fy! : fy!*1000)/gs_fy*100).toFixed(1)}%` : "—";
+              const vals = MONTHS.map((_, i) => getValue(row, i));
+              const fy = row.kind === "pct" ? (vals.reduce((s,v)=>(s??0)+(v??0),0)!/12) : vals.reduce((s,v)=>(s??0)+(v??0),0)!;
+              const pctGS = gsFY ? `${(Math.abs(fy!)/gsFY*100).toFixed(1)}%` : "—";
+              const pctParent = pctOfParent(row, 11); // representative (FY-ish, using Dec as proxy) — shown small next to label
 
-                // Clicking a total row toggles its parent group
-                const parentGroupId = (row.kind === "total" && row.parentId) ? row.parentId : null;
-                const parentIsGroup = parentGroupId ? PL_ROWS.find(r => r.id === parentGroupId)?.kind === "group" : false;
-                const parentIsOpen = parentGroupId ? !collapsed.has(parentGroupId) : false;
+              const parentGroupId = (row.kind === "total" && row.parentId) ? row.parentId : null;
+              const parentIsGroup = parentGroupId ? PL_ROWS.find(r => r.id === parentGroupId)?.kind === "group" : false;
+              const parentIsOpen = parentGroupId ? !collapsed.has(parentGroupId) : false;
 
-                return (
+              return (
                 <tr key={row.id}
                   className={`border-t border-border/40 hover:bg-muted/20
                     ${row.bold || isTotal ? "font-semibold" : ""}
@@ -557,20 +793,21 @@ function PNLTab({ m, realMonths, actuals, fyActualOnly }: { m: typeof D; realMon
                       )}
                       {!isExp && !parentIsGroup && <span className="w-4 flex-shrink-0"/>}
                       <span className={`${isTotal ? "" : row.indent > 0 ? "text-muted-foreground" : ""}`}>{row.label}</span>
+                      {row.indent > 0 && row.kind === "item" && pctParent && (
+                        <span className="text-[8px] text-muted-foreground/70 font-mono">({pctParent})</span>
+                      )}
                     </span>
                   </td>
                   {vals.map((v, i) => (
                     <td key={i} className={`text-right px-2 py-1.5 font-mono tabular-nums`}
                       style={{
-                        color: (fyActualOnly && i >= realMonths) ? "#E5E7EB"
-                          : row.kind==="pct" ? "#1C2340"
+                        color: row.kind==="pct" ? "#1C2340"
                           : (v??0)<0 ? "#EF4444"
                           : isTotal && (v??0)>0 ? "#10B981"
                           : i >= realMonths ? "#9CA3AF"
                           : "#1C2340"
                       }}>
-                      {(fyActualOnly && i >= realMonths) ? "—"
-                        : row.kind==="pct" ? fmtPct(v??0)
+                      {row.kind==="pct" ? fmtPct(v??0)
                         : (!v || v===0) ? "—"
                         : fmt(v,0)}
                     </td>
@@ -592,50 +829,262 @@ function PNLTab({ m, realMonths, actuals, fyActualOnly }: { m: typeof D; realMon
   );
 }
 
+// ─── Best Estimate fixed-cost lines that don't scale with sales (unchanged from budget) ──
+// $K per month-number (1=Jan..12=Dec), used for forecast months only.
+const FIXED_COSTS_BEST_ESTIMATE: Record<number, Record<string, number>> = {
+  7:  { broker_commissions:-10, slotting_fees:-0.37, demos_merchandising:-4.5, digital_social:-5, events_tradeshows:0, product_samples:-1.16, dues_subscriptions:-1.37, quality_rd:-1.62 },
+  8:  { broker_commissions:-10, slotting_fees:-0.37, demos_merchandising:0,   digital_social:-5, events_tradeshows:0, product_samples:-1.16, dues_subscriptions:-1.37, quality_rd:-0.42 },
+  9:  { broker_commissions:-10, slotting_fees:-0.74, demos_merchandising:0,   digital_social:-5, events_tradeshows:0, product_samples:-1.16, dues_subscriptions:-1.37, quality_rd:-0.42 },
+  10: { broker_commissions:-10, slotting_fees:-0.37, demos_merchandising:0,   digital_social:-5, events_tradeshows:-4, product_samples:-1.16, dues_subscriptions:-1.37, quality_rd:-1.62 },
+  11: { broker_commissions:-10, slotting_fees:-0.37, demos_merchandising:0,   digital_social:-5, events_tradeshows:0, product_samples:-1.16, dues_subscriptions:-1.37, quality_rd:-0.42 },
+  12: { broker_commissions:-10, slotting_fees:0,      demos_merchandising:0,   digital_social:-5, events_tradeshows:0, product_samples:-1.16, dues_subscriptions:-1.37, quality_rd:-0.42 },
+};
+
+// Total fixed SG&A (payroll, rent, insurance, travel, etc.) not covered by FIXED_COSTS_BEST_ESTIMATE
+// overrides above — these are constant month to month per the Best Estimate.
+const FIXED_SGA_CONSTANT_K = -0.558-0.32-0.97-2.56-0.061-1.15285-15.07-1.3; // rent+utilities+insurance+contractors+payroll_processing+payroll_taxes+salaries+accounting
+
+// Pure function: given a forecast context, compute this month's Net Income in $K.
+// Mirrors PNLTab's getValue logic exactly, so Balance Sheet cash roll-forward stays consistent with the P&L.
+function computeMonthlyNetIncome(ctx: ForecastContext): number {
+  const grossProfit = ctx.grossSales
+    - ctx.grossSales * ctx.deductionPct
+    - (ctx.unitsSold * ctx.cogsPerUnit) / 1000
+    - ctx.grossSales * ctx.logisticsPct;
+  const scalingSGA = (ctx.fixedCostsK.broker_commissions ?? -10) + (ctx.fixedCostsK.slotting_fees ?? 0)
+    + (ctx.fixedCostsK.demos_merchandising ?? 0) + (ctx.fixedCostsK.digital_social ?? -5)
+    + (ctx.fixedCostsK.events_tradeshows ?? 0) + (ctx.fixedCostsK.product_samples ?? -1.16)
+    + (ctx.fixedCostsK.dues_subscriptions ?? -1.37) + (ctx.fixedCostsK.quality_rd ?? -0.42);
+  const noi = grossProfit + scalingSGA + FIXED_SGA_CONSTANT_K;
+  return noi; // other_income assumed 0 for forecast months (matches PNLTab default)
+}
+
+
+function AssumptionsModal({ assumptions, onClose }: { assumptions: ReturnType<typeof useFinanceAssumptions>; onClose: () => void }) {
+  const keys: { key: AssumptionKey; hint: string }[] = [
+    { key: "cogs_per_unit", hint: "$/case — used as Units Sold × this value = Product Costs forecast" },
+    { key: "logistics_pct_of_gross", hint: "% of Gross Sales — splits into Freight In/Out + Warehouse" },
+    { key: "deduction_pct_overall", hint: "% of Gross Sales — splits into Distributor Fees / DSD / KeHE / Payment Terms / Promos / UNFI" },
+    { key: "deduction_pct_kehe", hint: "Reference only — KeHE-specific deduction rate from H1 real mix" },
+    { key: "deduction_pct_unfi", hint: "Reference only — UNFI-specific deduction rate from H1 real mix" },
+    { key: "deduction_pct_rainforest", hint: "Reference only — Rainforest-specific deduction rate (18% distribution fee + 60-day terms)" },
+    { key: "sales_mix_kehe", hint: "Reference only — % of gross sales $ through KeHE (H1 2026 pipeline)" },
+    { key: "sales_mix_unfi", hint: "Reference only — % of gross sales $ through UNFI (H1 2026 pipeline)" },
+    { key: "sales_mix_rainforest", hint: "Reference only — % of gross sales $ through Rainforest (H1 2026 pipeline)" },
+  ];
+  const [edits, setEdits] = useState<Record<string, string>>({});
+
+  async function handleSave(key: AssumptionKey) {
+    const raw = edits[key];
+    if (raw == null) return;
+    const val = parseFloat(raw);
+    if (isNaN(val)) return;
+    await assumptions.saveOverride(key, val);
+    setEdits(prev => { const n = { ...prev }; delete n[key]; return n; });
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+      <div className="bg-card rounded-2xl border border-border shadow-xl w-full max-w-xl p-6 space-y-4 max-h-[85vh] overflow-y-auto">
+        <div className="flex items-center justify-between">
+          <h2 className="font-bold text-sm" style={{color:"#1C2340"}}>Forecast Assumptions</h2>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-lg">✕</button>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          These drive every forecast (non-Accountfully) month in the P&L. They auto-recalculate from real
+          data whenever a new month is loaded via "Upload Accountfully PDF" — unless you override manually here.
+        </p>
+        <div className="space-y-3">
+          {keys.map(({ key, hint }) => {
+            const row = assumptions.rows[key];
+            if (!row) return null;
+            const displayVal = edits[key] ?? String(row.value);
+            return (
+              <div key={key} className="rounded-xl border border-border p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <div className="text-xs font-semibold" style={{color:"#1C2340"}}>{row.label}</div>
+                    <div className="text-[10px] text-muted-foreground mt-0.5">{hint}</div>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <input
+                      type="number" step="0.01" value={displayVal}
+                      onChange={e => setEdits(prev => ({ ...prev, [key]: e.target.value }))}
+                      className="w-20 rounded-lg border border-border px-2 py-1 text-xs text-right font-mono"
+                    />
+                    <span className="text-[10px] text-muted-foreground w-4">{row.unit === "percent" ? "%" : row.unit === "currency" ? "$" : ""}</span>
+                    <button onClick={() => handleSave(key)}
+                      className="rounded-lg bg-[#1C2340] text-white px-2 py-1 text-[10px] font-semibold hover:opacity-90">
+                      Save
+                    </button>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between mt-1.5 text-[10px] text-muted-foreground">
+                  <span>
+                    {row.is_manual_override
+                      ? <span className="text-amber-600">✎ Manual override</span>
+                      : <span className="text-emerald-600">✓ Auto from real data</span>}
+                    {row.auto_calculated_value != null && ` · Auto value: ${row.auto_calculated_value.toFixed(2)}`}
+                  </span>
+                  {row.is_manual_override && (
+                    <button onClick={() => assumptions.resetToAuto(key)} className="underline hover:text-foreground">
+                      Reset to auto
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 // ─── Cash Flow Tab ────────────────────────────────────────────────────────────
-function CashFlowTab({ refMonth, m, realMonths }: { refMonth: number; m: typeof D; realMonths: number }) {
+function CashFlowTab({ actuals }: { actuals: Record<string, any> }) {
   const cashCanvas = useRef<HTMLCanvasElement>(null);
-  const avgBurn = (m.ebitda[Math.max(0,refMonth-2)] + m.ebitda[Math.max(0,refMonth-1)] + m.ebitda[refMonth]) / 3;
-  const runway = avgBurn < 0 ? m.cash_eop[refMonth] / Math.abs(avgBurn) : 99;
+  const { effectiveForecast } = useSalesForecast();
+  const { julyGrossSales } = useJulyRealFromFulfillment();
+  const assumptions = useFinanceAssumptions();
+
+  const bsByPeriod = useMemo(() => {
+    const map: Record<string, Record<string, number>> = {};
+    for (const p of PERIODS) if (actuals[p]?.bs_detail) map[p] = actuals[p].bs_detail;
+    return map;
+  }, [actuals]);
+  const isRealMonth = (idx: number) => !!bsByPeriod[PERIODS[idx]] && !!actuals[PERIODS[idx]]?.pnl_detail;
+  const latestRealIdx = useMemo(() => {
+    const withBs = PERIODS.map((p,i) => bsByPeriod[p] ? i : -1).filter(i => i >= 0);
+    return withBs.length ? Math.max(...withBs) : -1;
+  }, [bsByPeriod]);
+
+  const fcGrossByMonth: Record<number, number> = {};
+  for (const f of effectiveForecast) if (f.year === 2026) fcGrossByMonth[f.month-1] = f.revenue/1000;
+  if (julyGrossSales != null) fcGrossByMonth[6] = julyGrossSales/1000;
+
+  function buildContextForMonth(idx: number): ForecastContext {
+    const monthNum = idx + 1;
+    const cogsPerUnit = assumptions.get('cogs_per_unit', 22.27);
+    const logisticsPct = assumptions.get('logistics_pct_of_gross', 9.8) / 100;
+    const deductionPct = assumptions.get('deduction_pct_overall', 19.78) / 100;
+    const grossSalesK = fcGrossByMonth[idx] ?? 0;
+    const unitsSold = grossSalesK > 0 ? Math.round((grossSalesK * 1000) / 37) : 0;
+    return { grossSales: grossSalesK, unitsSold, cogsPerUnit, logisticsPct, deductionPct, fixedCostsK: FIXED_COSTS_BEST_ESTIMATE[monthNum] ?? {} };
+  }
+  function forecastAR(idx: number): number {
+    const mixKeheUnfi = (assumptions.get('sales_mix_kehe', 50.5) + assumptions.get('sales_mix_unfi', 27.1)) / 100;
+    const mixRainforest = assumptions.get('sales_mix_rainforest', 22.3) / 100;
+    const deductionPct = assumptions.get('deduction_pct_overall', 19.78) / 100;
+    const netOf = (gsK: number) => gsK * (1 - deductionPct);
+    const thisMonthKU = netOf(fcGrossByMonth[idx] ?? 0) * mixKeheUnfi;
+    const prevRF = netOf(fcGrossByMonth[idx-1] ?? fcGrossByMonth[idx] ?? 0) * mixRainforest;
+    const thisRF = netOf(fcGrossByMonth[idx] ?? 0) * mixRainforest;
+    return thisMonthKU + prevRF + thisRF;
+  }
+  function forecastInventory(idx: number): number {
+    const gs = fcGrossByMonth[idx] ?? 0;
+    const cogsPerUnit = assumptions.get('cogs_per_unit', 22.27), pricePerCase = 37;
+    const units = gs*1000/pricePerCase;
+    return (units * cogsPerUnit * 45/30) / 1000;
+  }
+
+  // ── Real AR/Inventory series (from bs_detail, $K) for months that have it ──
+  function realAR(idx: number): number | null {
+    const bs = bsByPeriod[PERIODS[idx]];
+    return bs ? Number(bs.accounts_receivable ?? 0)/1000 : null;
+  }
+  function realInventory(idx: number): number | null {
+    const bs = bsByPeriod[PERIODS[idx]];
+    return bs ? (Number(bs.finished_goods ?? 0) + Number(bs.raw_materials_packaging ?? 0))/1000 : null;
+  }
+  function realCash(idx: number): number | null {
+    const bs = bsByPeriod[PERIODS[idx]];
+    if (!bs) return null;
+    return ['bofa_x6854','citi_bank','mercury_checking','mercury_treasury'].reduce((s,k)=>s+Number(bs[k] ?? 0)/1000, 0);
+  }
+  function realNetIncome(idx: number): number | null {
+    const d = actuals[PERIODS[idx]]?.pnl_detail;
+    if (!d) return null;
+    const income = ['sales_product','shipping_income','consumer_returns','distributor_fees','dsd_programs','kehe_allowance','payment_terms','promos','unfi_allowance','returns_refunds']
+      .reduce((s,k)=>s+Number(d[k] ?? 0), 0);
+    const cogs = ['product_costs','freight_in','freight_out_actual','merchant_fees','warehouse_fulfillment']
+      .reduce((s,k)=>s+Number(d[k] ?? 0), 0);
+    const exp = ['broker_commissions','slotting_fees','demos_merchandising','digital_social','events_tradeshows','printing_promotional','product_samples',
+      'bank_charges','dues_subscriptions','rent','utilities','insurance','meals_entertainment','office_supplies',
+      'contractors','payroll_processing','payroll_taxes','salaries_operations','accounting_finance','business_consultation',
+      'legal_fees','quality_rd','taxes_licenses','car_rental_uber','flights','hotel','uncategorized','vehicle_expenses']
+      .reduce((s,k)=>s+Number(d[k] ?? 0), 0);
+    return (income + cogs + exp + Number(d.other_income ?? 0)) / 1000;
+  }
+
+  // ── Unified per-month series: real where available, forecast rolled from last real close otherwise ──
+  const netIncome: number[] = [], ar: number[] = [], inventory: number[] = [], cash: number[] = [];
+  let rollingCash = 0, prevAR = 0, prevInv = 0;
+  for (let i = 0; i < 12; i++) {
+    if (isRealMonth(i)) {
+      netIncome[i] = realNetIncome(i) ?? 0;
+      ar[i] = realAR(i) ?? 0;
+      inventory[i] = realInventory(i) ?? 0;
+      cash[i] = realCash(i) ?? 0;
+      rollingCash = cash[i]; prevAR = ar[i]; prevInv = inventory[i];
+    } else if (latestRealIdx >= 0 && i > latestRealIdx) {
+      const ni = computeMonthlyNetIncome(buildContextForMonth(i));
+      const thisAR = forecastAR(i), thisInv = forecastInventory(i);
+      rollingCash += ni - (thisAR - prevAR) - (thisInv - prevInv);
+      netIncome[i] = ni; ar[i] = thisAR; inventory[i] = thisInv; cash[i] = rollingCash;
+      prevAR = thisAR; prevInv = thisInv;
+    } else {
+      netIncome[i] = 0; ar[i] = 0; inventory[i] = 0; cash[i] = 0;
+    }
+  }
+  const chgAR = ar.map((v,i) => i === 0 ? 0 : -(v - ar[i-1]));
+  const chgInv = inventory.map((v,i) => i === 0 ? 0 : -(v - inventory[i-1]));
+  const cfo = netIncome.map((ni,i) => ni + chgAR[i] + chgInv[i]);
+  const cashBop = cash.map((v,i) => i === 0 ? v - cfo[i] : cash[i-1]);
+
+  const lastRealCash = latestRealIdx >= 0 ? cash[latestRealIdx] : 0;
+  const decCash = cash[11];
+  const last3 = [9,10,11].map(i => netIncome[i]).filter((_,idx,arr)=>true);
+  const avgBurn = (netIncome[Math.max(0,11-2)] + netIncome[Math.max(0,11-1)] + netIncome[11]) / 3;
+  const runway = avgBurn < 0 ? decCash / Math.abs(avgBurn) : 99;
 
   useChart(cashCanvas, () => ({
     type: 'line',
     data: {
       labels: MONTHS,
       datasets: [
-        { label: 'Cash EOP', data: m.cash_eop, borderColor:'#1C2340', backgroundColor:'rgba(28,35,64,0.1)', tension:0.3, fill:true, pointRadius:5 },
+        { label: 'Cash EOP (real)', data: cash.map((v,i)=>isRealMonth(i)?v:null), borderColor:'#1C2340', backgroundColor:'rgba(28,35,64,0.1)', tension:0.3, fill:true, pointRadius:5 },
+        { label: 'Cash EOP (forecast)', data: cash.map((v,i)=>!isRealMonth(i)?v:null), borderColor:'#A3224A', backgroundColor:'rgba(163,34,74,0.08)', borderDash:[4,3], tension:0.3, fill:true, pointRadius:4 },
         { label: 'Runway = 0', data: MONTHS.map(()=>0), borderColor:'#DC2626', borderDash:[5,5], pointRadius:0, fill:false }
       ]
     },
     options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{ position:'bottom', labels:{ boxWidth:12, font:{ size:11 } } } }, scales:{ y:{ ticks:{ callback:(v:number)=>'$'+v+'K' } } } }
-  }), []);
+  }), [cash]);
 
-  type CFRow = { name: string; type?: string; data: (number|null)[] };
+  type CFRow = { name: string; type?: string; data: number[] };
   const cfRows: CFRow[] = [
-    { name: 'EBITDA',                      data: m.ebitda },
-    { name: 'Changes in Working Capital',  data: m.chg_wc },
-    { name: '  · AR',                      data: m.chg_ar },
-    { name: '  · Inventory',               data: m.chg_inventory },
-    { name: '  · AP',                      data: m.chg_ap },
-    { name: 'Cash from Operations',        type: 'total', data: m.cash_from_ops },
-    { name: 'Capital contributions',       data: m.capital_contrib },
-    { name: 'Investing Cash Flow',         type: 'total', data: m.capital_contrib },
-    { name: 'Cash BOP',                    data: m.cash_bop },
-    { name: 'Change in cash',              data: m.chg_cash },
-    { name: 'Cash EOP',                    type: 'total', data: m.cash_eop },
+    { name: 'Net Income',                  data: netIncome },
+    { name: 'Changes in Working Capital',  data: chgAR.map((v,i)=>v+chgInv[i]) },
+    { name: '  · AR',                      data: chgAR },
+    { name: '  · Inventory',               data: chgInv },
+    { name: 'Cash from Operations',        type: 'total', data: cfo },
+    { name: 'Cash BOP',                    data: cashBop },
+    { name: 'Cash EOP',                    type: 'total', data: cash },
   ];
 
   return (
     <div className="space-y-5">
       <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm flex items-center gap-4 flex-wrap">
-        <span>💰 <strong>Cash on hand (Jul 2026):</strong> {fmtK(m.cash_eop[refMonth])}</span>
+        <span>💰 <strong>Cash on hand (last real close):</strong> {fmtK(lastRealCash)}</span>
         <span>· <strong>Runway:</strong> {runway > 36 ? "36+ mo" : runway.toFixed(1)+" mo"}</span>
-        <span>· <strong>Cash EOP (Dec 26):</strong> {fmtK(m.cash_eop[11])}</span>
+        <span>· <strong>Cash EOP (Dec 26 forecast):</strong> {fmtK(decCash)}</span>
       </div>
 
       <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
         <div className="text-sm font-semibold mb-3" style={{color:"#1C2340"}}>
-          Cash trend month by month <span className="text-[10px] font-normal text-muted-foreground">red line = runway = 0 (projected)</span>
+          Cash trend month by month <span className="text-[10px] font-normal text-muted-foreground">derived from P&L + Balance Sheet · dashed/pink = forecast</span>
         </div>
         <div style={{height:280}}><canvas ref={cashCanvas} /></div>
       </div>
@@ -645,9 +1094,9 @@ function CashFlowTab({ refMonth, m, realMonths }: { refMonth: number; m: typeof 
           <thead>
             <tr className="border-b border-border bg-muted/50">
               <th className="text-left px-4 py-2.5 text-[10px] uppercase tracking-wide text-muted-foreground w-44">Line</th>
-              {MONTHS.map((m,i) => (
-                <th key={m} className="text-right px-2 py-2.5 text-[10px] uppercase w-12"
-                  style={{color: i < realMonths ? "#1C2340" : "#9CA3AF"}}>{m}</th>
+              {MONTHS.map((mo,i) => (
+                <th key={mo} className="text-right px-2 py-2.5 text-[10px] uppercase w-12"
+                  style={{color: isRealMonth(i) ? "#1C2340" : "#C9A3B5"}}>{mo}</th>
               ))}
               <th className="text-right px-2 py-2.5 text-[10px] uppercase text-muted-foreground w-14">FY</th>
             </tr>
@@ -661,9 +1110,14 @@ function CashFlowTab({ refMonth, m, realMonths }: { refMonth: number; m: typeof 
                   <td className={`px-4 py-1.5 ${isTotal ? "font-bold" : "text-muted-foreground"} ${row.name.startsWith('  ') ? "pl-8" : ""}`}
                     style={{color:"#1C2340"}}>{row.name.trim()}</td>
                   {row.data.map((v,i) => (
-                    <td key={i} className={`text-right px-2 py-1.5 font-mono tabular-nums ${i >= realMonths ? "opacity-60" : ""}`}
-                      style={{color: v === null ? "#9CA3AF" : (v??0) < 0 ? "#EF4444" : (v??0) > 0 ? "#10B981" : "#9CA3AF"}}>
-                      {v === null || v === 0 ? "—" : fmt(v,0)}
+                    <td key={i} className="text-right px-2 py-1.5 font-mono tabular-nums"
+                      style={{
+                        color: v === 0 ? "#9CA3AF" : isRealMonth(i)
+                          ? (v < 0 ? "#EF4444" : "#10B981")
+                          : (v < 0 ? "#F3B8C4" : "#8FD9BC"),
+                        fontWeight: isRealMonth(i) ? 700 : 400,
+                      }}>
+                      {v === 0 ? "—" : fmt(v,0)}
                     </td>
                   ))}
                   <td className="text-right px-2 py-1.5 font-mono font-semibold tabular-nums"
@@ -746,25 +1200,85 @@ const BS_ROWS: BSNode[] = [
   {id:"t-liab-equity",label:"TOTAL LIABILITIES AND EQUITY",kind:"total",indent:0,forecastFn:(m,i)=>m.total_assets[i]},
 ];
 
-function BalanceTab({ m, realMonths, actuals }: { m: typeof D; realMonths: number; actuals: Record<string,any> }) {
+function BalanceTab({ realMonths, actuals }: { realMonths: number; actuals: Record<string,any> }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(
     new Set(["g-bank","g-ar","g-inv","g-fixed","g-cc","g-other-liab","g-capital"])
   );
+  const { effectiveForecast } = useSalesForecast();
+  const { julyGrossSales } = useJulyRealFromFulfillment();
+  const assumptions = useFinanceAssumptions();
 
-  // Latest month with bs_detail
-  const { latestBsDetail, latestBsIdx } = useMemo(() => {
-    const sorted = Object.keys(actuals)
-      .filter(p => actuals[p] && actuals[p].bs_detail)
-      .sort();
-    if (!sorted.length) return { latestBsDetail: null, latestBsIdx: -1 };
-    const last = sorted[sorted.length - 1];
-    return {
-      latestBsDetail: actuals[last].bs_detail as Record<string, number>,
-      latestBsIdx: PERIODS.indexOf(last),
-    };
+  // bs_detail per period (real, wherever Accountfully sent a balance sheet snapshot)
+  const bsByPeriod = useMemo(() => {
+    const map: Record<string, Record<string, number>> = {};
+    for (const p of PERIODS) if (actuals[p]?.bs_detail) map[p] = actuals[p].bs_detail;
+    return map;
   }, [actuals]);
+  const latestRealIdx = useMemo(() => {
+    const withBs = PERIODS.map((p,i) => bsByPeriod[p] ? i : -1).filter(i => i >= 0);
+    return withBs.length ? Math.max(...withBs) : -1;
+  }, [bsByPeriod]);
 
-  // Child IDs per parent (only items — groups handle themselves)
+  const fcGrossByMonth: Record<number, number> = {}; // month index 0-11 -> $K, Gross Sales
+  for (const f of effectiveForecast) if (f.year === 2026) fcGrossByMonth[f.month-1] = f.revenue/1000;
+  if (julyGrossSales != null) fcGrossByMonth[6] = julyGrossSales/1000;
+
+  // ── AR: Net Sales owed, split by distributor payment terms ──
+  // KeHE + UNFI pay Net Sales (Gross Sales − Deductions) at 30 days; Rainforest at 60 days.
+  // AR balance at month-end ≈ (this month's Net Sales collectible from KeHE/UNFI, still within
+  // their 30-day window) + (last ~2 months' Net Sales from Rainforest, within its 60-day window).
+  // Mix % and deduction % come from Finance Assumptions (editable, auto-recalculated from real data).
+  function forecastAR(idx: number): number {
+    const mixKeheUnfi = (assumptions.get('sales_mix_kehe', 50.5) + assumptions.get('sales_mix_unfi', 27.1)) / 100;
+    const mixRainforest = assumptions.get('sales_mix_rainforest', 22.3) / 100;
+    const deductionPct = assumptions.get('deduction_pct_overall', 19.78) / 100;
+    const netOf = (gsK: number) => gsK * (1 - deductionPct);
+
+    // KeHE/UNFI (30-day terms): outstanding balance ≈ this month's net sales from that channel
+    const thisMonthNet = netOf(fcGrossByMonth[idx] ?? 0) * mixKeheUnfi;
+    // Rainforest (60-day terms): outstanding balance ≈ this + prior month's net sales from that channel
+    const prevMonthNet = netOf(fcGrossByMonth[idx-1] ?? fcGrossByMonth[idx] ?? 0) * mixRainforest;
+    const thisMonthRainforest = netOf(fcGrossByMonth[idx] ?? 0) * mixRainforest;
+    return thisMonthNet + prevMonthNet + thisMonthRainforest;
+  }
+
+  // ── Inventory: simple days-of-COGS proxy until Procurement Planning (BOM + lead times) feeds this ──
+  const INV_DAYS = 45;
+  function forecastInventory(idx: number): number {
+    const gs = fcGrossByMonth[idx] ?? 0;
+    const cogsPerUnit = assumptions.get('cogs_per_unit', 22.27), pricePerCase = 37;
+    const units = gs*1000/pricePerCase;
+    return (units * cogsPerUnit * INV_DAYS/30) / 1000;
+  }
+
+  // ── Cash: roll forward from the last real close using the P&L's own Net Income ──
+  // Cash(idx) = Cash(last real month) + Σ Net Income (forecast months, last real+1..idx)
+  //           − Δ AR − Δ Inventory (a receivables/inventory build-up ties up cash, a drawdown frees it)
+  function buildContextForMonth(idx: number): ForecastContext {
+    const monthNum = idx + 1;
+    const cogsPerUnit = assumptions.get('cogs_per_unit', 22.27);
+    const logisticsPct = assumptions.get('logistics_pct_of_gross', 9.8) / 100;
+    const deductionPct = assumptions.get('deduction_pct_overall', 19.78) / 100;
+    const grossSalesK = fcGrossByMonth[idx] ?? 0;
+    const unitsSold = grossSalesK > 0 ? Math.round((grossSalesK * 1000) / 37) : 0;
+    return { grossSales: grossSalesK, unitsSold, cogsPerUnit, logisticsPct, deductionPct, fixedCostsK: FIXED_COSTS_BEST_ESTIMATE[monthNum] ?? {} };
+  }
+  function forecastCash(idx: number): number {
+    if (latestRealIdx < 0) return 0;
+    const baseCash = ['bofa_x6854','citi_bank','mercury_checking','mercury_treasury']
+      .reduce((s,k) => s + Number(bsByPeriod[PERIODS[latestRealIdx]]?.[k] ?? 0)/1000, 0);
+    let cash = baseCash;
+    let prevAR = ['accounts_receivable'].reduce((s,k)=>s+Number(bsByPeriod[PERIODS[latestRealIdx]]?.[k] ?? 0)/1000, 0);
+    let prevInv = ['finished_goods','raw_materials_packaging'].reduce((s,k)=>s+Number(bsByPeriod[PERIODS[latestRealIdx]]?.[k] ?? 0)/1000, 0);
+    for (let i = latestRealIdx + 1; i <= idx; i++) {
+      const ni = computeMonthlyNetIncome(buildContextForMonth(i));
+      const ar = forecastAR(i), inv = forecastInventory(i);
+      cash += ni - (ar - prevAR) - (inv - prevInv);
+      prevAR = ar; prevInv = inv;
+    }
+    return cash;
+  }
+
   const childMap = useMemo(() => {
     const map: Record<string, string[]> = {};
     for (const r of BS_ROWS) {
@@ -787,49 +1301,80 @@ function BalanceTab({ m, realMonths, actuals }: { m: typeof D; realMonths: numbe
     if (!row.parentId) return true;
     const pid = row.parentId as string;
     if (collapsed.has(pid)) return false;
-    // Check grandparent too
     const parent = BS_ROWS.find(r => r.id === pid);
     if (!parent) return true;
     if (!parent.parentId) return true;
     return !collapsed.has(parent.parentId);
   }
 
+  function isRealMonth(idx: number): boolean {
+    return !!bsByPeriod[PERIODS[idx]];
+  }
+
   function getValue(row: BSNode, idx: number): number | null {
     if (row.kind === "section") return null;
+    const real = bsByPeriod[PERIODS[idx]];
 
-    // Group: sum its item children
     if (row.kind === "group") {
       const items = (childMap[row.id] || [])
         .map(cid => BS_ROWS.find(r => r.id === cid))
         .filter((r): r is BSNode => r != null);
-      const s = items.reduce((acc, r) => acc + (getValue(r, idx) ?? 0), 0);
-      return s;
+      return items.reduce((acc, r) => acc + (getValue(r, idx) ?? 0), 0);
     }
 
-    // Total: use forecastFn (pre-computed)
     if (row.kind === "total") {
-      return row.forecastFn ? row.forecastFn(m, idx) : null;
+      // Prefer summing real children when available, else forecast formula
+      const children = (childMap[row.id] || [])
+        .map(cid => BS_ROWS.find(r => r.id === cid))
+        .filter((r): r is BSNode => r != null && r.kind !== "total");
+      if (real && children.length > 0) {
+        return children.reduce((s, c) => s + (getValue(c, idx) ?? 0), 0);
+      }
+      if (row.id === "t-bank") return real ? getValue(BS_ROWS.find(r=>r.id==="g-bank")!, idx) : forecastCash(idx);
+      if (row.id === "t-ar") return real ? getValue(BS_ROWS.find(r=>r.id==="g-ar")!, idx) : forecastAR(idx);
+      if (row.id === "t-inv") return real ? getValue(BS_ROWS.find(r=>r.id==="g-inv")!, idx) : forecastInventory(idx);
+      if (row.id === "t-curr-assets") {
+        return (getValue(BS_ROWS.find(r=>r.id==="t-bank")!, idx) ?? 0)
+          + (getValue(BS_ROWS.find(r=>r.id==="t-ar")!, idx) ?? 0)
+          + (getValue(BS_ROWS.find(r=>r.id==="t-inv")!, idx) ?? 0)
+          + (getValue(BS_ROWS.find(r=>r.id==="loans_sh")!, idx) ?? 0);
+      }
+      if (row.id === "t-assets") {
+        return (getValue(BS_ROWS.find(r=>r.id==="t-curr-assets")!, idx) ?? 0)
+          + (getValue(BS_ROWS.find(r=>r.id==="t-fixed")!, idx) ?? 0)
+          + (getValue(BS_ROWS.find(r=>r.id==="due_sh")!, idx) ?? 0);
+      }
+      if (row.id === "t-liab") return (getValue(BS_ROWS.find(r=>r.id==="t-cc")!, idx) ?? 0) + (getValue(BS_ROWS.find(r=>r.id==="t-other-liab")!, idx) ?? 0);
+      if (row.id === "t-equity") {
+        return (getValue(BS_ROWS.find(r=>r.id==="t-capital")!, idx) ?? 0)
+          + (getValue(BS_ROWS.find(r=>r.id==="common_stock")!, idx) ?? 0)
+          + (getValue(BS_ROWS.find(r=>r.id==="open_bal_eq")!, idx) ?? 0)
+          + (getValue(BS_ROWS.find(r=>r.id==="ret_earn")!, idx) ?? 0)
+          + (getValue(BS_ROWS.find(r=>r.id==="net_inc_eq")!, idx) ?? 0);
+      }
+      if (row.id === "t-liab-equity") return (getValue(BS_ROWS.find(r=>r.id==="t-liab")!, idx) ?? 0) + (getValue(BS_ROWS.find(r=>r.id==="t-equity")!, idx) ?? 0);
+      return row.forecastFn ? row.forecastFn(D, idx) : null;
     }
 
     // Item
-    const isActualIdx = latestBsDetail && idx === latestBsIdx;
-    if (isActualIdx && row.actualKey) {
-      const raw = latestBsDetail![row.actualKey];
-      if (raw != null) return Number(raw) / 1000;
+    if (real && row.actualKey && real[row.actualKey] != null) {
+      return Number(real[row.actualKey]) / 1000;
     }
-    return row.forecastFn ? row.forecastFn(m, idx) : null;
+    return row.forecastFn ? row.forecastFn(D, idx) : null;
   }
 
   const indentPx = [0, 16, 28, 40];
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+      <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
         <button onClick={() => setCollapsed(new Set())} className="rounded-full border border-border px-2 py-0.5 hover:bg-muted">Expand all</button>
         <button onClick={() => setCollapsed(new Set(BS_ROWS.filter(r=>r.kind==="group").map(r=>r.id)))} className="rounded-full border border-border px-2 py-0.5 hover:bg-muted">Collapse all</button>
-        {latestBsIdx >= 0 && (
-          <span>Accountfully detail: <strong>{MONTHS[latestBsIdx]} 2026</strong> · Other months = Best Estimate</span>
-        )}
+        <span className="flex items-center gap-1">
+          <span className="h-2 w-2 rounded-full bg-emerald-500 inline-block"/>
+          <strong className="text-foreground">Bold</strong> = Accountfully real snapshot
+        </span>
+        <span className="opacity-60">Gray = forecast · AR = Net Sales owed by distributor terms (KeHE/UNFI 30d, Rainforest 60d) · Cash rolls forward from P&L Net Income · Inventory = days-of-COGS proxy</span>
       </div>
 
       <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
@@ -839,9 +1384,9 @@ function BalanceTab({ m, realMonths, actuals }: { m: typeof D; realMonths: numbe
               <th className="text-left px-4 py-2.5 font-semibold text-[10px] uppercase tracking-wide text-muted-foreground min-w-[240px]">Line</th>
               {MONTHS.map((mo, i) => (
                 <th key={mo} className="text-right px-2 py-2.5 text-[10px] uppercase tracking-wide w-12"
-                  style={{color: i < realMonths ? "#1C2340" : "#9CA3AF"}}>
+                  style={{color: isRealMonth(i) ? "#1C2340" : "#9CA3AF"}}>
                   {mo}
-                  <div className="text-[8px]">{i < realMonths ? "A" : "F"}</div>
+                  <div className="text-[8px]">{isRealMonth(i) ? "A" : "F"}</div>
                 </th>
               ))}
             </tr>
@@ -875,8 +1420,8 @@ function BalanceTab({ m, realMonths, actuals }: { m: typeof D; realMonths: numbe
                     </span>
                   </td>
                   {vals.map((v, i) => (
-                    <td key={i} className={`text-right px-2 py-1.5 font-mono tabular-nums ${i >= realMonths ? "opacity-60" : ""}`}
-                      style={{color: "#1C2340"}}>
+                    <td key={i} className="text-right px-2 py-1.5 font-mono tabular-nums"
+                      style={{color: isRealMonth(i) ? "#1C2340" : "#9CA3AF", fontWeight: isRealMonth(i) ? 700 : 400}}>
                       {v == null || v === 0 ? "—" : fmt(v, 0)}
                     </td>
                   ))}
@@ -1428,9 +1973,9 @@ All monetary values in $K (divide by 1000). Use null for unavailable fields.` }
       )}
 
       {tab === "dashboard" && <DashboardTab period={period} refMonth={refMonth} m={M} realMonths={realMonths} />}
-      {tab === "pnl"       && <PNLTab m={M} realMonths={realMonths} actuals={actuals} fyActualOnly={scenario==="Actual"} />}
-      {tab === "cashflow"  && <CashFlowTab refMonth={refMonth} m={M} realMonths={realMonths} />}
-      {tab === "balance"   && <BalanceTab m={M} realMonths={realMonths} actuals={actuals} />}
+      {tab === "pnl"       && <PNLTab realMonths={realMonths} actuals={actuals} />}
+      {tab === "cashflow"  && <CashFlowTab actuals={actuals} />}
+      {tab === "balance"   && <BalanceTab realMonths={realMonths} actuals={actuals} />}
       {tab === "runway"    && <RunwayTab />}
       {tab === "ebitda"    && <EBITDATab />}
     </div>
