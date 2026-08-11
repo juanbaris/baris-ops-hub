@@ -615,7 +615,7 @@ function PNLTab({ realMonths, actuals }: { realMonths: number; actuals: Record<s
     }
     // Special case: Total 8000 = its item/group children (payroll/profsvcs/travel/facility totals + loose items)
     if (row.id === "t-8000") {
-      const children = (childMap["g-8000"] || []).map(cid => PL_ROWS.find(r => r.id === cid)!).filter(Boolean);
+      const children = (childMap["g-8000"] || []).map(cid => PL_ROWS.find(r => r.id === cid)!).filter(Boolean).filter(c => c.id !== "t-8000");
       return children.reduce((s, c) => s + (getValue(c, idx) ?? 0), 0);
     }
 
