@@ -116,7 +116,7 @@ const STATUS_PILL: Record<string, string> = {
 function FPStockTab({ movements, orders, loading, baseline, lotMap }: { movements: FPRow[]; orders: any[]; loading: boolean; baseline: BaselineRow[]; lotMap: Record<string, LotCard> }) {
   const { bySkuMonthKey } = useSalesForecast();
   const [showValue, setShowValue] = useState(false);
-  // Average COGS per SKU from lot master (for $ valuation)
+  // Average COGS per SKU from lot master, expressed PER CASE ($/pote × 8) for $ valuation
   const cogsBySku = useMemo(() => {
     const acc: Record<string, number[]> = {};
     for (const [key, card] of Object.entries(lotMap)) {
@@ -125,7 +125,7 @@ function FPStockTab({ movements, orders, loading, baseline, lotMap }: { movement
         acc[card.sku].push(card.cogs);
       }
     }
-    return Object.fromEntries(Object.entries(acc).map(([sku, vals]) => [sku, vals.reduce((a,b)=>a+b,0)/vals.length]));
+    return Object.fromEntries(Object.entries(acc).map(([sku, vals]) => [sku, (vals.reduce((a,b)=>a+b,0)/vals.length) * 8]));
   }, [lotMap]);
   const forecastNextMonth = useMemo(() => {
     const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() + 1);
@@ -203,7 +203,7 @@ function FPStockTab({ movements, orders, loading, baseline, lotMap }: { movement
                   <th className="px-4 py-2.5 text-left">Item #</th>
                   {!isLineage && <th className="px-4 py-2.5 text-left">Warehouse</th>}
                   <th className="px-4 py-2.5 text-right text-amber-700">Inv. $</th>
-                  <th className="px-4 py-2.5 text-right">{showValue ? "Stock $" : "Stock"}</th>
+                  <th className="px-4 py-2.5 text-right">{showValue ? "Stock $" : "Stock (cajas)"}</th>
                   <th className="px-4 py-2.5 text-right">{showValue ? "Committed $" : "Committed"}</th>
                   <th className="px-4 py-2.5 text-right">{showValue ? "Available $" : "Available"}</th>
                   <th className="px-4 py-2.5 text-right">Forecast</th>
@@ -234,7 +234,12 @@ function FPStockTab({ movements, orders, loading, baseline, lotMap }: { movement
                           : <span className="text-muted-foreground text-xs">—</span>}
                       </td>
                       <td className="px-4 py-2 text-right font-mono font-semibold">
-                        {showValue && cogsBySku[s.sku] ? `$${Math.round(s.cases * cogsBySku[s.sku] / 1000).toLocaleString()}K` : Math.round(s.cases).toLocaleString()}
+                        {showValue && cogsBySku[s.sku] ? `$${Math.round(s.cases * cogsBySku[s.sku] / 1000).toLocaleString()}K` : (
+                          <span>
+                            {Math.round(s.cases).toLocaleString()}
+                            <span className="block text-[10px] font-normal text-muted-foreground">{Math.round(s.cases * 8).toLocaleString()} potes</span>
+                          </span>
+                        )}
                       </td>
                       <td className="px-4 py-2 text-right font-mono text-xs">
                         {showValue && rowComm && cogsBySku[s.sku] ? `$${Math.round(rowComm * cogsBySku[s.sku] / 1000).toLocaleString()}K` : (rowComm ? rowComm.toLocaleString() : "—")}
@@ -306,6 +311,7 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
   const [confirmFPId, setConfirmFPId] = useState<string | null>(null);
   const [filterSku, setFilterSku] = useState<string>("all");
   const [filterType, setFilterType] = useState<string>("all");
+  const [filterMonth, setFilterMonth] = useState<string>("all");
   const [sortDir, setSortDir] = useState<"asc"|"desc">("desc");
 
   function set(k: string, v: string) { setForm(f => ({ ...f, [k]: v })); }
@@ -365,11 +371,19 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
     onAdded();
   }
 
+  const monthOptions = useMemo(
+    () => [...new Set(movements.map(r => r.movement_date.slice(0, 7)))].sort().reverse(),
+    [movements],
+  );
+
   const filtered = useMemo(() => {
     return [...movements]
-      .filter(r => (filterSku === "all" || r.sku === filterSku) && (filterType === "all" || r.type === filterType))
+      .filter(r =>
+        (filterSku === "all" || r.sku === filterSku) &&
+        (filterType === "all" || r.type === filterType) &&
+        (filterMonth === "all" || r.movement_date.slice(0, 7) === filterMonth))
       .sort((a,b) => sortDir === "desc" ? (a.movement_date < b.movement_date ? 1 : -1) : (a.movement_date > b.movement_date ? 1 : -1));
-  }, [movements, filterSku, filterType, sortDir]);
+  }, [movements, filterSku, filterType, filterMonth, sortDir]);
 
   const inp = "rounded-lg border border-border bg-background px-3 py-1.5 text-sm w-full focus:outline-none focus:ring-2 focus:ring-primary/30";
 
@@ -448,6 +462,11 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
               <option value="all">In + Out</option>
               <option value="In">In only</option>
               <option value="Out">Out only</option>
+            </select>
+            <select value={filterMonth} onChange={e => setFilterMonth(e.target.value)}
+              className="rounded-lg border border-border bg-background px-2 py-1 text-xs focus:outline-none">
+              <option value="all">All months</option>
+              {monthOptions.map(m => <option key={m} value={m}>{m}</option>)}
             </select>
             <button onClick={() => setSortDir(d => d === "desc" ? "asc" : "desc")}
               className="rounded-lg border border-border px-2 py-1 text-xs hover:bg-muted">
