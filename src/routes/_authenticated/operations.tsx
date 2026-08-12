@@ -2393,8 +2393,8 @@ function calcProdSchedule(
 }
 function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; orders: any[]; baseline: BaselineRow[] }) {
   const [procTab, setProcTab] = useState<ProcSubTab>("schedule");
-  const [safetyWoh,  setSafetyWoh]  = useState(5);
-  const [minRun,     setMinRun]     = useState(1000);
+  const [safetyWoh,  setSafetyWoh]  = useState(6);
+  const [minRun,     setMinRun]     = useState(2000);
   const [freqMonths, setFreqMonths] = useState(3);
   const [ingPrices,  setIngPrices]  = useState({...DEFAULT_ING_PRICES});
   const [prodCosts,  setProdCosts]  = useState({...DEFAULT_PROD_COSTS});
