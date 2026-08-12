@@ -32,7 +32,12 @@ const SKU_COLORS: Record<string, string> = {
 };
 
 /** Preferred display order for warehouses; anything else follows alphabetically. */
-const WH_ORDER = ["Lineage Newark", "Cold Chain", "FreezPak", "Empire", "Heinlein", "OOE"];
+const WH_ORDER = ["Lineage Newark", "Lineage Linden", "Cold Chain", "Heinlein", "OOE"];
+/** Warehouses that are retired — never shown as their own card, and left out of the combined total. */
+const HIDDEN_WAREHOUSES = ["FreezPak", "Empire"];
+/** Always render a card for these even if there are no movements yet (e.g. a new 3PL coming online). */
+const ALWAYS_SHOW_WAREHOUSES = ["Lineage Newark", "Cold Chain", "Lineage Linden"];
+
 function sortWarehouses(list: string[]): string[] {
   return [...list].sort((a, b) => {
     const ia = WH_ORDER.indexOf(a), ib = WH_ORDER.indexOf(b);
@@ -87,7 +92,8 @@ export function FPSummaryTab() {
       for (const m of mine) {
         const inPeriod = month === "all" ? true : m.movement_date.slice(0, 7) === month;
         const before = month === "all" ? false : m.movement_date.slice(0, 7) < month;
-        const { cogs } = resolveCogs(m, lotMap);
+        const { cogs: pote } = resolveCogs(m, lotMap);
+        const cogs = pote == null ? null : pote * 8; // per-case $ = per-pote × 8
         const cases = Number(m.cases);
         const signed = m.type === "In" ? cases : -cases;
 
@@ -137,8 +143,9 @@ export function FPSummaryTab() {
   // ── Accumulated inventory over time, broken down by warehouse ─────────────
   const { monthList, whList, accCases, accValue } = useMemo(() => {
     const mList = [...new Set(movements.map((m) => m.movement_date.slice(0, 7)))].sort();
-    const whSet = new Set<string>();
+    const whSet = new Set<string>(ALWAYS_SHOW_WAREHOUSES);
     for (const m of movements) if (m.warehouse) whSet.add(m.warehouse);
+    for (const h of HIDDEN_WAREHOUSES) whSet.delete(h);
     const whs = sortWarehouses([...whSet]);
 
     // running balances keyed by sku|wh
@@ -170,8 +177,8 @@ export function FPSummaryTab() {
       const signed = mv.type === "In" ? cases : -cases;
       const key = `${mv.sku}|${mv.warehouse}`;
       balCases[key] = (balCases[key] ?? 0) + signed;
-      const { cogs } = resolveCogs(mv, lotMap);
-      if (cogs != null) balValue[key] = (balValue[key] ?? 0) + signed * cogs;
+      const { cogs: pote } = resolveCogs(mv, lotMap);
+      if (pote != null) balValue[key] = (balValue[key] ?? 0) + signed * pote * 8;
     }
     while (mi < mList.length) { takeSnap(mList[mi]); mi++; }
 
@@ -189,9 +196,9 @@ export function FPSummaryTab() {
       if (!res[mv.sku]?.[mo]) continue;
       const sign = mv.type === "Out" ? 1 : -1; // returns (In) reduce net sales
       const cases = Number(mv.cases);
-      const { cogs } = resolveCogs(mv, lotMap);
+      const { cogs: pote } = resolveCogs(mv, lotMap);
       res[mv.sku][mo].cases += sign * cases;
-      if (cogs != null) res[mv.sku][mo].cogs += sign * cases * cogs;
+      if (pote != null) res[mv.sku][mo].cogs += sign * cases * pote * 8;
     }
     return res;
   }, [movements, lotMap, monthList]);
@@ -262,6 +269,17 @@ export function FPSummaryTab() {
           Master to add COGS.
         </div>
       )}
+
+      {/* Accumulated inventory by warehouse (historical) — most important, on top */}
+      <AccumulatedInventory monthList={monthList} whList={whList} accCases={accCases} accValue={accValue} />
+
+      {/* Monthly COGS of sales */}
+      <MonthlyCOGSSales monthList={monthList} salesByMonth={salesByMonth} />
+
+      {/* ── Per-month movement detail (secondary — kept at the bottom) ── */}
+      <div className="pt-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        Movement detail {month !== "all" && <>· {month}</>}
+      </div>
 
       {/* Cases movement summary */}
       <div className="overflow-x-auto rounded-2xl border border-border bg-card">
@@ -341,12 +359,6 @@ export function FPSummaryTab() {
           </tfoot>
         </table>
       </div>
-
-      {/* Accumulated inventory by warehouse (historical) */}
-      <AccumulatedInventory monthList={monthList} whList={whList} accCases={accCases} accValue={accValue} />
-
-      {/* Monthly COGS of sales */}
-      <MonthlyCOGSSales monthList={monthList} salesByMonth={salesByMonth} />
     </div>
   );
 }
@@ -361,23 +373,57 @@ function AccumulatedInventory({
   accValue: Record<string, Record<string, Record<string, number>>>;
 }) {
   const [viewMode, setViewMode] = useState<"cases" | "value">("cases");
+  // Individual warehouse tables are collapsed by default; the combined view stays open.
+  const [open, setOpen] = useState<Record<string, boolean>>({});
   const snap = viewMode === "cases" ? accCases : accValue;
-
-  const cell = (v: number) =>
-    viewMode === "cases"
-      ? v.toLocaleString()
-      : v ? `$${Math.round(v).toLocaleString()}` : "—";
-
-  // one table per warehouse + a combined "All warehouses" total
-  const tables: { title: string; wh: string | null }[] = [
-    ...whList.map((wh) => ({ title: `Stock — ${wh}`, wh })),
-    { title: "All warehouses (combined)", wh: null },
-  ];
 
   const balAt = (m: string, sku: string, wh: string | null) => {
     if (wh) return snap[m]?.[sku]?.[wh] ?? 0;
     return whList.reduce((s, w) => s + (snap[m]?.[sku]?.[w] ?? 0), 0);
   };
+
+  const InventoryTable = ({ wh }: { wh: string | null }) => (
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs min-w-max">
+        <thead>
+          <tr className="text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
+            <th className="px-4 py-2 text-left sticky left-0 bg-muted/20">SKU</th>
+            {monthList.map((m) => (<th key={m} className="px-3 py-2 text-right whitespace-nowrap">{monthLabel(m)}</th>))}
+          </tr>
+        </thead>
+        <tbody>
+          {SKUS.map((sku) => (
+            <tr key={sku} className="border-t border-border/40 hover:bg-muted/20">
+              <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{ color: SKU_COLORS[sku] }}>
+                {SKU_LABEL[sku]}
+              </td>
+              {monthList.map((m) => {
+                const v = balAt(m, sku, wh);
+                return (
+                  <td key={m} className={`px-3 py-1.5 text-right font-mono ${v < 0 ? "text-red-600 font-semibold" : ""}`}>
+                    {viewMode === "cases" ? v.toLocaleString() : v ? `$${Math.round(v).toLocaleString()}` : "—"}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr style={{ backgroundColor: BRAND, color: "#fff" }}>
+            <td className="px-4 py-2 font-semibold text-xs sticky left-0" style={{ backgroundColor: BRAND }}>TOTAL</td>
+            {monthList.map((m) => {
+              const total = SKUS.reduce((s, sku) => s + balAt(m, sku, wh), 0);
+              return (
+                <td key={m} className="px-3 py-2 text-right font-mono font-bold text-emerald-400">
+                  {viewMode === "cases" ? total.toLocaleString() : total ? `$${Math.round(total).toLocaleString()}` : "—"}
+                </td>
+              );
+            })}
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
 
   return (
     <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
@@ -400,52 +446,29 @@ function AccumulatedInventory({
         </div>
       </div>
 
-      <div className="divide-y divide-border">
-        {tables.map(({ title, wh }) => (
-          <div key={title} className="overflow-x-auto">
-            <div className="px-5 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground bg-muted/10">
-              {title}
+      {/* Combined view — always visible, on top */}
+      <div className="px-5 py-2 text-xs font-semibold uppercase tracking-wide bg-muted/10" style={{ color: BRAND }}>
+        All warehouses (combined)
+      </div>
+      <InventoryTable wh={null} />
+
+      {/* Individual warehouses — collapsible */}
+      <div className="divide-y divide-border border-t border-border">
+        {whList.map((wh) => {
+          const isOpen = open[wh] ?? false;
+          return (
+            <div key={wh}>
+              <button
+                onClick={() => setOpen((o) => ({ ...o, [wh]: !isOpen }))}
+                className="w-full flex items-center gap-2 px-5 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:bg-muted/20 transition-colors"
+              >
+                <span className="inline-block transition-transform" style={{ transform: isOpen ? "rotate(90deg)" : "none" }}>▶</span>
+                Stock — {wh}
+              </button>
+              {isOpen && <InventoryTable wh={wh} />}
             </div>
-            <table className="w-full text-xs min-w-max">
-              <thead>
-                <tr className="text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
-                  <th className="px-4 py-2 text-left sticky left-0 bg-muted/20">SKU</th>
-                  {monthList.map((m) => (<th key={m} className="px-3 py-2 text-right whitespace-nowrap">{monthLabel(m)}</th>))}
-                </tr>
-              </thead>
-              <tbody>
-                {SKUS.map((sku) => (
-                  <tr key={sku} className="border-t border-border/40 hover:bg-muted/20">
-                    <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{ color: SKU_COLORS[sku] }}>
-                      {SKU_LABEL[sku]}
-                    </td>
-                    {monthList.map((m) => {
-                      const v = balAt(m, sku, wh);
-                      return (
-                        <td key={m} className={`px-3 py-1.5 text-right font-mono ${v < 0 ? "text-red-600 font-semibold" : ""}`}>
-                          {cell(v)}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr style={{ backgroundColor: BRAND, color: "#fff" }}>
-                  <td className="px-4 py-2 font-semibold text-xs sticky left-0" style={{ backgroundColor: BRAND }}>TOTAL</td>
-                  {monthList.map((m) => {
-                    const total = SKUS.reduce((s, sku) => s + balAt(m, sku, wh), 0);
-                    return (
-                      <td key={m} className="px-3 py-2 text-right font-mono font-bold text-emerald-400">
-                        {viewMode === "cases" ? total.toLocaleString() : total ? `$${Math.round(total).toLocaleString()}` : "—"}
-                      </td>
-                    );
-                  })}
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
