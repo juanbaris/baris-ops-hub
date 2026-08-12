@@ -1056,19 +1056,24 @@ function IPSummaryTab({ movements }: { movements: IPRow[] }) {
 
       {/* ── Payment tracking ── */}
       {(() => {
-        const rr = movements as any[];
-        // Monthly paid vs pending
+        const allMovs = movements as any[];
+        // Payment bucket date: paid → actual (fallback movement), pending → estimated (fallback movement)
+        const payDate = (m:any): string =>
+          (m.paid ? (m.actual_payment_date ?? m.movement_date) : (m.estimated_payment_date ?? m.movement_date)) ?? '';
+        // Only payments from 2026 onwards (older I&P history is kept in the DB but hidden here)
+        const rr = allMovs.filter(m => payDate(m) >= '2026-01');
+        // Monthly paid vs pending (bucketed by payment date)
         const monthly: Record<string,{paid:number;pending:number}> = {};
         for (const m of rr) {
-          const mon = (m.movement_date ?? '').slice(0,7);
+          const mon = payDate(m).slice(0,7);
           if (!mon) continue;
           const cost = (Number(m.total_price ?? 0)) + (Number(m.shipping_price ?? 0)) + (Number(m.other_costs ?? 0));
           if (!monthly[mon]) monthly[mon] = {paid:0,pending:0};
           if (m.paid) monthly[mon].paid += cost;
           else monthly[mon].pending += cost;
         }
-        const months = Object.keys(monthly).sort().reverse().slice(0,12);
-        // Weekly pending: unpaid with est. payment date
+        const months = Object.keys(monthly).sort().reverse();
+        // Pending: unpaid with est. payment date
         const pending = rr
           .filter(m => !m.paid && m.estimated_payment_date)
           .sort((a,b) => a.estimated_payment_date.localeCompare(b.estimated_payment_date));
@@ -1079,11 +1084,11 @@ function IPSummaryTab({ movements }: { movements: IPRow[] }) {
             {/* KPIs */}
             <div className="grid grid-cols-3 gap-3">
               <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Total Paid</p>
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Total Paid <span className="normal-case">(2026+)</span></p>
                 <p className="text-xl font-bold font-mono text-emerald-600">${Math.round(totalPaid).toLocaleString()}</p>
               </div>
               <div className="rounded-2xl border border-orange-200 bg-orange-50 p-4 shadow-sm">
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Pending Payment</p>
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Pending Payment <span className="normal-case">(2026+)</span></p>
                 <p className="text-xl font-bold font-mono text-orange-600">${Math.round(totalPending).toLocaleString()}</p>
                 <p className="text-[10px] text-muted-foreground">{rr.filter(m=>!m.paid).length} movements</p>
               </div>
@@ -1098,6 +1103,7 @@ function IPSummaryTab({ movements }: { movements: IPRow[] }) {
             <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
               <div className="px-5 py-3 border-b border-border bg-muted/30">
                 <p className="text-sm font-bold" style={{color:"#1C2340"}}>Monthly payments — paid vs pending</p>
+                <p className="text-[11px] text-muted-foreground">From 2026 onwards · bucketed by payment date</p>
               </div>
               <table className="w-full text-xs">
                 <thead>
@@ -1109,6 +1115,9 @@ function IPSummaryTab({ movements }: { movements: IPRow[] }) {
                   </tr>
                 </thead>
                 <tbody>
+                  {months.length === 0 && (
+                    <tr><td colSpan={4} className="px-4 py-6 text-center text-muted-foreground">No payments recorded from 2026 onwards yet.</td></tr>
+                  )}
                   {months.map(mon => (
                     <tr key={mon} className="border-t border-border/60 hover:bg-muted/20">
                       <td className="px-4 py-1.5 font-semibold" style={{color:"#1C2340"}}>{mon}</td>
