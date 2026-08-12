@@ -64,7 +64,7 @@ export function LotMasterTab() {
     const cases = rows.reduce((s, r) => s + (r.cases_initial ?? 0), 0);
     const confirmedValue = rows
       .filter((r) => r.cogs_status === "confirmed" && r.cogs_per_case != null)
-      .reduce((s, r) => s + (r.cases_initial ?? 0) * Number(r.cogs_per_case), 0);
+      .reduce((s, r) => s + (r.cases_initial ?? 0) * Number(r.cogs_per_case) * 8, 0);
     const missing = rows.filter((r) => r.cogs_per_case == null);
     return { cases, confirmedValue, missingLots: missing.length, missingCases: missing.reduce((s, r) => s + (r.cases_initial ?? 0), 0) };
   }, [rows]);
@@ -117,7 +117,8 @@ export function LotMasterTab() {
             <tr>
               {["BARIS SKU", "Lineage code", "Lot #", "Expiry"].map((h) => <th key={h} className={`${th} text-left`}>{h}</th>)}
               <th className={`${th} text-right`}>Cases</th>
-              <th className={`${th} text-right`}>COGS/case ($)</th>
+              <th className={`${th} text-right`}>COGS/pote ($)</th>
+              <th className={`${th} text-right`}>COGS/caja (×8)</th>
               <th className={`${th} text-right`}>Inv. value</th>
               <th className={`${th} text-left`}>Status</th>
               <th className={`${th} text-left`}>Notes</th>
@@ -125,10 +126,11 @@ export function LotMasterTab() {
           </thead>
           <tbody>
             {rows.length === 0 ? (
-              <tr><td colSpan={9} className="p-6 text-center text-muted-foreground">No lots yet.</td></tr>
+              <tr><td colSpan={10} className="p-6 text-center text-muted-foreground">No lots yet.</td></tr>
             ) : rows.map((r) => {
               const oldest = (r.expiry_date ?? "").startsWith("2027");
-              const value = r.cogs_per_case == null ? null : (r.cases_initial ?? 0) * Number(r.cogs_per_case);
+              const perCase = r.cogs_per_case == null ? null : Number(r.cogs_per_case) * 8;
+              const value = perCase == null ? null : (r.cases_initial ?? 0) * perCase;
               return (
                 <tr key={r.id} className="border-t border-border/60 hover:bg-muted/20">
                   <td className="px-3 py-1.5 font-semibold" style={{ color: "#1C2340" }}>{r.sku}</td>
@@ -154,6 +156,7 @@ export function LotMasterTab() {
                       placeholder="—"
                     />
                   </td>
+                  <td className="px-3 py-1.5 text-right font-mono text-xs text-muted-foreground">{perCase == null ? "—" : money2(perCase)}</td>
                   <td className="px-3 py-1.5 text-right font-mono text-xs">{money(value)}</td>
                   <td className="px-3 py-1.5"><StatusBadge s={r.cogs_status} /></td>
                   <td className="max-w-[220px] truncate px-3 py-1.5 text-xs text-muted-foreground" title={r.notes ?? ""}>{r.notes ?? "—"}</td>
@@ -163,7 +166,7 @@ export function LotMasterTab() {
           </tbody>
         </table>
       </div>
-      <p className="text-[11px] text-muted-foreground">Lot Master COGS is the authoritative source; a COGS set on an individual movement overrides it for that movement. Reference price format: {money2(2.54)}.</p>
+      <p className="text-[11px] text-muted-foreground">Lot Master COGS is stored <strong>per pote</strong> (per bar) — the authoritative source. Per-case value = ×8 (a case holds 8 potes). A COGS set on an individual movement overrides it for that movement. Reference price format: {money2(2.54)}.</p>
     </div>
   );
 }
