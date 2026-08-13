@@ -824,7 +824,10 @@ function PNLTab({ realMonths, actuals, actualOnly }: { realMonths: number; actua
               const isTotal = row.kind === "total" || row.kind === "pct";
               const vals = visibleMonthIdx.map((i) => getValue(row, i));
               const fy = row.kind === "pct" ? (vals.reduce((s,v)=>(s??0)+(v??0),0)!/(vals.length||1)) : vals.reduce((s,v)=>(s??0)+(v??0),0)!;
-              const pctGS = gsFY ? `${(Math.abs(fy!)/gsFY*100).toFixed(1)}%` : "—";
+              // %GS: this row's YTD/FY ÷ Total Sales YTD/FY over the SAME visible months (same scale).
+              const gsDenom = visibleMonthIdx.reduce((s,i) => s + (getValue(gsRow, i) ?? 0), 0);
+              const pctGS = (gsDenom && row.kind !== "pct" && row.id !== "units_sold")
+                ? `${(fy!/gsDenom*100).toFixed(1)}%` : "—";
               const pctParent = pctOfParent(row, visibleMonthIdx[visibleMonthIdx.length-1] ?? 11);
 
               const parentGroupId = (row.kind === "total" && row.parentId) ? row.parentId : null;
