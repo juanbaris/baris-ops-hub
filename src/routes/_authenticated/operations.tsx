@@ -1487,7 +1487,10 @@ function IPHistoryTable({ movements }: { movements: IPRow[] }) {
     if (mi < mList.length) {
       snaps.push({ month: mList[mi] ?? "", units: {...balance}, value: {...valueBalance} });
     }
-    return { monthList: snaps.map(s => s.month), history: snaps };
+    // Show only July 2025 onwards; earlier months are hidden but their balance is
+    // carried into the first visible column (accumulation stays correct).
+    const visible = snaps.filter(s => s.month >= "2025-07");
+    return { monthList: visible.map(s => s.month), history: visible };
   }, [movements, filterMaterial, materials]);
 
   const shownMaterials = filterMaterial === "all" ? materials : [filterMaterial];
@@ -1497,7 +1500,7 @@ function IPHistoryTable({ movements }: { movements: IPRow[] }) {
       <div className="px-5 py-3 border-b border-border bg-muted/30 flex items-center justify-between flex-wrap gap-3">
         <div>
           <p className="text-sm font-bold" style={{color:"#1C2340"}}>Inventory history — closing stock by month</p>
-          <p className="text-xs text-muted-foreground">End-of-month balance from all I&P movements</p>
+          <p className="text-xs text-muted-foreground">End-of-month balance from all I&P movements · from Jul 2025</p>
         </div>
         <div className="flex gap-2 flex-wrap">
           <select value={filterMaterial} onChange={e => setFilterMaterial(e.target.value)}
