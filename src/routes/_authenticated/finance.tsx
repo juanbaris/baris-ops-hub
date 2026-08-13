@@ -1320,24 +1320,45 @@ function BalanceTab({ realMonths, actuals }: { realMonths: number; actuals: Reco
     return cur * mixKU + (cur + prev) * mixRF;
   }
 
-  // ── Inventory: no production Jul→Nov (they sell down existing stock), then a large
-  // build in December (30,000 cases produced). Starts from the last real inventory level.
-  const lastRealInvK = latestRealIdx >= 0
-    ? (Number(bsByPeriod[PERIODS[latestRealIdx]]?.finished_goods ?? 0) + Number(bsByPeriod[PERIODS[latestRealIdx]]?.raw_materials_packaging ?? 0)) / 1000
-    : 0;
+  // ── Inventory, split into Finished Goods (FG) and Raw Materials (RM) because they move
+  // very differently in H2:
+  //   • Finished Goods: drawn down by sales Jul→Dec (lowest right before the Dec production run).
+  //   • Raw Materials: purchased ahead of the December run — ramps up Oct→Nov, fully stocked (~$600K)
+  //     by end of Nov so production can happen. In December those raw materials convert into finished
+  //     goods (30,000 cases ≈ $600K): an internal RM→FG transfer that doesn't change the inventory
+  //     total and doesn't consume new cash.
+  const lastRealFgK = latestRealIdx >= 0 ? Number(bsByPeriod[PERIODS[latestRealIdx]]?.finished_goods ?? 0)/1000 : 0;
+  const lastRealRmK = latestRealIdx >= 0 ? Number(bsByPeriod[PERIODS[latestRealIdx]]?.raw_materials_packaging ?? 0)/1000 : 0;
   const cogsPerUnitK = assumptions.get('cogs_per_unit', 22.27) / 1000; // $K per case
+  const FG_FLOOR_K = 80;                 // never fully out of finished goods
   const DEC_PRODUCTION_CASES = 30000;
-  function forecastInventory(idx: number): number {
-    if (lastRealInvK <= 0) return 0;
-    // Draw down by each month's COGS (units sold × cost/case) from Jul onward; no replenishment until Dec.
-    let inv = lastRealInvK;
+  const decRunValueK = DEC_PRODUCTION_CASES * cogsPerUnitK; // ≈ $600K of RM that becomes FG in Dec
+
+  // Raw-material target level each forecast month (ramps up ahead of the Dec run).
+  // RM builds toward a "fully stocked" level = the value of the Dec run (~$600K) by end of Nov,
+  // then is consumed by production in Dec (RM converts to FG), returning to the base level.
+  const rmFullK = decRunValueK;          // fully stocked for the run ≈ $600K
+  function forecastRawMaterials(idx: number): number {
+    const base = lastRealRmK;
+    if (idx <= 8) return base;                                  // Jul–Sep: steady at base
+    if (idx === 9) return base + (rmFullK - base) * 0.4;        // Oct: begin buying (~40% of the way)
+    if (idx === 10) return rmFullK;                             // Nov: fully stocked for the run
+    if (idx === 11) return base;                                // Dec: RM consumed by production (→FG)
+    return base;
+  }
+  // Finished goods each forecast month (sells down; receives the Dec production run).
+  function forecastFinishedGoods(idx: number): number {
+    let fg = lastRealFgK;
     for (let i = latestRealIdx + 1; i <= idx; i++) {
       const unitsSold = (fcGrossByMonth[i] ?? 0) * 1000 / 37;
-      const cogsOut = unitsSold * cogsPerUnitK;         // inventory consumed by sales
-      const production = i === 11 ? DEC_PRODUCTION_CASES * cogsPerUnitK : 0; // Dec build
-      inv = Math.max(40, inv - cogsOut + production);   // floor so it never goes negative/absurd
+      const cogsOut = unitsSold * cogsPerUnitK;                 // shipped to customers
+      const produced = i === 11 ? decRunValueK : 0;             // Dec run adds finished goods
+      fg = Math.max(FG_FLOOR_K, fg - cogsOut + produced);
     }
-    return inv;
+    return fg;
+  }
+  function forecastInventory(idx: number): number {
+    return forecastFinishedGoods(idx) + forecastRawMaterials(idx);
   }
 
   // ── Credit Cards: average of the real monthly balances (they always carry a revolving balance).
@@ -1509,10 +1530,10 @@ function BalanceTab({ realMonths, actuals }: { realMonths: number; actuals: Reco
       // Individual bank lines: show total cash on the primary line, 0 on the rest.
       if (row.id === "bofa") return forecastCash(idx);
       if (["citi_b","merc_chk","merc_trs"].includes(row.id)) return 0;
-      // AR / inventory detail: total on the primary line, 0 on the secondary.
+      // AR / inventory detail: AR total, plus finished goods & raw materials split out.
       if (row.id === "ar_item") return forecastAR(idx);
-      if (row.id === "fin_goods") return forecastInventory(idx);
-      if (row.id === "raw_mat") return 0;
+      if (row.id === "fin_goods") return forecastFinishedGoods(idx);
+      if (row.id === "raw_mat") return forecastRawMaterials(idx);
       return 0;
     }
     return null;
@@ -1529,7 +1550,7 @@ function BalanceTab({ realMonths, actuals }: { realMonths: number; actuals: Reco
           <span className="h-2 w-2 rounded-full bg-emerald-500 inline-block"/>
           <strong className="text-foreground">Bold</strong> = Accountfully real snapshot
         </span>
-        <span className="opacity-60">Gray = forecast · AR from distributor terms (KeHE/UNFI 30d, Rainforest 60d) · Inventory draws down Jul–Nov then Dec production build (30k cases) · Cash is the balancing figure so Assets = Liab + Equity every month · Credit Cards = avg of real months</span>
+        <span className="opacity-60">Gray = forecast · AR from distributor terms (KeHE/UNFI 30d, Rainforest 60d) · Finished Goods sells down through Dec; Raw Materials build Oct–Nov (~$600K) for the Dec run, which converts RM→FG · Cash is the balancing figure so Assets = Liab + Equity every month · Credit Cards = avg of real months</span>
       </div>
 
       <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
