@@ -3146,7 +3146,7 @@ function OperationsPage() {
     <div>
       <PageHeader
         title="Operations"
-        description="Inventory, production, and procurement planning"
+        subtitle="Inventory, production, and procurement planning"
       />
 
       <div className="flex gap-1 overflow-x-auto border-b border-border mb-6 pb-0">
@@ -3168,8 +3168,8 @@ function OperationsPage() {
       </div>
 
       {tab === "stock"       && <FPStockTab movements={fpMovements} orders={orders} loading={loadingFP} baseline={baseline} lotMap={lotMap} />}
-      {tab === "summary"     && <FPSummaryTab movements={fpMovements} orders={orders} loading={loadingFP} />}
-      {tab === "lots"        && <LotMasterTab movements={fpMovements} loading={loadingFP} />}
+      {tab === "summary"     && <FPSummaryTab />}
+      {tab === "lots"        && <LotMasterTab />}
       {tab === "fp"          && <FPInputTab movements={fpMovements} loading={loadingFP} onAdded={reload} lotMap={lotMap} />}
       {tab === "ipsummary"   && <IPSummaryTab movements={ipMovements} />}
       {tab === "ip"          && <IPInputTab movements={ipMovements} loading={loadingIP} onAdded={reload} />}
