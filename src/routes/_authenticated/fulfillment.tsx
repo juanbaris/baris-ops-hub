@@ -2312,189 +2312,565 @@ function ShipDateCell({ date, status }: { date: string | null; status: Status })
   );
 }
 
-// ─── Collections Tab ──────────────────────────────────────────────────────────
+// ─── Collections Tab v2 ───────────────────────────────────────────────────────
+
+// Two sub-tabs: Dashboard (weekly timeline + forecast) and Detail (table)
+
+const PAYMENT_TERMS: Record<string, number> = { UNFI: 30, KeHe: 30, RFD: 30, Rainforest: 60, Direct: 30, Other: 30 };
+const DEDUCTION_RATE: Record<string, number> = { UNFI: 0.17, KeHe: 0.16, Rainforest: 0.28, RFD: 0.15, Direct: 0.05, Other: 0.10 };
+const DC_MIX: Record<string, number> = { KeHe: 0.51, UNFI: 0.26, Rainforest: 0.23 };
+const WEEKS_TO_INVOICE: Record<string, number> = { Open: 3, Accepted: 3, "Sent to 3PL": 3, Shipment: 2, "BOL Confirmed": 2 };
+
+const MONTHLY_FORECAST: Record<string, number> = {
+  "2026-08": 224294, "2026-09": 208194, "2026-10": 259592,
+  "2026-11": 243477, "2026-12": 193917, "2027-01": 219000,
+  "2027-02": 252000, "2027-03": 296000,
+};
+
+type Layer = "collected" | "invoiced" | "pipeline" | "forecast";
+type CollectionSubTab = "dashboard" | "detail";
+
+interface CRow {
+  id: string;
+  layer: Layer;
+  distributor: string;
+  poNumber: string;
+  customer: string;
+  gross: number;
+  dedPct: number;
+  net: number;
+  invoiceDate: string | null;
+  estDate: string;
+  weekKey: string;
+  daysUntil: number;
+  statusLabel: string;
+  pipelineStatus: string | null;
+  collectedAt: string | null;
+}
+
+function addDays(d: string, n: number) {
+  const dt = new Date(d); dt.setDate(dt.getDate() + n);
+  return dt.toISOString().slice(0, 10);
+}
+function mondayOf(d: string) {
+  const dt = new Date(d); dt.setDate(dt.getDate() - ((dt.getDay() + 6) % 7));
+  return dt.toISOString().slice(0, 10);
+}
+function weekLabel(mon: string) {
+  const m = new Date(mon);
+  const s = new Date(m); s.setDate(m.getDate() + 6);
+  const f = (d: Date) => `${d.toLocaleString("en", { month: "short" })} ${d.getDate()}`;
+  return `${f(m)} – ${f(s)}`;
+}
+
 function CollectionsTab({ orders }: { orders: Order[] }) {
   const today = new Date().toISOString().slice(0, 10);
-  const TERMS: Record<string, number> = { UNFI: 30, KeHe: 30, RFD: 30, Rainforest: 60, Direct: 30, Other: 30 };
-  const [filterDist, setFilterDist] = useState<string>("all");
-  const [filterStatus, setFilterStatus] = useState<string>("all");
-  const [sortKey, setSortKey] = useState<string>("daysUntilDue");
-  const [sortDir, setSortDir] = useState<"asc"|"desc">("asc");
+  const [subTab, setSubTab] = useState<CollectionSubTab>("dashboard");
 
-  const rows = useMemo(() => {
-    return orders
-      .filter(o => o.status === "Invoiced" && o.invoice_date && !o.collected_at)
-      .map(o => {
-        const terms = TERMS[o.distributor] ?? 30;
-        const dueDate = new Date(new Date(o.invoice_date!).getTime() + terms * 86400000);
-        const dueDateStr = dueDate.toISOString().slice(0, 10);
-        const daysUntilDue = Math.floor((dueDate.getTime() - new Date(today).getTime()) / 86400000);
-        const cutoff = new Date(new Date(today).getTime() - terms * 86400000).toISOString().slice(0, 10);
-        if (o.invoice_date! < cutoff) return null;
-        const statusLabel = daysUntilDue < 0 ? "Overdue" : daysUntilDue <= 7 ? "Due soon" : "Upcoming";
-        return { order: o, terms, dueDate: dueDateStr, daysUntilDue, statusLabel };
-      })
-      .filter(Boolean) as { order: Order; terms: number; dueDate: string; daysUntilDue: number; statusLabel: string }[];
+  // ── Build rows for all layers ─────────────────────────────────────────
+  const allRows: CRow[] = useMemo(() => {
+    const rows: CRow[] = [];
+    orders.forEach(o => {
+      const dist = o.distributor || "Other";
+      const gross = Number(o.gross_sales) || 0;
+      if (gross <= 0) return;
+      const dp = DEDUCTION_RATE[dist] ?? 0.15;
+      const net = Math.round(gross * (1 - dp));
+      const terms = PAYMENT_TERMS[dist] ?? 30;
+
+      // Capa 1: Collected
+      if (o.collected_at) {
+        const cd = (o.collected_at as string).slice(0, 10);
+        rows.push({ id: o.id, layer: "collected", distributor: dist, poNumber: o.po_number || "—",
+          customer: o.customer || "—", gross, dedPct: dp, net, invoiceDate: o.invoice_date,
+          estDate: cd, weekKey: mondayOf(cd), daysUntil: 0, statusLabel: "Collected",
+          pipelineStatus: null, collectedAt: cd });
+        return;
+      }
+
+      // Capa 2: Invoiced
+      if (o.status === "Invoiced" && o.invoice_date) {
+        const est = addDays(o.invoice_date, terms);
+        const days = Math.floor((new Date(est).getTime() - new Date(today).getTime()) / 86400000);
+        const sl = days < -7 ? "Overdue" : days < 0 ? "Late" : days <= 7 ? "Due soon" : "Upcoming";
+        rows.push({ id: o.id, layer: "invoiced", distributor: dist, poNumber: o.po_number || "—",
+          customer: o.customer || "—", gross, dedPct: dp, net, invoiceDate: o.invoice_date,
+          estDate: est, weekKey: mondayOf(est), daysUntil: days, statusLabel: sl,
+          pipelineStatus: null, collectedAt: null });
+        return;
+      }
+
+      // Capa 3: Pipeline
+      const wk = WEEKS_TO_INVOICE[o.status as string];
+      if (wk !== undefined) {
+        const estInv = addDays(today, wk * 7);
+        const est = addDays(estInv, terms);
+        const days = Math.floor((new Date(est).getTime() - new Date(today).getTime()) / 86400000);
+        rows.push({ id: o.id, layer: "pipeline", distributor: dist, poNumber: o.po_number || "—",
+          customer: o.customer || "—", gross, dedPct: dp, net, invoiceDate: null,
+          estDate: est, weekKey: mondayOf(est), daysUntil: days,
+          statusLabel: `${o.status} → ~${wk}w`,
+          pipelineStatus: o.status as string, collectedAt: null });
+      }
+    });
+    return rows.sort((a, b) => a.estDate.localeCompare(b.estDate));
   }, [orders, today]);
+
+  // ── KPIs ──────────────────────────────────────────────────────────────
+  const kpis = useMemo(() => {
+    const inv = allRows.filter(r => r.layer === "invoiced");
+    const pipe = allRows.filter(r => r.layer === "pipeline");
+    const coll = allRows.filter(r => r.layer === "collected");
+    const tm = today.slice(0, 7);
+    return {
+      pendingNet: inv.reduce((s, r) => s + r.net, 0),
+      pendingGross: inv.reduce((s, r) => s + r.gross, 0),
+      pendingCount: inv.length,
+      dueSoon: inv.filter(r => r.daysUntil >= 0 && r.daysUntil <= 7),
+      overdue: inv.filter(r => r.daysUntil < 0),
+      pipeNet: pipe.reduce((s, r) => s + r.net, 0),
+      pipeCount: pipe.length,
+      collMonth: coll.filter(r => (r.collectedAt || "").startsWith(tm)).reduce((s, r) => s + r.net, 0),
+      collMonthCount: coll.filter(r => (r.collectedAt || "").startsWith(tm)).length,
+    };
+  }, [allRows, today]);
+
+  // ── Mark collected ────────────────────────────────────────────────────
+  const [marking, setMarking] = useState<string | null>(null);
+  async function markCollected(id: string) {
+    setMarking(id);
+    const { error } = await supabase.from("customer_orders").update({ collected_at: new Date().toISOString() }).eq("id", id);
+    if (error) toast.error("Failed"); else toast.success("Marked as collected ✓");
+    setMarking(null);
+  }
+
+  return (
+    <div className="space-y-5">
+      {/* KPI Cards */}
+      <div className="grid grid-cols-5 gap-3">
+        {[
+          { label: "Pending (net)", val: kpis.pendingNet, sub: `${kpis.pendingCount} inv · gross $${Math.round(kpis.pendingGross).toLocaleString()}`, color: "text-amber-600" },
+          { label: "Due This Week", val: kpis.dueSoon.reduce((s, r) => s + r.net, 0), sub: `${kpis.dueSoon.length} invoices`, color: "text-orange-600" },
+          { label: "Overdue", val: kpis.overdue.reduce((s, r) => s + r.net, 0), sub: `${kpis.overdue.length} invoices`, color: kpis.overdue.length > 0 ? "text-red-600" : "text-emerald-600" },
+          { label: "In Pipeline", val: kpis.pipeNet, sub: `${kpis.pipeCount} POs pre-invoice`, color: "text-orange-500" },
+          { label: "Collected (month)", val: kpis.collMonth, sub: `${kpis.collMonthCount} this month`, color: "text-emerald-600" },
+        ].map((k, i) => (
+          <div key={i} className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">{k.label}</p>
+            <p className={`text-xl font-bold font-mono ${k.color}`}>${Math.round(k.val).toLocaleString()}</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">{k.sub}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Terms + deductions legend */}
+      <div className="flex items-center gap-2 flex-wrap text-[10px]">
+        {["UNFI", "KeHe", "Rainforest"].map(d => (
+          <span key={d} className={`rounded-full px-2.5 py-1 font-semibold ${d === "Rainforest" ? "bg-orange-100 text-orange-700 border border-orange-200" : "bg-muted text-muted-foreground"}`}>
+            {d}: {PAYMENT_TERMS[d]}d · {Math.round((DEDUCTION_RATE[d] ?? 0) * 100)}% ded
+          </span>
+        ))}
+        <span className="rounded-full px-2 py-1 bg-yellow-50 text-yellow-700 font-semibold">■ Invoiced</span>
+        <span className="rounded-full px-2 py-1 bg-orange-50 text-orange-700 font-semibold">■ Pipeline</span>
+        <span className="rounded-full px-2 py-1 bg-slate-100 text-slate-500 font-semibold">■ Forecast</span>
+      </div>
+
+      {/* Sub-tab selector */}
+      <div className="flex gap-1 border-b border-border pb-0">
+        {([["dashboard", "Dashboard"], ["detail", "Detail"]] as const).map(([key, label]) => (
+          <button key={key} onClick={() => setSubTab(key)}
+            className={`px-4 py-2 text-sm font-semibold rounded-t-lg border border-b-0 -mb-px
+              ${subTab === key ? "bg-card text-foreground border-border" : "bg-muted/40 text-muted-foreground border-transparent hover:text-foreground"}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {subTab === "dashboard" ? (
+        <DashboardView rows={allRows} today={today} kpis={kpis} marking={marking} onCollect={markCollected} />
+      ) : (
+        <DetailView rows={allRows} today={today} marking={marking} onCollect={markCollected} />
+      )}
+    </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// DASHBOARD VIEW — weekly timeline + monthly forecast
+// ═════════════════════════════════════════════════════════════════════════════
+function DashboardView({ rows, today, kpis, marking, onCollect }: {
+  rows: CRow[]; today: string; kpis: any; marking: string | null; onCollect: (id: string) => void;
+}) {
+  // Build 8 weeks
+  const weeks = useMemo(() => {
+    const result: { key: string; label: string; isThisWeek: boolean; rows: CRow[] }[] = [];
+    for (let w = 0; w < 8; w++) {
+      const d = new Date(today);
+      d.setDate(d.getDate() + w * 7);
+      const key = mondayOf(d.toISOString().slice(0, 10));
+      const label = weekLabel(key);
+      const isThisWeek = key === mondayOf(today);
+      const weekRows = rows
+        .filter(r => r.layer !== "collected" && r.weekKey === key)
+        .sort((a, b) => {
+          const layerOrder: Record<Layer, number> = { collected: 0, invoiced: 1, pipeline: 2, forecast: 3 };
+          return (layerOrder[a.layer] - layerOrder[b.layer]) || a.estDate.localeCompare(b.estDate);
+        });
+      result.push({ key, label, isThisWeek, rows: weekRows });
+    }
+    return result;
+  }, [rows, today]);
+
+  // Monthly forecast (Capa 4) — months beyond the 8-week window
+  const forecastMonths = useMemo(() => {
+    const cutoff = addDays(today, 8 * 7);
+    const cutoffMonth = cutoff.slice(0, 7);
+    return Object.entries(MONTHLY_FORECAST)
+      .filter(([m]) => m >= cutoffMonth)
+      .slice(0, 4)
+      .map(([month, grossTotal]) => {
+        const dcs = Object.entries(DC_MIX).map(([dc, mix]) => {
+          const gross = Math.round(grossTotal * mix);
+          const dp = DEDUCTION_RATE[dc] ?? 0.15;
+          const net = Math.round(gross * (1 - dp));
+          const terms = PAYMENT_TERMS[dc] ?? 30;
+          const [y, m] = month.split("-").map(Number);
+          const collDate = new Date(y, m - 1 + Math.ceil(terms / 30), 15);
+          return { dc, gross, net, collMonth: collDate.toLocaleString("en", { month: "short" }) };
+        });
+        const label = new Date(month + "-15").toLocaleString("en", { month: "long", year: "numeric" });
+        const totalNet = dcs.reduce((s, d) => s + d.net, 0);
+        return { month, label, dcs, totalNet };
+      });
+  }, [today]);
+
+  const DIST_COLORS: Record<string, string> = {
+    KeHe: "#1C2340", UNFI: "#5D7A3E", Rainforest: "#B06A00", RFD: "#3D5A6A", Direct: "#8A7060", Other: "#999",
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Weekly sections */}
+      {weeks.map(week => {
+        const invTotal = week.rows.filter(r => r.layer === "invoiced").reduce((s, r) => s + r.net, 0);
+        const pipeTotal = week.rows.filter(r => r.layer === "pipeline").reduce((s, r) => s + r.net, 0);
+        const total = invTotal + pipeTotal;
+        const hasRows = week.rows.length > 0;
+
+        return (
+          <div key={week.key} className={`rounded-2xl border shadow-sm overflow-hidden
+            ${week.isThisWeek ? "border-amber-300 bg-amber-50/20" : "border-border bg-card"}`}>
+
+            {/* Week header */}
+            <div className={`px-4 py-2.5 flex items-center justify-between
+              ${week.isThisWeek ? "bg-amber-100/60" : "bg-muted/30"} border-b border-border/60`}>
+              <div className="flex items-center gap-3">
+                {week.isThisWeek && (
+                  <span className="rounded-full bg-amber-500 text-white text-[9px] font-bold px-2 py-0.5 uppercase">This week</span>
+                )}
+                <span className="text-sm font-semibold" style={{ color: "#1C2340" }}>{week.label}</span>
+              </div>
+              <div className="flex items-center gap-4 text-xs font-mono">
+                {invTotal > 0 && (
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-yellow-500" />
+                    <span className="text-yellow-700 font-semibold">${Math.round(invTotal).toLocaleString()}</span>
+                    <span className="text-muted-foreground">invoiced</span>
+                  </span>
+                )}
+                {pipeTotal > 0 && (
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-orange-500" />
+                    <span className="text-orange-600 font-semibold">${Math.round(pipeTotal).toLocaleString()}</span>
+                    <span className="text-muted-foreground">pipeline</span>
+                  </span>
+                )}
+                {total > 0 && (
+                  <span className="font-bold text-sm" style={{ color: "#1C2340" }}>
+                    = ${Math.round(total).toLocaleString()}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Orders in this week */}
+            {!hasRows ? (
+              <div className="px-4 py-3 text-xs text-muted-foreground italic">No expected collections</div>
+            ) : (
+              <div className="divide-y divide-border/40">
+                {week.rows.map(r => {
+                  const isInv = r.layer === "invoiced";
+                  const isPipe = r.layer === "pipeline";
+                  const isOverdue = isInv && r.daysUntil < 0;
+                  const isDueSoon = isInv && r.daysUntil >= 0 && r.daysUntil <= 3;
+
+                  return (
+                    <div key={r.id}
+                      className={`px-4 py-2 flex items-center gap-3 text-xs
+                        ${isOverdue ? "bg-red-50/50" : isDueSoon ? "bg-yellow-50/50" : isPipe ? "bg-orange-50/20" : ""}`}>
+
+                      {/* Layer dot */}
+                      <span className={`w-2 h-2 rounded-full flex-shrink-0
+                        ${isInv ? "bg-yellow-500" : "bg-orange-400"}`} />
+
+                      {/* Distributor */}
+                      <span className="font-semibold w-20 flex-shrink-0" style={{ color: DIST_COLORS[r.distributor] || "#333" }}>
+                        {r.distributor}
+                      </span>
+
+                      {/* PO */}
+                      <span className="font-mono font-semibold w-20 flex-shrink-0" style={{ color: "#A3224A" }}>
+                        {r.poNumber}
+                      </span>
+
+                      {/* Customer */}
+                      <span className="text-muted-foreground truncate w-32 flex-shrink-0">{r.customer}</span>
+
+                      {/* Invoice info */}
+                      <span className="text-muted-foreground w-28 flex-shrink-0">
+                        {r.invoiceDate ? `inv ${r.invoiceDate}` : r.statusLabel}
+                      </span>
+
+                      {/* Gross → Net */}
+                      <span className="ml-auto flex items-center gap-2 font-mono">
+                        <span className="text-muted-foreground">${Math.round(r.gross).toLocaleString()}</span>
+                        <span className="text-red-400 text-[9px]">-{Math.round(r.dedPct * 100)}%</span>
+                        <span className="text-[11px]">→</span>
+                        <span className="font-semibold text-emerald-600 w-16 text-right">${Math.round(r.net).toLocaleString()}</span>
+                      </span>
+
+                      {/* Status badge */}
+                      <span className={`rounded-full px-2 py-0.5 text-[9px] font-semibold flex-shrink-0 w-16 text-center
+                        ${isOverdue ? "bg-red-100 text-red-700"
+                          : isDueSoon ? "bg-orange-100 text-orange-700"
+                          : isPipe ? "bg-orange-50 text-orange-600 border border-orange-200"
+                          : "bg-blue-50 text-blue-700"}`}>
+                        {isOverdue ? `${Math.abs(r.daysUntil)}d late` : isDueSoon ? `${r.daysUntil}d` : isInv ? `${r.daysUntil}d` : "pipeline"}
+                      </span>
+
+                      {/* Action */}
+                      {isInv && (
+                        <button onClick={() => onCollect(r.id)} disabled={marking === r.id}
+                          className="rounded-lg px-2 py-1 text-[10px] font-semibold border border-border hover:bg-emerald-50 hover:border-emerald-200 hover:text-emerald-700 disabled:opacity-50 flex-shrink-0">
+                          {marking === r.id ? "…" : "✓"}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {/* Monthly forecast (Capa 4) */}
+      {forecastMonths.length > 0 && (
+        <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+          <div className="px-4 py-3 border-b border-border bg-slate-50">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Monthly Forecast — Beyond 8 weeks (Normal scenario, estimated)
+            </h3>
+          </div>
+          <div className="divide-y divide-border/40">
+            {forecastMonths.map(fm => (
+              <div key={fm.month} className="px-4 py-3 flex items-center gap-4">
+                <span className="w-2 h-2 rounded-full bg-slate-400 flex-shrink-0" />
+                <span className="font-semibold text-sm w-40 flex-shrink-0" style={{ color: "#1C2340" }}>{fm.label}</span>
+                <div className="flex items-center gap-4 text-xs font-mono flex-1">
+                  {fm.dcs.map(d => (
+                    <span key={d.dc} className="flex items-center gap-1">
+                      <span className="font-semibold" style={{ color: DIST_COLORS[d.dc] || "#333" }}>{d.dc}</span>
+                      <span className="text-muted-foreground">${Math.round(d.gross / 1000)}K</span>
+                      <span className="text-[10px]">→</span>
+                      <span className="text-emerald-600 font-semibold">${Math.round(d.net / 1000)}K</span>
+                    </span>
+                  ))}
+                </div>
+                <span className="font-bold font-mono text-emerald-600 text-sm">
+                  ${Math.round(fm.totalNet / 1000)}K net
+                </span>
+                <span className="text-[10px] text-muted-foreground">
+                  collect ~{fm.dcs[0]?.collMonth}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// DETAIL VIEW — flat table with filters (improved version of original)
+// ═════════════════════════════════════════════════════════════════════════════
+function DetailView({ rows, today, marking, onCollect }: {
+  rows: CRow[]; today: string; marking: string | null; onCollect: (id: string) => void;
+}) {
+  const [viewMode, setViewMode] = useState<"pending" | "collected" | "all">("pending");
+  const [filterDist, setFilterDist] = useState<string>("all");
+  const [filterLayer, setFilterLayer] = useState<string>("all");
+  const [sortKey, setSortKey] = useState<string>("estDate");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   const filtered = useMemo(() => {
     return rows
-      .filter(r =>
-        (filterDist === "all" || r.order.distributor === filterDist) &&
-        (filterStatus === "all" || r.statusLabel === filterStatus)
-      )
+      .filter(r => {
+        if (viewMode === "pending" && r.layer === "collected") return false;
+        if (viewMode === "collected" && r.layer !== "collected") return false;
+        if (filterDist !== "all" && r.distributor !== filterDist) return false;
+        if (filterLayer !== "all" && r.layer !== filterLayer) return false;
+        return true;
+      })
       .sort((a, b) => {
-        let av: number | string = 0, bv: number | string = 0;
-        if (sortKey === "daysUntilDue") { av = a.daysUntilDue; bv = b.daysUntilDue; }
-        else if (sortKey === "net_sales") { av = Number(a.order.gross_sales) || 0; bv = Number(b.order.gross_sales) || 0; }
-        else if (sortKey === "distributor") { av = a.order.distributor; bv = b.order.distributor; }
-        else if (sortKey === "invoice_date") { av = a.order.invoice_date ?? ""; bv = b.order.invoice_date ?? ""; }
+        let av: number | string, bv: number | string;
+        if (sortKey === "estDate") { av = a.estDate; bv = b.estDate; }
+        else if (sortKey === "net") { av = a.net; bv = b.net; }
+        else if (sortKey === "gross") { av = a.gross; bv = b.gross; }
+        else if (sortKey === "distributor") { av = a.distributor; bv = b.distributor; }
+        else { av = a.estDate; bv = b.estDate; }
         if (av < bv) return sortDir === "asc" ? -1 : 1;
         if (av > bv) return sortDir === "asc" ? 1 : -1;
         return 0;
       });
-  }, [rows, filterDist, filterStatus, sortKey, sortDir]);
+  }, [rows, viewMode, filterDist, filterLayer, sortKey, sortDir]);
 
   function toggleSort(key: string) {
     if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");
     else { setSortKey(key); setSortDir("asc"); }
   }
 
-  const totalPending = filtered.reduce((s, r) => s + (Number(r.order.gross_sales) || 0), 0);
-  const dueThisWeek = filtered.filter(r => r.daysUntilDue <= 7 && r.daysUntilDue >= 0).reduce((s, r) => s + (Number(r.order.gross_sales) || 0), 0);
-  const overdue = filtered.filter(r => r.daysUntilDue < 0).reduce((s, r) => s + (Number(r.order.gross_sales) || 0), 0);
+  const distOptions = [...new Set(rows.map(r => r.distributor))].sort();
+  const totGross = filtered.reduce((s, r) => s + r.gross, 0);
+  const totDed = filtered.reduce((s, r) => s + r.gross * r.dedPct, 0);
+  const totNet = filtered.reduce((s, r) => s + r.net, 0);
 
-  const [marking, setMarking] = useState<string | null>(null);
-
-  async function markCollected(orderId: string) {
-    setMarking(orderId);
-    const { error } = await supabase.from("customer_orders").update({ collected_at: new Date().toISOString() }).eq("id", orderId);
-    if (error) { toast.error("Failed"); } else { toast.success("Marked as collected ✓"); }
-    setMarking(null);
-  }
-
-  const SortTh = ({ label, key }: { label: string; key: string }) => (
-    <th onClick={() => toggleSort(key)}
-      className="px-4 py-2.5 text-left cursor-pointer hover:text-foreground select-none">
-      {label}{sortKey === key ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
+  const SortTh = ({ label, k, right }: { label: string; k: string; right?: boolean }) => (
+    <th onClick={() => toggleSort(k)}
+      className={`px-3 py-2.5 ${right ? "text-right" : "text-left"} cursor-pointer hover:text-foreground select-none whitespace-nowrap`}>
+      {label}{sortKey === k ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
     </th>
   );
 
-  const distOptions = [...new Set(rows.map(r => r.order.distributor))].sort();
+  const LAYER_BADGE: Record<Layer, [string, string]> = {
+    collected: ["bg-emerald-100 text-emerald-700", "Collected"],
+    invoiced:  ["bg-yellow-100 text-yellow-700",  "Invoiced"],
+    pipeline:  ["bg-orange-100 text-orange-700",  "Pipeline"],
+    forecast:  ["bg-slate-100 text-slate-600",    "Forecast"],
+  };
 
   return (
-    <div className="space-y-5">
-      <div className="grid grid-cols-3 gap-4">
-        <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-          <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2">Total Pending</p>
-          <p className="text-2xl font-bold font-mono text-orange-500">${Math.round(totalPending).toLocaleString()}</p>
-          <p className="text-xs text-muted-foreground mt-1">{filtered.length} invoices within terms</p>
-        </div>
-        <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-          <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2">Due This Week</p>
-          <p className="text-2xl font-bold font-mono text-orange-600">${Math.round(dueThisWeek).toLocaleString()}</p>
-          <p className="text-xs text-muted-foreground mt-1">{filtered.filter(r => r.daysUntilDue <= 7 && r.daysUntilDue >= 0).length} invoices</p>
-        </div>
-        <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-          <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2">Overdue</p>
-          <p className={`text-2xl font-bold font-mono ${overdue > 0 ? "text-red-600" : "text-emerald-600"}`}>${Math.round(overdue).toLocaleString()}</p>
-          <p className="text-xs text-muted-foreground mt-1">{filtered.filter(r => r.daysUntilDue < 0).length} invoices past due</p>
-        </div>
-      </div>
-
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex gap-2 flex-wrap">
-          {[["UNFI","30d"],["KeHe","30d"],["RFD","30d"],["Rainforest","60d ⚠️"]].map(([d,t]) => (
-            <span key={d} className={`rounded-full px-3 py-1 text-xs font-semibold ${d === "Rainforest" ? "bg-orange-100 text-orange-700 border border-orange-200" : "bg-muted text-muted-foreground"}`}>
-              {d}: {t}
-            </span>
+    <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+      {/* Toolbar */}
+      <div className="px-4 py-3 border-b border-border bg-muted/30 flex items-center justify-between flex-wrap gap-2">
+        <div className="flex gap-1">
+          {(["pending", "collected", "all"] as const).map(m => (
+            <button key={m} onClick={() => setViewMode(m)}
+              className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${viewMode === m ? "bg-[#1C2340] text-white" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}>
+              {m === "pending" ? "Pending" : m === "collected" ? "Collected" : "All"}
+            </button>
           ))}
         </div>
-        <div className="ml-auto flex gap-2 flex-wrap">
+        <div className="flex gap-2">
           <select value={filterDist} onChange={e => setFilterDist(e.target.value)}
-            className="rounded-lg border border-border bg-background px-3 py-1.5 text-sm focus:outline-none">
+            className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs focus:outline-none">
             <option value="all">All distributors</option>
             {distOptions.map(d => <option key={d} value={d}>{d}</option>)}
           </select>
-          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
-            className="rounded-lg border border-border bg-background px-3 py-1.5 text-sm focus:outline-none">
-            <option value="all">All statuses</option>
-            <option value="Overdue">Overdue</option>
-            <option value="Due soon">Due soon (≤7d)</option>
-            <option value="Upcoming">Upcoming</option>
+          <select value={filterLayer} onChange={e => setFilterLayer(e.target.value)}
+            className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs focus:outline-none">
+            <option value="all">All layers</option>
+            <option value="invoiced">Invoiced</option>
+            <option value="pipeline">Pipeline</option>
+            <option value="collected">Collected</option>
           </select>
         </div>
       </div>
 
-      <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/40 border-b border-border">
-              <SortTh label="Distributor" key="distributor" />
-              <th className="px-4 py-2.5 text-left">PO #</th>
-              <th className="px-4 py-2.5 text-left">Customer</th>
-              <SortTh label="Invoice Date" key="invoice_date" />
-              <th className="px-4 py-2.5 text-center">Terms</th>
-              <SortTh label="Due Date" key="daysUntilDue" />
-              <SortTh label="Amount" key="net_sales" />
-              <th className="px-4 py-2.5 text-center">Status</th>
-              <th className="px-4 py-2.5" />
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.length === 0 ? (
-              <tr><td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">No pending collections ✅</td></tr>
-            ) : filtered.map(({ order: o, terms, dueDate, daysUntilDue, statusLabel }) => {
-              const isOverdue = daysUntilDue < 0;
-              const isDueSoon = daysUntilDue >= 0 && daysUntilDue <= 7;
-              const rowBg = isOverdue ? "bg-red-50/40" : isDueSoon ? "bg-orange-50/30" : "";
-              return (
-                <tr key={o.id} className={`border-t border-border/60 hover:bg-muted/20 ${rowBg}`}>
-                  <td className="px-4 py-2 font-semibold" style={{color:"#1C2340"}}>{o.distributor}</td>
-                  <td className="px-4 py-2 font-mono text-xs font-semibold" style={{color:"#A3224A"}}>{o.po_number}</td>
-                  <td className="px-4 py-2 text-muted-foreground text-xs">{o.customer}</td>
-                  <td className="px-4 py-2 font-mono text-xs">{o.invoice_date}</td>
-                  <td className="px-4 py-2 text-center">
-                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${terms === 60 ? "bg-orange-100 text-orange-700" : "bg-muted text-muted-foreground"}`}>
-                      {terms}d
-                    </span>
-                  </td>
-                  <td className="px-4 py-2 font-mono text-xs">
-                    <span className={isOverdue ? "text-red-600 font-bold" : isDueSoon ? "text-orange-500 font-semibold" : "text-muted-foreground"}>
-                      {dueDate}
-                      {isOverdue && <span className="ml-1 text-[10px] font-semibold">({Math.abs(daysUntilDue)}d late)</span>}
-                      {isDueSoon && <span className="ml-1 text-[10px]">(in {daysUntilDue}d)</span>}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2 text-right font-mono font-semibold text-emerald-600">
-                    ${Math.round(Number(o.gross_sales) || 0).toLocaleString()}
-                  </td>
-                  <td className="px-4 py-2 text-center">
-                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${isOverdue ? "bg-red-100 text-red-700" : isDueSoon ? "bg-orange-100 text-orange-700" : "bg-blue-50 text-blue-700"}`}>
-                      {statusLabel}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2 text-right">
-                    <button onClick={() => markCollected(o.id)} disabled={marking === o.id}
-                      className="rounded-lg px-3 py-1 text-xs font-semibold border border-border hover:bg-muted disabled:opacity-50">
-                      {marking === o.id ? "…" : "Mark collected"}
+      {/* Table */}
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/30 border-b border-border">
+            <th className="px-3 py-2.5 text-left w-16">Layer</th>
+            <SortTh label="Distributor" k="distributor" />
+            <th className="px-3 py-2.5 text-left">PO #</th>
+            <th className="px-3 py-2.5 text-left">Customer</th>
+            <th className="px-3 py-2.5 text-left">Invoice Date</th>
+            <th className="px-3 py-2.5 text-center">Terms</th>
+            <SortTh label="Gross" k="gross" right />
+            <th className="px-3 py-2.5 text-right">Ded</th>
+            <SortTh label="Expected Net" k="net" right />
+            <SortTh label="Est. Collection" k="estDate" />
+            <th className="px-3 py-2.5 text-center">Status</th>
+            <th className="px-3 py-2.5" />
+          </tr>
+        </thead>
+        <tbody>
+          {filtered.length === 0 ? (
+            <tr><td colSpan={12} className="px-4 py-8 text-center text-muted-foreground">
+              {viewMode === "collected" ? "No collected payments yet" : "No pending collections ✅"}
+            </td></tr>
+          ) : filtered.map(r => {
+            const [badgeCls, badgeLabel] = LAYER_BADGE[r.layer];
+            const isOverdue = r.layer === "invoiced" && r.daysUntil < 0;
+            const isDueSoon = r.layer === "invoiced" && r.daysUntil >= 0 && r.daysUntil <= 7;
+            const rowBg = isOverdue ? "bg-red-50/40" : isDueSoon ? "bg-orange-50/30" : r.layer === "pipeline" ? "bg-orange-50/10" : r.layer === "collected" ? "bg-emerald-50/15" : "";
+
+            return (
+              <tr key={r.id} className={`border-t border-border/60 hover:bg-muted/20 ${rowBg}`}>
+                <td className="px-3 py-2">
+                  <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold uppercase ${badgeCls}`}>{badgeLabel}</span>
+                </td>
+                <td className="px-3 py-2 font-semibold text-xs" style={{ color: "#1C2340" }}>{r.distributor}</td>
+                <td className="px-3 py-2 font-mono text-xs font-semibold" style={{ color: "#A3224A" }}>{r.poNumber}</td>
+                <td className="px-3 py-2 text-muted-foreground text-xs truncate max-w-[100px]">{r.customer}</td>
+                <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{r.invoiceDate || "—"}</td>
+                <td className="px-3 py-2 text-center">
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${(PAYMENT_TERMS[r.distributor] ?? 30) === 60 ? "bg-orange-100 text-orange-700" : "bg-muted text-muted-foreground"}`}>
+                    {PAYMENT_TERMS[r.distributor] ?? 30}d
+                  </span>
+                </td>
+                <td className="px-3 py-2 text-right font-mono text-xs text-muted-foreground">${Math.round(r.gross).toLocaleString()}</td>
+                <td className="px-3 py-2 text-right text-[10px] text-red-500 font-semibold">-{Math.round(r.dedPct * 100)}%</td>
+                <td className="px-3 py-2 text-right font-mono font-semibold text-emerald-600">${Math.round(r.net).toLocaleString()}</td>
+                <td className="px-3 py-2 font-mono text-xs">
+                  <span className={isOverdue ? "text-red-600 font-bold" : isDueSoon ? "text-orange-500 font-semibold" : r.layer === "collected" ? "text-emerald-600" : "text-muted-foreground"}>
+                    {r.layer === "collected" ? r.collectedAt : r.estDate}
+                    {isOverdue && <span className="ml-1 text-[9px]">({Math.abs(r.daysUntil)}d late)</span>}
+                  </span>
+                </td>
+                <td className="px-3 py-2 text-center">
+                  <span className={`rounded-full px-2 py-0.5 text-[9px] font-semibold
+                    ${isOverdue ? "bg-red-100 text-red-700" : isDueSoon ? "bg-orange-100 text-orange-700"
+                      : r.layer === "collected" ? "bg-emerald-100 text-emerald-700" : "bg-blue-50 text-blue-700"}`}>
+                    {r.statusLabel}
+                  </span>
+                </td>
+                <td className="px-3 py-2 text-right">
+                  {r.layer === "invoiced" && (
+                    <button onClick={() => onCollect(r.id)} disabled={marking === r.id}
+                      className="rounded-lg px-2.5 py-1 text-[10px] font-semibold border border-border hover:bg-emerald-50 hover:border-emerald-200 hover:text-emerald-700 disabled:opacity-50">
+                      {marking === r.id ? "…" : "✓ Collected"}
                     </button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-          {filtered.length > 0 && (
-            <tfoot>
-              <tr style={{backgroundColor:"#1C2340", color:"#fff"}}>
-                <td colSpan={6} className="px-4 py-2 text-xs font-semibold">Total ({filtered.length} invoices)</td>
-                <td className="px-4 py-2 text-right font-mono font-bold text-emerald-400">${Math.round(totalPending).toLocaleString()}</td>
-                <td colSpan={2} />
+                  )}
+                </td>
               </tr>
-            </tfoot>
-          )}
-        </table>
-      </div>
+            );
+          })}
+        </tbody>
+        {filtered.length > 0 && (
+          <tfoot>
+            <tr style={{ backgroundColor: "#1C2340", color: "#fff" }}>
+              <td colSpan={6} className="px-3 py-2.5 text-xs font-semibold">Total ({filtered.length})</td>
+              <td className="px-3 py-2.5 text-right font-mono text-xs text-slate-300">${Math.round(totGross).toLocaleString()}</td>
+              <td className="px-3 py-2.5 text-right text-[10px] text-red-300">-${Math.round(totDed).toLocaleString()}</td>
+              <td className="px-3 py-2.5 text-right font-mono font-bold text-emerald-400">${Math.round(totNet).toLocaleString()}</td>
+              <td colSpan={3} />
+            </tr>
+          </tfoot>
+        )}
+      </table>
     </div>
   );
 }
