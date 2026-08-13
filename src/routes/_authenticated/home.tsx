@@ -338,7 +338,7 @@ function HomePage() {
   const [loading, setLoading] = useState(true);
   const [quoteIdx] = useState(() => Math.floor(Math.random() * QUOTES.length));
   const [revUnit, setRevUnit] = useState<"usd" | "cases" | "units">("usd");
-  const [period, setPeriod] = useState<"month" | "quarter" | "year" | "ytd">("month");
+  const [period, setPeriod] = useState<"month" | "lastmonth" | "quarter" | "year" | "ytd">("month");
   const [exporting, setExporting] = useState(false);
 
   // Forecast months come live from the Sales module simulator state.

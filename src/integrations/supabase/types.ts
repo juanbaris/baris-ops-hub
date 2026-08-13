@@ -321,8 +321,9 @@ export type Database = {
           inventory: number | null
           mkt_trade: number | null
           net_sales: number | null
+          other_income: number | null
           period: string
-          period_label: string
+          period_label: string | null
           pnl_detail: Json | null
           selling_exp: number | null
           source: string | null
@@ -332,6 +333,7 @@ export type Database = {
           total_equity: number | null
           total_liab: number | null
           trade_spend: number | null
+          units_sold: number | null
           uploaded_at: string | null
         }
         Insert: {
@@ -362,8 +364,9 @@ export type Database = {
           inventory?: number | null
           mkt_trade?: number | null
           net_sales?: number | null
+          other_income?: number | null
           period: string
-          period_label: string
+          period_label?: string | null
           pnl_detail?: Json | null
           selling_exp?: number | null
           source?: string | null
@@ -373,6 +376,7 @@ export type Database = {
           total_equity?: number | null
           total_liab?: number | null
           trade_spend?: number | null
+          units_sold?: number | null
           uploaded_at?: string | null
         }
         Update: {
@@ -403,8 +407,9 @@ export type Database = {
           inventory?: number | null
           mkt_trade?: number | null
           net_sales?: number | null
+          other_income?: number | null
           period?: string
-          period_label?: string
+          period_label?: string | null
           pnl_detail?: Json | null
           selling_exp?: number | null
           source?: string | null
@@ -414,7 +419,41 @@ export type Database = {
           total_equity?: number | null
           total_liab?: number | null
           trade_spend?: number | null
+          units_sold?: number | null
           uploaded_at?: string | null
+        }
+        Relationships: []
+      }
+      finance_assumptions: {
+        Row: {
+          auto_calculated_value: number | null
+          is_manual_override: boolean
+          key: string
+          label: string
+          notes: string | null
+          unit: string
+          updated_at: string
+          value: number
+        }
+        Insert: {
+          auto_calculated_value?: number | null
+          is_manual_override?: boolean
+          key: string
+          label: string
+          notes?: string | null
+          unit?: string
+          updated_at?: string
+          value: number
+        }
+        Update: {
+          auto_calculated_value?: number | null
+          is_manual_override?: boolean
+          key?: string
+          label?: string
+          notes?: string | null
+          unit?: string
+          updated_at?: string
+          value?: number
         }
         Relationships: []
       }
@@ -1022,7 +1061,16 @@ export type Database = {
         | "Free"
         | "Historical"
         | "Balance correction"
-      ip_concept: "Procurement" | "Consumption" | "Damage" | "Transfer"
+      ip_concept:
+        | "Procurement"
+        | "Consumption"
+        | "Damage"
+        | "Transfer"
+        | "Inventory"
+        | "Inv Adjustment"
+        | "Work in Progress"
+        | "Pistachio Production"
+        | "Hazelnut And Milk Production"
       movement_type: "In" | "Out"
       order_status:
         | "Open"
@@ -1044,6 +1092,7 @@ export type Database = {
         | "Pod Chicago"
         | "Pod MidAtlantic"
         | "Pod Texas"
+        | "Lineage Linden"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1184,7 +1233,17 @@ export const Constants = {
         "Historical",
         "Balance correction",
       ],
-      ip_concept: ["Procurement", "Consumption", "Damage", "Transfer"],
+      ip_concept: [
+        "Procurement",
+        "Consumption",
+        "Damage",
+        "Transfer",
+        "Inventory",
+        "Inv Adjustment",
+        "Work in Progress",
+        "Pistachio Production",
+        "Hazelnut And Milk Production",
+      ],
       movement_type: ["In", "Out"],
       order_status: [
         "Open",
@@ -1207,6 +1266,7 @@ export const Constants = {
         "Pod Chicago",
         "Pod MidAtlantic",
         "Pod Texas",
+        "Lineage Linden",
       ],
     },
   },
