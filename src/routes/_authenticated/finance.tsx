@@ -1862,11 +1862,31 @@ function FinancePage() {
   const [uploadPreview, setUploadPreview] = useState<any[] | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
+  // ── Balance Sheet March 2026 (from Accountfully PDF, raw dollars) ───────────
+  const MAR26_BS: Record<string,number> = {
+    bofa_x6854: 329215.39, citi_bank: 451416.69, mercury_checking: 0, mercury_treasury: 0,
+    accounts_receivable: 233976.15, finished_goods: 130541.63, raw_materials_packaging: 300726.83,
+    loans_to_shareholders: 12961.14, equipment: 11193.81, accumulated_depreciation: -4928.88,
+    due_from_shareholders: 996.75,
+    boa_3724: 393.08, boa_7830: 100.97, boa_8781: 471.55, citi_credit: 19075.61, mercury_credit: 0,
+    accrued_liabilities: 10340.00,
+    capital_1st_round: 225000.00, capital_2nd_round: 399865.00, capital_3rd_round: 685970.00, capital_4th_round: 1910760.00,
+    common_stock: 1096.75, opening_balance_equity: -1866.32, retained_earnings: -1548940.01, net_income_equity: -224158.01,
+  };
+
   async function loadActuals() {
     const { data } = await supabase.from("finance_actuals").select("*").order("period");
     if (data) {
       const map: Record<string, any> = {};
       data.forEach((row: any) => { map[row.period] = row; });
+
+      // Seed bs_detail for March 2026 if missing (P&L already loaded)
+      if (map["2026-03"] && !map["2026-03"].bs_detail) {
+        const patch = { period: "2026-03", bs_detail: MAR26_BS, cash: 780.63, total_assets: 1478.11, total_liab: 30.38, total_equity: 1447.73 };
+        await supabase.from("finance_actuals").upsert(patch, { onConflict: "period" });
+        Object.assign(map["2026-03"], patch);
+      }
+
       setActuals(map);
     }
   }
