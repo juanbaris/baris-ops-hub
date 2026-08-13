@@ -324,20 +324,28 @@ function DashboardTab({ period, refMonth, actuals, realMonths, actualOnly }: { p
         tension: 0.4, fill: true, pointRadius: 4, spanGaps:true,
       }]
     },
-    options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } }, scales:{ y:{ ticks:{ callback:(v:number) => v+'%' }, min:20, max:45 } } }
+    options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } }, scales:{ y:{ ticks:{ callback:(v:number) => v+'%' } } } }
   }), [S]);
 
   useChart(cashCanvas, () => ({
     type: 'line',
     data: {
       labels: MONTHS,
-      datasets: [{
-        label: 'Cash EOP', data: S.map(mm=>mm.cash),
-        borderColor: '#1C2340', backgroundColor: 'rgba(28,35,64,0.1)',
-        tension: 0.3, fill: true, pointRadius: 4, spanGaps:true,
-      }]
+      datasets: [
+        { label: 'Real', data: S.map((mm,i) => mm.isBsReal ? mm.cash : null),
+          borderColor: '#1C2340', backgroundColor: 'rgba(28,35,64,0.1)',
+          tension: 0.3, fill: true, pointRadius: 5, spanGaps: true },
+        { label: 'Forecast', data: S.map((mm,i) => {
+            if (mm.isForecast) return mm.cash;
+            if (firstFc > 0 && i === firstFc - 1) return mm.cash; // bridge point
+            return null;
+          }),
+          borderColor: '#A3224A', backgroundColor: 'rgba(163,34,74,0.08)',
+          borderDash: [4,3], tension: 0.3, fill: true, spanGaps: true,
+          pointRadius: S.map(mm => mm.isForecast ? 4 : 0) },
+      ]
     },
-    options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } }, scales:{ y:{ ticks:{ callback:(v:number) => '$'+v+'K' } } } }
+    options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{ position:'bottom', labels:{ boxWidth:12, font:{ size:11 } } } }, scales:{ y:{ ticks:{ callback:(v:number) => '$'+v+'K' } } } }
   }), [S]);
 
   // Waterfall totals (respect Actual/Forecast range)
