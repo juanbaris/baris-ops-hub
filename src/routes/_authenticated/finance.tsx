@@ -507,7 +507,7 @@ function buildChildMap(rows: PLRow[]): Record<string,string[]> {
 }
 
 // ─── P&L Table ────────────────────────────────────────────────────────────────
-function PNLTab({ realMonths, actuals }: { realMonths: number; actuals: Record<string, any> }) {
+function PNLTab({ realMonths, actuals, actualOnly }: { realMonths: number; actuals: Record<string, any>; actualOnly: boolean }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(
     new Set(["g-disc","g-facility","g-payroll","g-profsvcs","g-travel"])
   );
@@ -518,6 +518,10 @@ function PNLTab({ realMonths, actuals }: { realMonths: number; actuals: Record<s
   const scenarioForecast = useFinanceScenarioForecast(scenario); // "2026-8" -> $ (not $K)
   const { julyGrossSales } = useJulyRealFromFulfillment();       // $ (not $K), or null
   const assumptions = useFinanceAssumptions();
+
+  const isRealIdx = (idx: number) => actuals[PERIODS[idx]]?.pnl_detail != null;
+  // In "Actual" mode show only real months; in "Forecast" mode show all 12.
+  const visibleMonthIdx = MONTHS.map((_, i) => i).filter(i => actualOnly ? isRealIdx(i) : true);
 
   function toggle(id: string) {
     setCollapsed(prev => {
@@ -713,17 +717,17 @@ function PNLTab({ realMonths, actuals }: { realMonths: number; actuals: Record<s
           <thead>
             <tr className="bg-muted/50 border-b border-border">
               <th className="text-left px-4 py-2.5 font-semibold text-[10px] uppercase tracking-wide text-muted-foreground w-52 min-w-[200px]">Line</th>
-              {MONTHS.map((mo,i) => (
-                <th key={mo} className="text-right px-2 py-2.5 text-[10px] uppercase tracking-wide w-12"
-                  style={{color: i < realMonths ? "#1C2340" : "#9CA3AF"}}>
-                  {mo}
+              {visibleMonthIdx.map((i) => (
+                <th key={MONTHS[i]} className="text-right px-2 py-2.5 text-[10px] uppercase tracking-wide w-12"
+                  style={{color: isRealIdx(i) ? "#1C2340" : "#9CA3AF"}}>
+                  {MONTHS[i]}
                   <div className="text-[8px] flex items-center justify-end gap-0.5">
-                    {i < realMonths && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 inline-block"/>}
-                    {i < realMonths ? "A" : i === 6 ? "Real GS" : "F"}
+                    {isRealIdx(i) && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 inline-block"/>}
+                    {isRealIdx(i) ? "A" : i === 6 ? "Real GS" : "F"}
                   </div>
                 </th>
               ))}
-              <th className="text-right px-2 py-2.5 text-[10px] uppercase text-muted-foreground w-14">FY</th>
+              <th className="text-right px-2 py-2.5 text-[10px] uppercase text-muted-foreground w-14">{actualOnly ? "YTD" : "FY"}</th>
               <th className="text-right px-2 py-2.5 text-[10px] uppercase text-muted-foreground w-12">% GS</th>
             </tr>
           </thead>
@@ -735,15 +739,15 @@ function PNLTab({ realMonths, actuals }: { realMonths: number; actuals: Record<s
                 </tr>
               );
               if (row.id === "units_sold") {
-                const vals = MONTHS.map((_, i) => getValue(row, i));
+                const vals = visibleMonthIdx.map((i) => getValue(row, i));
                 const fyUnits = vals.reduce((s,v)=>(s??0)+(v??0),0)!;
                 return (
                   <tr key={row.id} className="border-t border-border/40 bg-muted/5 italic">
                     <td className="px-4 py-1.5 text-muted-foreground" style={{paddingLeft: 16}}>
                       <span className="flex items-center gap-1.5"><span className="w-4"/>{row.label}</span>
                     </td>
-                    {vals.map((v, i) => (
-                      <td key={i} className="text-right px-2 py-1.5 font-mono tabular-nums text-muted-foreground">
+                    {vals.map((v, k) => (
+                      <td key={k} className="text-right px-2 py-1.5 font-mono tabular-nums text-muted-foreground">
                         {v ? Math.round(v).toLocaleString() : "—"}
                       </td>
                     ))}
@@ -759,10 +763,10 @@ function PNLTab({ realMonths, actuals }: { realMonths: number; actuals: Record<s
               const isExp = hasChildren && row.kind === "group";
               const isOpen = !collapsed.has(row.id);
               const isTotal = row.kind === "total" || row.kind === "pct";
-              const vals = MONTHS.map((_, i) => getValue(row, i));
-              const fy = row.kind === "pct" ? (vals.reduce((s,v)=>(s??0)+(v??0),0)!/12) : vals.reduce((s,v)=>(s??0)+(v??0),0)!;
+              const vals = visibleMonthIdx.map((i) => getValue(row, i));
+              const fy = row.kind === "pct" ? (vals.reduce((s,v)=>(s??0)+(v??0),0)!/(vals.length||1)) : vals.reduce((s,v)=>(s??0)+(v??0),0)!;
               const pctGS = gsFY ? `${(Math.abs(fy!)/gsFY*100).toFixed(1)}%` : "—";
-              const pctParent = pctOfParent(row, 11); // representative (FY-ish, using Dec as proxy) — shown small next to label
+              const pctParent = pctOfParent(row, visibleMonthIdx[visibleMonthIdx.length-1] ?? 11);
 
               const parentGroupId = (row.kind === "total" && row.parentId) ? row.parentId : null;
               const parentIsGroup = parentGroupId ? PL_ROWS.find(r => r.id === parentGroupId)?.kind === "group" : false;
@@ -798,23 +802,26 @@ function PNLTab({ realMonths, actuals }: { realMonths: number; actuals: Record<s
                       )}
                     </span>
                   </td>
-                  {vals.map((v, i) => (
-                    <td key={i} className={`text-right px-2 py-1.5 font-mono tabular-nums`}
+                  {vals.map((v, k) => {
+                    const i = visibleMonthIdx[k];
+                    return (
+                    <td key={k} className={`text-right px-2 py-1.5 font-mono tabular-nums`}
                       style={{
                         color: row.kind==="pct" ? "#1C2340"
                           : (v??0)<0 ? "#EF4444"
                           : isTotal && (v??0)>0 ? "#10B981"
-                          : i >= realMonths ? "#9CA3AF"
+                          : !isRealIdx(i) ? "#9CA3AF"
                           : "#1C2340"
                       }}>
                       {row.kind==="pct" ? fmtPct(v??0)
                         : (!v || v===0) ? "—"
                         : fmt(v,0)}
                     </td>
-                  ))}
+                    );
+                  })}
                   <td className="text-right px-2 py-1.5 font-mono font-semibold tabular-nums"
                     style={{color: row.kind==="pct" ? "#1C2340" : (fy??0)<0 ? "#EF4444" : "#10B981"}}>
-                    {row.kind==="pct" ? fmtPct((fy??0)/12) : (!fy || fy===0) ? "—" : fmt(fy,0)}
+                    {row.kind==="pct" ? fmtPct(fy??0) : (!fy || fy===0) ? "—" : fmt(fy,0)}
                   </td>
                   <td className="text-right px-2 py-1.5 font-mono text-muted-foreground tabular-nums text-[10px]">
                     {row.kind==="pct" ? "—" : pctGS}
@@ -993,10 +1000,18 @@ function CashFlowTab({ actuals }: { actuals: Record<string, any> }) {
     const prevGs = idx > 0 ? (isPnlReal(idx-1) ? realGrossSalesK(idx-1) : (fcGrossByMonth[idx-1] ?? gsK)) : gsK;
     return netOf(gsK) * mixKeheUnfi + netOf(gsK) * mixRainforest + netOf(prevGs) * mixRainforest;
   }
+  const lastRealInvK_cf = latestBsIdx >= 0 && bsByPeriod[PERIODS[latestBsIdx]]
+    ? (Number(bsByPeriod[PERIODS[latestBsIdx]].finished_goods ?? 0) + Number(bsByPeriod[PERIODS[latestBsIdx]].raw_materials_packaging ?? 0)) / 1000
+    : 0;
+  const lastRealGrossK_cf = latestBsIdx >= 0 ? realGrossSalesK(latestBsIdx) : 0;
   function estimateInventory(gsK: number): number {
-    const cogsPerUnit = assumptions.get('cogs_per_unit', 22.27), pricePerCase = 37;
-    const units = gsK*1000/pricePerCase;
-    return (units * cogsPerUnit * 45/30) / 1000;
+    if (lastRealInvK_cf <= 0) {
+      const cogsPerUnit = assumptions.get('cogs_per_unit', 22.27);
+      return ((gsK*1000/37) * cogsPerUnit * 45/30) / 1000;
+    }
+    const ratio = lastRealGrossK_cf > 0 ? gsK / lastRealGrossK_cf : 1;
+    const damped = Math.sqrt(Math.max(0.25, Math.min(2.5, ratio)));
+    return lastRealInvK_cf * damped;
   }
 
   // ── Real AR/Inventory series (from bs_detail, $K) for months that have it ──
@@ -1266,13 +1281,27 @@ function BalanceTab({ realMonths, actuals }: { realMonths: number; actuals: Reco
     return thisMonthNet + prevMonthNet + thisMonthRainforest;
   }
 
-  // ── Inventory: simple days-of-COGS proxy until Procurement Planning (BOM + lead times) feeds this ──
-  const INV_DAYS = 45;
+  // ── Inventory: anchor to the last real inventory level, then scale proportionally with sales
+  // volume (so it doesn't collapse from ~$589K real to a tiny days-of-COGS proxy overnight).
+  // This is a placeholder until Procurement Planning (BOM + lead times) drives it precisely.
+  const lastRealInvK = latestRealIdx >= 0
+    ? (Number(bsByPeriod[PERIODS[latestRealIdx]]?.finished_goods ?? 0) + Number(bsByPeriod[PERIODS[latestRealIdx]]?.raw_materials_packaging ?? 0)) / 1000
+    : 0;
+  const lastRealGrossK = latestRealIdx >= 0
+    ? (Number(actuals[PERIODS[latestRealIdx]]?.pnl_detail?.sales_product ?? 0) + Number(actuals[PERIODS[latestRealIdx]]?.pnl_detail?.shipping_income ?? 0)) / 1000
+    : 0;
   function forecastInventory(idx: number): number {
-    const gs = fcGrossByMonth[idx] ?? 0;
-    const cogsPerUnit = assumptions.get('cogs_per_unit', 22.27), pricePerCase = 37;
-    const units = gs*1000/pricePerCase;
-    return (units * cogsPerUnit * INV_DAYS/30) / 1000;
+    if (lastRealInvK <= 0) {
+      const gs = fcGrossByMonth[idx] ?? 0;
+      const cogsPerUnit = assumptions.get('cogs_per_unit', 22.27);
+      return ((gs*1000/37) * cogsPerUnit * 45/30) / 1000;
+    }
+    // Scale last real inventory by the ratio of this month's forecast sales to the last real month's sales,
+    // damped (sqrt) so inventory moves with demand but not 1:1 spike-to-spike.
+    const gs = fcGrossByMonth[idx] ?? lastRealGrossK;
+    const ratio = lastRealGrossK > 0 ? gs / lastRealGrossK : 1;
+    const damped = Math.sqrt(Math.max(0.25, Math.min(2.5, ratio)));
+    return lastRealInvK * damped;
   }
 
   // ── Cash: roll forward from the last real close using the P&L's own Net Income ──
@@ -1789,7 +1818,8 @@ function FinancePage() {
     return result as typeof D;
   }, [actuals]);
 
-  const realMonths = useMemo(() => scenario === "Actual" ? PERIODS.filter(p => actuals[p] != null).length : 0, [actuals, scenario]);
+  const realMonths = useMemo(() => PERIODS.filter(p => actuals[p]?.pnl_detail != null).length, [actuals]);
+  const actualOnly = scenario === "Actual";
 
   const latestActualLabel = useMemo(() => {
     const keys = Object.keys(actuals).filter(p => actuals[p]).sort();
@@ -2035,7 +2065,7 @@ All monetary values in $K (divide by 1000). Use null for unavailable fields.` }
       )}
 
       {tab === "dashboard" && <DashboardTab period={period} refMonth={refMonth} m={M} realMonths={realMonths} />}
-      {tab === "pnl"       && <PNLTab realMonths={realMonths} actuals={actuals} />}
+      {tab === "pnl"       && <PNLTab realMonths={realMonths} actuals={actuals} actualOnly={actualOnly} />}
       {tab === "cashflow"  && <CashFlowTab actuals={actuals} />}
       {tab === "balance"   && <BalanceTab realMonths={realMonths} actuals={actuals} />}
       {tab === "runway"    && <RunwayTab />}
