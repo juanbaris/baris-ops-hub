@@ -340,6 +340,21 @@ function HomePage() {
   const [revUnit, setRevUnit] = useState<"usd" | "cases" | "units">("usd");
   const [period, setPeriod] = useState<"month" | "lastmonth" | "quarter" | "year" | "ytd">("month");
   const [exporting, setExporting] = useState(false);
+  const [userName, setUserName] = useState("");
+
+  // Fetch logged-in user's display name from profiles
+  useEffect(() => {
+    supabase.auth.getUser().then(async ({ data }) => {
+      if (!data.user) return;
+      const { data: p } = await supabase
+        .from("profiles")
+        .select("display_name, email")
+        .eq("id", data.user.id)
+        .maybeSingle();
+      const name = p?.display_name || p?.email?.split("@")[0] || data.user.email?.split("@")[0] || "";
+      setUserName(name.charAt(0).toUpperCase() + name.slice(1));
+    });
+  }, []);
 
   // Forecast months come live from the Sales module simulator state.
   const { state: fcState } = useSalesForecast();
@@ -591,7 +606,7 @@ function HomePage() {
     <div className="space-y-6 pb-10">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold" style={{ color: "#1C2340" }}>Welcome back, Juan</h1>
+        <h1 className="text-2xl font-bold" style={{ color: "#1C2340" }}>Welcome back, {userName}</h1>
         <p className="text-sm text-muted-foreground">{today.toLocaleDateString("en-US", { month: "long", year: "numeric" })} overview</p>
       </div>
 
