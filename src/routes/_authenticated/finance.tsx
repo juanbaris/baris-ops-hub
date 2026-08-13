@@ -1914,12 +1914,30 @@ function FinancePage() {
         total_assets: 'total_assets', total_liab: 'total_liab', total_equity: 'total_equity',
         cash_from_ops: 'cash_from_ops',
       };
+      // finance_actuals stores P&L lines in DOLLARS, but balance-sheet lines
+      // (cash / ar / inventory / totals) already in $K. The whole Finance module
+      // works in $K, so normalise here.
+      const DOLLAR_FIELDS = new Set([
+        'gross_sales','trade_spend','distr_fees','net_sales','cogs','storage','freight_out',
+        'gross_margin','business_contribution','selling_exp','mkt_trade','team','gen_exp','ebitda',
+      ]);
+      // D keeps these as positive magnitudes; the PDF stores them negative.
+      const ABS_FIELDS = new Set(['cogs','storage','freight_out']);
       for (const [actualField, dField] of Object.entries(fieldMap)) {
-        if (actual[actualField] != null) result[dField][idx] = Number(actual[actualField]);
+        if (actual[actualField] == null) continue;
+        let v = Number(actual[actualField]);
+        if (DOLLAR_FIELDS.has(actualField)) v = v / 1000;
+        if (ABS_FIELDS.has(actualField)) v = Math.abs(v);
+        result[dField][idx] = v;
+      }
+      if (actual.gm_pct != null) {
+        // gm_pct is a ratio; recompute from normalised values when possible.
+        const ns = result.net_sales[idx], gm = result.gross_margin[idx];
+        result.gm_pct[idx] = ns ? gm / ns : Number(actual.gm_pct);
       }
     });
     return result as typeof D;
-  }, [actuals]);
+  }, [actuals, scenario]);
 
   const realMonths = useMemo(() => PERIODS.filter(p => actuals[p]?.pnl_detail != null).length, [actuals]);
   const actualOnly = scenario === "Actual";
