@@ -243,33 +243,51 @@ function KPI({ icon, label, value, sub, subColor, onClick }: {
 }
 
 // ─── Dashboard Tab ────────────────────────────────────────────────────────────
-function DashboardTab({ period, refMonth, m, realMonths, actualOnly }: { period: Period; refMonth: number; m: typeof D; realMonths: number; actualOnly: boolean }) {
-  // In Actual mode, cap the effective refMonth to the last real month
-  const effRef = actualOnly ? Math.min(refMonth, realMonths - 1) : refMonth;
-  const effPeriod = period;
+function DashboardTab({ period, refMonth, actuals, realMonths, actualOnly }: { period: Period; refMonth: number; actuals: Record<string,any>; realMonths: number; actualOnly: boolean }) {
+  const { effectiveForecast } = useSalesForecast();
+  const { julyGrossSales } = useJulyRealFromFulfillment();
+  const assumptions = useFinanceAssumptions();
 
-  // Actual-aware periodSlice: in Actual mode, never sum beyond real months
-  function aSlice(arr: number[]) {
-    if (actualOnly) {
-      if (effPeriod === 'mtd') return arr[effRef] || 0;
-      if (effPeriod === 'qtd') { const q = Math.floor(effRef / 3); return sum(arr, q * 3, Math.min(q * 3 + 3, effRef + 1)); }
-      // ytd & fy both cap at realMonths in Actual mode
-      return sum(arr, 0, realMonths);
-    }
-    return periodSlice(arr, effPeriod, effRef);
+  const fcGrossByMonth: Record<number, number> = {};
+  for (const f of effectiveForecast) if (f.year === 2026) fcGrossByMonth[f.month-1] = f.revenue/1000;
+  if (julyGrossSales != null) fcGrossByMonth[6] = julyGrossSales/1000;
+
+  // Single source of truth: same series as P&L / Balance Sheet / Cash Flow (all in $K).
+  const S = useMemo(
+    () => buildFinanceForecast(actuals, fcGrossByMonth, assumptions.get),
+    [actuals, assumptions.rows, effectiveForecast, julyGrossSales]
+  );
+
+  // Month range: Actual = only real P&L months (Jan–Jun); Forecast = full year (Jan–Dec).
+  const lastReal = realMonths - 1;
+  const effRef = actualOnly ? Math.min(refMonth, Math.max(0,lastReal)) : refMonth;
+
+  // Sum a P&L line ($K) over the active window (mtd/qtd/ytd/fy), only across months that have a P&L.
+  function slice(sel: (mm: MonthFin) => number|null): number {
+    const upto = actualOnly ? lastReal : 11;
+    let from = 0, to = upto;
+    if (period === 'mtd') { from = effRef; to = effRef; }
+    else if (period === 'qtd') { const q = Math.floor(effRef/3); from = q*3; to = Math.min(q*3+2, upto); }
+    else if (period === 'ytd') { to = Math.min(effRef, upto); }
+    // fy → 0..upto
+    let acc = 0;
+    for (let i = from; i <= to; i++) { const v = sel(S[i]); if (v != null) acc += v; }
+    return acc;
   }
 
-  const rev = aSlice(m.gross_sales);
-  const budgetRev = aSlice(BUDGET.gross_sales);
-  const netRev = aSlice(m.net_sales);
-  const gp = aSlice(m.gross_margin);
-  const gmPct = rev ? gp / rev : 0;
-  const bc = aSlice(m.business_contribution);
-  const ebitda = aSlice(m.ebitda);
-  const cash = m.cash_eop[effRef];
-  const avgBurn = (m.ebitda[Math.max(0, effRef - 2)] + m.ebitda[Math.max(0, effRef - 1)] + m.ebitda[effRef]) / 3;
+  const rev = slice(mm => mm.grossSales);
+  const budgetRev = actualOnly ? sum(BUDGET.gross_sales, 0, realMonths) : sum(BUDGET.gross_sales, 0, 12);
+  const netRev = slice(mm => mm.netSales);
+  const gp = slice(mm => mm.grossMargin);
+  const gmPct = netRev ? gp / netRev : 0;
+  const ebitda = slice(mm => mm.ebitda);
+  const ni = slice(mm => mm.netIncome);
+  const bc = gp; // business contribution ≈ gross margin (selling/mkt split not needed at KPI level)
+  // Cash at the reference month (real if present, else forecast)
+  const cash = S[effRef]?.cash ?? 0;
+  const avgBurn = ([effRef-2,effRef-1,effRef].map(i=>S[Math.max(0,i)]?.netIncome ?? 0).reduce((a,b)=>a+b,0))/3;
   const runway = avgBurn < 0 ? cash / Math.abs(avgBurn) : 99;
-  const wc = m.ar[effRef] + m.inventory[effRef] - m.ap[effRef];
+  const wc = (S[effRef]?.ar ?? 0) + (S[effRef]?.inventory ?? 0) - ((S[effRef]?.creditCards ?? 0)+(S[effRef]?.accrued ?? 0));
   const vsB = rev - budgetRev;
   const vsBpct = budgetRev ? vsB / budgetRev : 0;
 
@@ -279,18 +297,21 @@ function DashboardTab({ period, refMonth, m, realMonths, actualOnly }: { period:
   const cashCanvas = useRef<HTMLCanvasElement>(null);
   const waterfallCanvas = useRef<HTMLCanvasElement>(null);
 
+  const grossArr = S.map(mm => mm.grossSales);
+  const firstFc = S.findIndex(x=>x.isForecast);
+
   useChart(revCanvas, () => ({
     type: 'bar',
     data: {
       labels: MONTHS,
       datasets: [
-        { label: 'Budget', data: m.gross_sales, backgroundColor: 'rgba(180,180,180,0.4)', borderRadius: 3, order: 3 },
-        { label: 'Real', data: m.gross_sales.map((v,i) => i < realMonths ? v : null), type: 'line', borderColor: '#10B981', backgroundColor: 'transparent', tension: 0.3, pointRadius: 4, order: 1 },
-        { label: 'Forecast', data: m.gross_sales.map((v,i) => i >= realMonths-1 ? v : null), type: 'line', borderColor: '#A3224A', backgroundColor: 'transparent', tension: 0.3, pointRadius: 4, borderDash: [4,3], order: 2 },
+        { label: 'Budget', data: BUDGET.gross_sales, backgroundColor: 'rgba(180,180,180,0.4)', borderRadius: 3, order: 3 },
+        { label: 'Real', data: grossArr.map((v,i) => S[i].isPnlReal ? v : null), type: 'line', borderColor: '#10B981', backgroundColor: 'transparent', tension: 0.3, pointRadius: 4, order: 1, spanGaps:true },
+        { label: 'Forecast', data: grossArr.map((v,i) => (S[i].isForecast || (firstFc>0 && i===firstFc-1)) ? v : null), type: 'line', borderColor: '#A3224A', backgroundColor: 'transparent', tension: 0.3, order: 2, borderDash: [4,3], spanGaps:true, pointRadius: grossArr.map((_,i)=>S[i].isForecast?4:0) },
       ]
     },
     options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{ position:'bottom', labels:{ boxWidth:12, font:{ size:11 } } } }, scales:{ y:{ ticks:{ callback:(v:number) => '$'+v+'K' } } } }
-  }), []);
+  }), [S]);
 
   useChart(gmCanvas, () => ({
     type: 'line',
@@ -298,36 +319,33 @@ function DashboardTab({ period, refMonth, m, realMonths, actualOnly }: { period:
       labels: MONTHS,
       datasets: [{
         label: 'GM %',
-        data: m.gm_pct.map(v => +(v*100).toFixed(1)),
-        borderColor: '#A3224A',
-        backgroundColor: 'rgba(163,34,74,0.08)',
-        tension: 0.4, fill: true, pointRadius: 4,
+        data: S.map(mm => mm.netSales && mm.grossMargin!=null ? +((mm.grossMargin/mm.netSales)*100).toFixed(1) : null),
+        borderColor: '#A3224A', backgroundColor: 'rgba(163,34,74,0.08)',
+        tension: 0.4, fill: true, pointRadius: 4, spanGaps:true,
       }]
     },
     options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } }, scales:{ y:{ ticks:{ callback:(v:number) => v+'%' }, min:20, max:45 } } }
-  }), []);
+  }), [S]);
 
   useChart(cashCanvas, () => ({
     type: 'line',
     data: {
       labels: MONTHS,
       datasets: [{
-        label: 'Cash EOP',
-        data: m.cash_eop,
-        borderColor: '#1C2340',
-        backgroundColor: 'rgba(28,35,64,0.1)',
-        tension: 0.3, fill: true, pointRadius: 4,
+        label: 'Cash EOP', data: S.map(mm=>mm.cash),
+        borderColor: '#1C2340', backgroundColor: 'rgba(28,35,64,0.1)',
+        tension: 0.3, fill: true, pointRadius: 4, spanGaps:true,
       }]
     },
     options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } }, scales:{ y:{ ticks:{ callback:(v:number) => '$'+v+'K' } } } }
-  }), []);
+  }), [S]);
 
   // Waterfall totals (respect Actual/Forecast range)
-  const wfLabels = ['Gross Sales','Ded.','Net Sales','COGS','Fulfillment','GM','SG&A','EBITDA'];
-  const gs = aSlice(m.gross_sales); const ded = aSlice(m.trade_spend)+aSlice(m.distr_fees); const ns = aSlice(m.net_sales);
-  const cogs = -aSlice(m.cogs); const ful = -(aSlice(m.storage)+aSlice(m.freight_out)); const gm = aSlice(m.gross_margin);
-  const sga = aSlice(m.selling_exp)+aSlice(m.mkt_trade)+aSlice(m.team)+aSlice(m.gen_exp); const eb = aSlice(m.ebitda);
-  const wfData = [gs, ded, ns, cogs, ful, gm, sga, eb];
+  const wfLabels = ['Gross Sales','Ded.','Net Sales','COGS','GM','SG&A','EBITDA'];
+  const gs = slice(mm=>mm.grossSales); const ded = slice(mm=>mm.deductions); const ns = slice(mm=>mm.netSales);
+  const cogs = slice(mm=>mm.cogsTotal); const gm = slice(mm=>mm.grossMargin);
+  const sga = slice(mm=>mm.sga); const eb = slice(mm=>mm.ebitda);
+  const wfData = [gs, ded, ns, cogs, gm, sga, eb];
   const wfColors = wfData.map(v => v >= 0 ? '#1C2340' : '#A3224A');
 
   useChart(waterfallCanvas, () => ({
@@ -352,10 +370,10 @@ function DashboardTab({ period, refMonth, m, realMonths, actualOnly }: { period:
         <KPI icon="🧾" label="Net Sales" value={fmtK(netRev)}
           sub={actualOnly ? `Jan–${MONTHS[realMonths-1]} actual` : `FY 2026 forecast`} />
         <KPI icon="📊" label="Gross Margin %" value={fmtPct(gmPct)}
-          sub={`${fmt(gp,0)} abs`} />
+          sub={`${fmtK(gp)} abs`} />
         <KPI icon="🎯" label="Business Contribution" value={fmtK(bc)}
           sub={`${rev ? (bc/rev*100).toFixed(1) : 0}% of Gross`} />
-        <KPI icon="📉" label="EBITDA" value={fmt(ebitda,0)}
+        <KPI icon="📉" label="EBITDA" value={fmtK(ebitda)}
           sub="period burn" subColor={ebitda < 0 ? "text-red-500" : "text-emerald-600"} />
         <KPI icon="🏦" label="Cash on Hand" value={fmtK(cash)}
           sub="end of period"
@@ -923,6 +941,10 @@ type MonthFin = {
   loansSh: number; fixed: number; dueSh: number;
   capital: number; common: number; openEq: number; retEarn: number; netIncEq: number|null;
   totalAssets: number|null; totalLiab: number|null; totalEquity: number|null;
+  // P&L lines ($K) — real from pnl_detail, else forecast. null before there's any P&L for the month.
+  grossSales: number|null; deductions: number|null; netSales: number|null;
+  cogsTotal: number|null; grossMargin: number|null; sga: number|null; ebitda: number|null;
+  hasPnl: boolean;
 };
 
 function buildFinanceForecast(
@@ -1070,6 +1092,31 @@ function buildFinanceForecast(
       totAssets = cash + nonCash;
     }
 
+    // ── P&L lines ($K): real from pnl_detail, else forecast from assumptions ──
+    let grossSales:number|null=null, deductions:number|null=null, netSales:number|null=null,
+        cogsTotal:number|null=null, grossMargin:number|null=null, sgaTot:number|null=null, ebitda:number|null=null;
+    const hasPnl = isPnlReal || (latestPnlIdx >= 0 && i > latestPnlIdx);
+    if (isPnlReal) {
+      const d = pnl!;
+      grossSales = (Number(d.sales_product ?? 0) + Number(d.shipping_income ?? 0))/1000;
+      deductions = ['consumer_returns','distributor_fees','dsd_programs','kehe_allowance','payment_terms','promos','unfi_allowance','returns_refunds'].reduce((s,k)=>s+Number(d[k] ?? 0),0)/1000;
+      netSales = grossSales + deductions;
+      cogsTotal = ['product_costs','freight_in','freight_out_actual','merchant_fees','warehouse_fulfillment'].reduce((s,k)=>s+Number(d[k] ?? 0),0)/1000;
+      grossMargin = netSales + cogsTotal;
+      sgaTot = ['broker_commissions','slotting_fees','demos_merchandising','digital_social','events_tradeshows','printing_promotional','product_samples','bank_charges','dues_subscriptions','rent','utilities','insurance','meals_entertainment','office_supplies','contractors','payroll_processing','payroll_taxes','salaries_operations','accounting_finance','business_consultation','legal_fees','quality_rd','taxes_licenses','car_rental_uber','flights','hotel','uncategorized','vehicle_expenses'].reduce((s,k)=>s+Number(d[k] ?? 0),0)/1000;
+      ebitda = grossMargin + sgaTot; // NOI; other_income handled in netIncome
+    } else if (hasPnl) {
+      const gsK = fcGrossByMonth[i] ?? 0;
+      const unitsSold = gsK>0 ? Math.round(gsK*1000/37) : 0;
+      grossSales = gsK;
+      deductions = -gsK * dedPct;
+      netSales = grossSales + deductions;
+      cogsTotal = -((unitsSold*get('cogs_per_unit',22.27))/1000) - gsK*get('logistics_pct_of_gross',9.8)/100;
+      grossMargin = netSales + cogsTotal;
+      ebitda = netIncomeFcst(i);           // NOI (other income ~0 in forecast)
+      sgaTot = ebitda - grossMargin;
+    }
+
     out.push({
       isPnlReal, isBsReal, isForecast,
       netIncome: ni, ar, fg, rm, inventory: inv,
@@ -1082,6 +1129,7 @@ function buildFinanceForecast(
       openEq: isBsReal ? Number(bs!['opening_balance_equity'] ?? 0)/1000 : (isForecast ? fwd.openEq : 0),
       retEarn: isBsReal ? Number(bs!['retained_earnings'] ?? 0)/1000 : (isForecast ? fwd.retEarn : 0),
       netIncEq, totalAssets: totAssets, totalLiab: totLiab, totalEquity: totEquity,
+      grossSales, deductions, netSales, cogsTotal, grossMargin, sga: sgaTot, ebitda, hasPnl,
     });
   }
   return out;
@@ -1231,7 +1279,14 @@ function CashFlowTab({ actuals }: { actuals: Record<string, any> }) {
       labels: MONTHS,
       datasets: [
         { label: 'Cash EOP (real)', data: cashEop.map((v,i)=>S[i].isBsReal?v:null), borderColor:'#1C2340', backgroundColor:'rgba(28,35,64,0.1)', tension:0.3, fill:true, pointRadius:5, spanGaps:true },
-        { label: 'Cash EOP (forecast)', data: cashEop.map((v,i)=>S[i].isForecast?v:null), borderColor:'#A3224A', backgroundColor:'rgba(163,34,74,0.08)', borderDash:[4,3], tension:0.3, fill:true, pointRadius:4, spanGaps:true },
+        { label: 'Cash EOP (forecast)', data: cashEop.map((v,i)=>{
+            // include the last real month as the forecast line's starting point so there's no gap,
+            // but don't draw a marker on that bridge point (it belongs to the real series).
+            const firstForecast = S.findIndex(x=>x.isForecast);
+            return (S[i].isForecast || (firstForecast>0 && i===firstForecast-1)) ? v : null;
+          }),
+          borderColor:'#A3224A', backgroundColor:'rgba(163,34,74,0.08)', borderDash:[4,3], tension:0.3, fill:true, spanGaps:true,
+          pointRadius: cashEop.map((_,i)=>S[i].isForecast?4:0) },
         { label: 'Runway = 0', data: MONTHS.map(()=>0), borderColor:'#DC2626', borderDash:[5,5], pointRadius:0, fill:false }
       ]
     },
@@ -2289,7 +2344,7 @@ RULES:
         </div>
       )}
 
-      {tab === "dashboard" && <DashboardTab period={period} refMonth={refMonth} m={M} realMonths={realMonths} actualOnly={actualOnly} />}
+      {tab === "dashboard" && <DashboardTab period={period} refMonth={refMonth} actuals={actuals} realMonths={realMonths} actualOnly={actualOnly} />}
       {tab === "pnl"       && <PNLTab realMonths={realMonths} actuals={actuals} actualOnly={actualOnly} />}
       {tab === "cashflow"  && <CashFlowTab actuals={actuals} />}
       {tab === "balance"   && <BalanceTab realMonths={realMonths} actuals={actuals} />}
