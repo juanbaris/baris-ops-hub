@@ -2244,33 +2244,39 @@ function buildOpsForecast(bySkuMonthKey: Record<string, Record<string, number>>)
     FORECAST_KEYS_OPS.map(k => bySkuMonthKey[sku]?.[k] ?? 0),
   ]));
 }
+// First-of-month Date for forecast month index i (production month)
+function opsMonthDate(i: number): Date {
+  const k = FORECAST_KEYS_OPS[i] ?? FORECAST_KEYS_OPS[0];
+  const [y, m] = k.split("-").map(Number);
+  return new Date(y, m - 1, 1);
+}
+function shiftWeeks(d: Date, weeks: number): Date {
+  const x = new Date(d); x.setDate(x.getDate() - Math.round(weeks * 7)); return x;
+}
+function fmtMonthShort(d: Date): string { return d.toLocaleString("en-US", { month: "short", year: "2-digit" }); }
+function monthKeyOf(d: Date): string { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; }
 
-type ProcSubTab = "schedule"|"stock_proj"|"bom_cogs"|"shopping"|"raw_materials";
+type ProcSubTab = "schedule"|"stock_proj"|"bom_cogs"|"shopping"|"raw_materials"|"payments";
 
 const MANUAL_PROD_KEY = "baris.ops.manualProd.v1";
 const SKU_MINS_KEY = "baris.ops.skuMins.v1";
+const BOM_PCT_KEY = "baris.ops.bomPct.v1";
+const LEAD_KEY = "baris.ops.leadTimes.v1";
+const DEFAULT_LEAD_WEEKS = 4;
 
 /** Production requirements coming from the Sales simulator (committed scenario wins). */
-function CommittedRequirements({ planScenario, onPlanScenarioChange }: { planScenario: SalesScenario; onPlanScenarioChange: (s: SalesScenario) => void }) {
-  const { production, isCommitted, committedLevers, committedAt, scenario } = useSalesForecast();
-  const newSkuNames = useMemo(()=>{
-    const set = new Set<string>();
-    for(const m of production) for(const n of m.newSkuBreakdown) set.add(n.name);
-    return [...set];
-  },[production]);
-
+function CommittedRequirements({ planScenario, onPlanScenarioChange, forecast, months }: { planScenario: SalesScenario; onPlanScenarioChange: (s: SalesScenario) => void; forecast: Record<string,number[]>; months: string[] }) {
   function exportCsv(){
-    const head = ["Month",...SKUS,...newSkuNames,"TOTAL"];
-    const rows = production.map(m=>[
-      m.label,
-      ...SKUS.map(s=>m.skuBreakdown[s]??0),
-      ...newSkuNames.map(n=>m.newSkuBreakdown.find(x=>x.name===n)?.cases??0),
-      m.totalCases,
+    const head = ["Month",...SKUS,"TOTAL"];
+    const rows = months.map((label,i)=>[
+      label,
+      ...SKUS.map(s=>Math.round(forecast[s]?.[i]??0)),
+      SKUS.reduce((a,s)=>a+Math.round(forecast[s]?.[i]??0),0),
     ]);
     const csv=[head,...rows].map(r=>r.join(",")).join("\n");
     const url=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
     const a=document.createElement("a");
-    a.href=url; a.download="production-requirements.csv"; a.click();
+    a.href=url; a.download="forecast-by-sku.csv"; a.click();
     URL.revokeObjectURL(url);
   }
 
@@ -2278,17 +2284,10 @@ function CommittedRequirements({ planScenario, onPlanScenarioChange }: { planSce
     <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
       <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-border bg-muted/30">
         <div>
-          <p className="text-sm font-bold" style={{color:"#1C2340"}}>Production requirements — {isCommitted?"committed scenario":"active forecast"}</p>
-          {isCommitted ? (
-            <p className="text-xs text-amber-700 font-semibold">
-              🔒 Based on committed scenario · {committedLevers} lever{committedLevers===1?"":"s"} active
-              {committedAt?` · Last updated: ${new Date(committedAt).toLocaleString()}`:""}
-            </p>
-          ) : (
-            <p className="text-xs text-muted-foreground">
-              ℹ️ No committed scenario — showing active forecast ({scenario}). Go to Sales → Simulador and click SET on any lever to define the production input.
-            </p>
-          )}
+          <p className="text-sm font-bold" style={{color:"#1C2340"}}>Forecast sales by SKU — {planScenario} scenario</p>
+          <p className="text-xs text-muted-foreground">
+            Monthly forecast driving this whole tab. Switch scenario to recalculate schedule, stock, shopping &amp; payments.
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <div className="flex gap-1 rounded-xl bg-muted p-1">
@@ -2311,19 +2310,20 @@ function CommittedRequirements({ planScenario, onPlanScenarioChange }: { planSce
             <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
               <th className="px-4 py-2 text-left">Month</th>
               {SKUS.map(s=><th key={s} className="px-3 py-2 text-right">{s}</th>)}
-              {newSkuNames.map(n=><th key={n} className="px-3 py-2 text-right">{n}</th>)}
               <th className="px-4 py-2 text-right font-bold">TOTAL</th>
             </tr>
           </thead>
           <tbody>
-            {production.map(m=>(
-              <tr key={m.label} className="border-t border-border/60 hover:bg-muted/20">
-                <td className="px-4 py-1.5 font-semibold">{m.label}</td>
-                {SKUS.map(s=><td key={s} className="px-3 py-1.5 text-right font-mono">{(m.skuBreakdown[s]??0).toLocaleString()}</td>)}
-                {newSkuNames.map(n=><td key={n} className="px-3 py-1.5 text-right font-mono">{(m.newSkuBreakdown.find(x=>x.name===n)?.cases??0).toLocaleString()}</td>)}
-                <td className="px-4 py-1.5 text-right font-mono font-bold">{m.totalCases.toLocaleString()}</td>
-              </tr>
-            ))}
+            {months.map((label,i)=>{
+              const rowTotal = SKUS.reduce((a,s)=>a+Math.round(forecast[s]?.[i]??0),0);
+              return (
+                <tr key={label} className="border-t border-border/60 hover:bg-muted/20">
+                  <td className="px-4 py-1.5 font-semibold">{label}</td>
+                  {SKUS.map(s=><td key={s} className="px-3 py-1.5 text-right font-mono">{Math.round(forecast[s]?.[i]??0).toLocaleString()}</td>)}
+                  <td className="px-4 py-1.5 text-right font-mono font-bold">{rowTotal.toLocaleString()}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -2331,9 +2331,9 @@ function CommittedRequirements({ planScenario, onPlanScenarioChange }: { planSce
   );
 }
 
-function calcCOGSFull(prices: Record<string,number>, costs: typeof DEFAULT_PROD_COSTS, scrap: {raspberry:number;chocolate:number}) {
+function calcCOGSFull(prices: Record<string,number>, costs: typeof DEFAULT_PROD_COSTS, scrap: {raspberry:number;chocolate:number}, bomPct: Record<string, Record<string, number>>) {
   return Object.fromEntries(SKUS.map(sku => {
-    const bom = BOM_PCT[sku]??{};
+    const bom = bomPct[sku]??{};
     let rasp=0,choc=0,other=0;
     for (const [ing,pct] of Object.entries(bom)) {
       const lbs=(pct/100)*LBS_PER_CASE_BOM;
@@ -2363,6 +2363,7 @@ function calcProdSchedule(
   skuMinRuns: Record<string,number>,
   manualProd: Record<string,number[]>,
   optimizeTruck: boolean,
+  bomPct: Record<string, Record<string, number>>,
 ) {
   const SK: Record<string,string>={XD:"xd_cases",PW:"pw_cases",HM:"hm_cases",WM:"wm_cases",WD:"wd_cases",Matcha:"matcha_cases"};
   const committed: Record<string,number>={};
@@ -2407,7 +2408,7 @@ function calcProdSchedule(
       running=running+produce-fcst;
       stockProj[sku].push(Math.round(running));
       if(produce>0) {
-        const bom=BOM_PCT[sku]??{};
+        const bom=bomPct[sku]??{};
         for(const [ing,pct] of Object.entries(bom)) {
           const lbs=(pct/100)*LBS_PER_CASE_BOM*produce;
           const isR=ing==="IQF Raspberry";
@@ -2431,6 +2432,26 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
   const [prodCosts,  setProdCosts]  = useState({...DEFAULT_PROD_COSTS});
   const [scrap,      setScrap]      = useState({raspberry:0.10,chocolate:0.08});
   const [ingInv,     setIngInv]     = useState<Record<string,string>>(Object.fromEntries(ALL_INGS.map(k=>[k,""])));
+  // ─── NEW: editable BOM percentages ───
+  const [bomPct, setBomPct] = useState<Record<string, Record<string, number>>>(
+    () => {
+      try { const raw = window.localStorage.getItem(BOM_PCT_KEY); if (raw) return JSON.parse(raw); } catch {}
+      return JSON.parse(JSON.stringify(BOM_PCT));
+    }
+  );
+  useEffect(()=>{ try { window.localStorage.setItem(BOM_PCT_KEY, JSON.stringify(bomPct)); } catch {} },[bomPct]);
+  function updateBomPct(sku:string, ing:string, val:number){
+    setBomPct(prev=>({...prev,[sku]:{...(prev[sku]??{}),[ing]:val}}));
+  }
+  function resetBomPct(){ setBomPct(JSON.parse(JSON.stringify(BOM_PCT))); toast.success("BOM reset to default"); }
+  // ─── NEW: editable per-material lead times (weeks) ───
+  const [leadTimes, setLeadTimes] = useState<Record<string,number>>(
+    () => {
+      try { const raw = window.localStorage.getItem(LEAD_KEY); if (raw) return {...Object.fromEntries(ALL_INGS.map(k=>[k,DEFAULT_LEAD_WEEKS])), ...JSON.parse(raw)}; } catch {}
+      return Object.fromEntries(ALL_INGS.map(k=>[k,DEFAULT_LEAD_WEEKS]));
+    }
+  );
+  useEffect(()=>{ try { window.localStorage.setItem(LEAD_KEY, JSON.stringify(leadTimes)); } catch {} },[leadTimes]);
   const WIP_KEY="baris.ops.wip.v1";
   const [wip, setWip] = useState<Record<string,{cases:string;due:string}>>(
     Object.fromEntries(SKUS.map(s=>[s,{cases:"",due:""}])));
@@ -2507,10 +2528,49 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
   const { bySku } = useMemo(()=>calcStockFromBaseline(baseline, movements),[baseline, movements]);
 
   const {plan,stockProj,ingNeeded,ingByMonth} = useMemo(
-    ()=>calcProdSchedule(bySku,orders,safetyWoh,minRun,freqMonths,fcstOps,wipBySku,skuMinRuns,manualProd,optimizeTruck),
-    [bySku,orders,safetyWoh,minRun,freqMonths,fcstOps,wipBySku,skuMinRuns,manualProd,optimizeTruck]
+    ()=>calcProdSchedule(bySku,orders,safetyWoh,minRun,freqMonths,fcstOps,wipBySku,skuMinRuns,manualProd,optimizeTruck,bomPct),
+    [bySku,orders,safetyWoh,minRun,freqMonths,fcstOps,wipBySku,skuMinRuns,manualProd,optimizeTruck,bomPct]
   );
-  const cogs = useMemo(()=>calcCOGSFull(ingPrices,prodCosts,scrap),[ingPrices,prodCosts,scrap]);
+  const cogs = useMemo(()=>calcCOGSFull(ingPrices,prodCosts,scrap,bomPct),[ingPrices,prodCosts,scrap,bomPct]);
+
+  // ─── NEW: Payments forecast — ingredient purchases (timed by lead time) + Heinlein tolling (30d after production) ───
+  const payments = useMemo(()=>{
+    const ing: Record<string,number> = {};      // payMonthKey -> $
+    const toll: Record<string,number> = {};      // payMonthKey -> $
+    const meta: Record<string,string> = {};      // monthKey -> label
+    const bump = (bucket:Record<string,number>, d:Date, amt:number) => {
+      const k = monthKeyOf(d);
+      bucket[k] = (bucket[k]??0) + amt;
+      meta[k] = fmtMonthShort(new Date(d.getFullYear(), d.getMonth(), 1));
+    };
+    // Ingredient purchases: net current inventory greedily against earliest needs
+    for (const ingName of ALL_INGS) {
+      let remInv = parseInt(ingInv[ingName])||0;
+      const price = ingPrices[ingName] ?? 0;
+      const ps = ING_PACK_SIZES[ingName] ?? 1;
+      const lead = leadTimes[ingName] ?? DEFAULT_LEAD_WEEKS;
+      for (let i=0;i<FORECAST_MONTHS_OPS.length;i++) {
+        const need = ingByMonth[ingName]?.[i] ?? 0;
+        if (need<=0) continue;
+        const fromInv = Math.min(remInv, need); remInv -= fromInv;
+        const buy = need - fromInv;
+        if (buy<=0) continue;
+        const finalAmt = Math.ceil(buy/ps)*ps;
+        const cost = finalAmt*price;
+        bump(ing, shiftWeeks(opsMonthDate(i), lead), cost);   // pay when ordered
+      }
+    }
+    // Heinlein tolling: cases produced month i -> units×tolling, paid 30 days later (next month)
+    for (let i=0;i<FORECAST_MONTHS_OPS.length;i++){
+      const cases = SKUS.reduce((s,sku)=>s+(plan[sku]?.[i]??0),0);
+      if (cases<=0) continue;
+      const amt = cases * UNITS_PER_CASE_BOM * (prodCosts.tolling_per_unit ?? 0);
+      const prod = opsMonthDate(i);
+      bump(toll, new Date(prod.getFullYear(), prod.getMonth()+1, 1), amt);  // +1 month
+    }
+    const keys = [...new Set([...Object.keys(ing),...Object.keys(toll)])].sort();
+    return { ing, toll, meta, keys };
+  },[ingByMonth, plan, ingInv, ingPrices, leadTimes, prodCosts]);
 
   const totalByMonth = FORECAST_MONTHS_OPS.map((_,i)=>SKUS.reduce((s,sku)=>s+(plan[sku]?.[i]??0),0));
   const nextRunIdx = totalByMonth.findIndex(t=>t>0);
@@ -2558,11 +2618,12 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
     {id:"schedule",label:"📅 Schedule"},{id:"stock_proj",label:"📊 Stock Projection"},
     {id:"bom_cogs",label:"🧪 BOM + COGS"},{id:"shopping",label:"🛒 Shopping List"},
     {id:"raw_materials",label:"📦 Raw Materials"},
+    {id:"payments",label:"💵 Payments"},
   ];
 
   return (
     <div className="space-y-4">
-      <CommittedRequirements planScenario={planScenario} onPlanScenarioChange={setPlanScenario} />
+      <CommittedRequirements planScenario={planScenario} onPlanScenarioChange={setPlanScenario} forecast={fcstOps} months={FORECAST_MONTHS_OPS} />
       {/* Controls */}
       <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
         <div className="flex flex-wrap items-center gap-6">
@@ -2803,14 +2864,15 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
                     {(stockProj[sku]??[]).map((stock,i)=>{
                       const fcst=fcstOps[sku]?.[i]??0;
                       const woh=fcst>0?(stock/fcst)*4:99;
-                      const isCrit=stock<0||woh<2;
-                      const isLow=!isCrit&&woh<safetyWoh;
+                      const isCrit=stock<0||woh<4;
+                      const isLow=!isCrit&&woh<=8;
+                      const isOver=!isCrit&&!isLow&&woh<99&&woh>17.5;
                       const isProd=(plan[sku]?.[i]??0)>0;
                       const isManual=(manualProd[sku]?.[i]??0)>0;
                       return (
                         <td key={i} className="px-3 py-1.5 text-center font-mono text-xs"
-                          style={{backgroundColor:isCrit?"#FEE2E2":isLow?"#FEF3C7":isManual?"#DBEAFE":isProd?"#DCFCE7":undefined,
-                            color:isCrit?"#DC2626":isLow?"#92400E":"#1C2340",fontWeight:isProd||isManual?"bold":undefined}}>
+                          style={{backgroundColor:isCrit?"#FEE2E2":isLow?"#FEF3C7":isOver?"#EDE9FE":isManual?"#DBEAFE":isProd?"#DCFCE7":undefined,
+                            color:isCrit?"#DC2626":isLow?"#92400E":isOver?"#6D28D9":"#1C2340",fontWeight:isProd||isManual?"bold":undefined}}>
                           {stock.toLocaleString()}
                           {woh<99&&<div className="text-[9px] opacity-60">{woh.toFixed(1)}w</div>}
                         </td>
@@ -2822,7 +2884,7 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
             </table>
           </div>
           <div className="flex gap-3 text-xs flex-wrap">
-            {[["bg-red-100","🔴 Critical (< 2w or negative)"],["bg-yellow-100",`🟡 Low (< ${safetyWoh}w safety)`],["bg-green-100","🟢 Auto production month"],["bg-blue-100","🔵 Manual override month"]].map(([cls,label])=>(
+            {[["bg-red-100","🔴 Critical (< 4w or negative)"],["bg-yellow-100","🟡 Low (4–8w)"],["bg-violet-100","🟣 Overstocked (> 17.5w)"],["bg-green-100","🟢 Auto production month"],["bg-blue-100","🔵 Manual override month"]].map(([cls,label])=>(
               <div key={label} className={`flex items-center gap-1.5 rounded px-3 py-1 ${cls}`}><span>{label}</span></div>
             ))}
           </div>
@@ -2848,9 +2910,12 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
           </div>
 
           <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
-            <div className="px-5 py-3 border-b border-border bg-muted/30">
-              <p className="text-sm font-bold" style={{color:"#1C2340"}}>Formula (BOM) — % Receta · Source: Super BOM Consolidado</p>
-              <p className="text-xs text-muted-foreground">Editable $/lb prices</p>
+            <div className="px-5 py-3 border-b border-border bg-muted/30 flex items-center justify-between">
+              <div>
+                <p className="text-sm font-bold" style={{color:"#1C2340"}}>Formula (BOM) — % Receta · Source: Super BOM Consolidado</p>
+                <p className="text-xs text-muted-foreground">Editable % per SKU and $/lb prices · recalculates COGS, schedule &amp; shopping live</p>
+              </div>
+              <button onClick={resetBomPct} className="rounded border border-border px-3 py-1 text-[10px] text-muted-foreground hover:bg-muted">Reset BOM</button>
             </div>
             <table className="text-xs min-w-max w-full">
               <thead>
@@ -2861,13 +2926,15 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
                 </tr>
               </thead>
               <tbody>
-                {ALL_INGS.filter(ing=>SKUS.some(sku=>(BOM_PCT[sku]?.[ing]??0)>0)).map(ing=>(
+                {ALL_INGS.filter(ing=>SKUS.some(sku=>(bomPct[sku]?.[ing]??0)>0)).map(ing=>(
                   <tr key={ing} className="border-t border-border/60 hover:bg-muted/20">
                     <td className="px-4 py-1.5 font-medium">{ing}</td>
                     {SKUS.map(sku=>{
-                      const pct=BOM_PCT[sku]?.[ing]??0;
-                      return <td key={sku} className={`px-3 py-1.5 text-center font-mono ${pct>0?"font-semibold":"text-muted-foreground"}`}>
-                        {pct>0?`${pct.toFixed(1)}%`:"—"}
+                      const pct=bomPct[sku]?.[ing]??0;
+                      return <td key={sku} className="px-2 py-1 text-center">
+                        <input type="number" step="0.1" min={0} value={pct||""} placeholder="—"
+                          onChange={e=>updateBomPct(sku, ing, parseFloat(e.target.value)||0)}
+                          className={`${inp} w-16 text-center ${pct>0?"font-semibold":"text-muted-foreground"}`}/>
                       </td>;
                     })}
                     <td className="px-4 py-1.5 text-right">
@@ -2878,6 +2945,17 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
                   </tr>
                 ))}
               </tbody>
+              <tfoot>
+                <tr className="border-t border-border bg-muted/10">
+                  <td className="px-4 py-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">Σ %</td>
+                  {SKUS.map(sku=>{
+                    const sum=ALL_INGS.reduce((s,ing)=>s+(bomPct[sku]?.[ing]??0),0);
+                    const ok=Math.abs(sum-100)<0.5;
+                    return <td key={sku} className={`px-2 py-1.5 text-center font-mono text-[10px] ${ok?"text-emerald-600":"text-orange-500 font-bold"}`}>{sum.toFixed(1)}%</td>;
+                  })}
+                  <td/>
+                </tr>
+              </tfoot>
             </table>
           </div>
 
@@ -2981,6 +3059,9 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
                   <th className="px-4 py-2.5 text-right">To Acquire</th>
                   <th className="px-4 py-2.5 text-right">Pack size</th>
                   <th className="px-4 py-2.5 text-right">Final amount</th>
+                  <th className="px-4 py-2.5 text-center">Lead</th>
+                  <th className="px-4 py-2.5 text-center">Need by</th>
+                  <th className="px-4 py-2.5 text-center">Order by</th>
                   <th className="px-4 py-2.5 text-right">$/lb</th>
                   <th className="px-4 py-2.5 text-right font-bold">Total cost</th>
                 </tr>
@@ -2994,6 +3075,13 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
                   const finalAmt=toAcq>0?Math.ceil(toAcq/ps)*ps:0;
                   const price=ingPrices[ing]??0;
                   const cost=finalAmt*price;
+                  const lead=leadTimes[ing]??DEFAULT_LEAD_WEEKS;
+                  // earliest production month in the window that needs this material
+                  let needIdx=shopRange?shopRange[0]:0;
+                  if(shopRange){ for(let i=shopRange[0];i<=shopRange[1];i++){ if((ingByMonth[ing]?.[i]??0)>0){ needIdx=i; break; } } }
+                  const needBy=opsMonthDate(needIdx);
+                  const orderBy=shiftWeeks(needBy,lead);
+                  const orderLate = orderBy < new Date();
                   return (
                     <tr key={ing} className="border-t border-border/60 hover:bg-muted/20">
                       <td className="px-4 py-2 font-medium">{ing}</td>
@@ -3002,6 +3090,11 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
                       <td className={`px-4 py-2 text-right font-mono ${toAcq>0?"font-semibold text-orange-600":""}`}>{toAcq>0?toAcq.toLocaleString():"✓"}</td>
                       <td className="px-4 py-2 text-right font-mono text-muted-foreground">{ps.toLocaleString()}</td>
                       <td className="px-4 py-2 text-right font-mono font-bold" style={{color:"#1C2340"}}>{finalAmt>0?finalAmt.toLocaleString():"—"}</td>
+                      <td className="px-4 py-2 text-center font-mono text-muted-foreground">{lead}w</td>
+                      <td className="px-4 py-2 text-center font-mono">{fmtMonthShort(needBy)}</td>
+                      <td className={`px-4 py-2 text-center font-mono font-semibold ${orderLate?"text-red-600":"text-blue-700"}`} title={orderLate?"Order date is in the past — order ASAP":""}>
+                        {fmtMonthShort(orderBy)}{orderLate?" ⚠":""}
+                      </td>
                       <td className="px-4 py-2 text-right font-mono text-muted-foreground">${price.toFixed(2)}</td>
                       <td className="px-4 py-2 text-right font-mono font-bold" style={{color:cost>0?"#A3224A":"#10B981"}}>{cost>0?`$${cost.toLocaleString()}`:"$0"}</td>
                     </tr>
@@ -3010,7 +3103,7 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
               </tbody>
               <tfoot>
                 <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
-                  <td className="px-4 py-2 font-semibold text-xs" colSpan={7}>TOTAL INGREDIENTS</td>
+                  <td className="px-4 py-2 font-semibold text-xs" colSpan={10}>TOTAL INGREDIENTS</td>
                   <td className="px-4 py-2 text-right font-mono font-bold text-emerald-400">
                     ${ALL_INGS.filter(ing=>(ingWindow[ing]??0)>0).reduce((s,ing)=>{
                       const needed=Math.round(ingWindow[ing]??0);
@@ -3039,6 +3132,7 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
                 <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
                   <th className="px-4 py-2.5 text-left">Material</th>
                   <th className="px-4 py-2.5 text-right">Pack size (lbs)</th>
+                  <th className="px-4 py-2.5 text-center">Lead time (weeks)</th>
                   <th className="px-4 py-2.5 text-right">Precio/lb</th>
                   <th className="px-4 py-2.5 text-right">Stock actual (lbs)</th>
                   <th className="px-4 py-2.5 text-right">Valor ($)</th>
@@ -3053,6 +3147,11 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
                     <tr key={ing} className="border-t border-border/60 hover:bg-muted/20">
                       <td className="px-4 py-2 font-medium">{ing}</td>
                       <td className="px-4 py-2 text-right font-mono text-muted-foreground">{(ING_PACK_SIZES[ing]??0).toLocaleString()}</td>
+                      <td className="px-4 py-2 text-center">
+                        <input type="number" min={0} step={1} value={leadTimes[ing]??DEFAULT_LEAD_WEEKS}
+                          onChange={e=>setLeadTimes(l=>({...l,[ing]:parseInt(e.target.value)||0}))}
+                          className={`${inp} w-16 text-center`} title="Weeks from ordering to receiving"/>
+                      </td>
                       <td className="px-4 py-2 text-right">
                         <input type="number" step="0.01" value={ingPrices[ing]??0}
                           onChange={e=>setIngPrices(p=>({...p,[ing]:parseFloat(e.target.value)||0}))}
@@ -3073,7 +3172,7 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
               </tbody>
               <tfoot>
                 <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
-                  <td className="px-4 py-2 font-semibold text-xs" colSpan={3}>TOTAL INVENTORY</td>
+                  <td className="px-4 py-2 font-semibold text-xs" colSpan={4}>TOTAL INVENTORY</td>
                   <td className="px-4 py-2 text-right font-mono">{ALL_INGS.reduce((s,ing)=>s+(parseInt(ingInv[ing])||0),0).toLocaleString()} lbs</td>
                   <td className="px-4 py-2 text-right font-mono font-bold text-emerald-400">${ALL_INGS.reduce((s,ing)=>{const inv=parseInt(ingInv[ing])||0;return s+inv*(ingPrices[ing]??0);},0).toLocaleString()}</td>
                   <td/>
@@ -3081,6 +3180,55 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
               </tfoot>
             </table>
           </div>
+        </div>
+      )}
+
+      {/* ── PAYMENTS ── */}
+      {procTab==="payments" && (
+        <div className="space-y-3">
+          <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-700">
+            💵 Cash-out forecast: ingredient purchases are timed by each material's <strong>lead time</strong> (you pay when you order — production month minus lead time), and Heinlein <strong>tolling</strong> is booked <strong>30 days after production</strong> ({UNITS_PER_CASE_BOM} units/case × ${(prodCosts.tolling_per_unit??0).toFixed(2)}/unit). Ingredient inventory on hand is netted against the earliest runs.
+          </div>
+          <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
+                  <th className="px-4 py-2.5 text-left">Payment month</th>
+                  <th className="px-4 py-2.5 text-right">Ingredient purchases</th>
+                  <th className="px-4 py-2.5 text-right">Heinlein tolling</th>
+                  <th className="px-4 py-2.5 text-right font-bold">Total cash out</th>
+                </tr>
+              </thead>
+              <tbody>
+                {payments.keys.length===0 && (
+                  <tr><td colSpan={4} className="px-4 py-6 text-center text-muted-foreground">No planned purchases or production yet.</td></tr>
+                )}
+                {payments.keys.map(k=>{
+                  const ingAmt=payments.ing[k]??0;
+                  const tollAmt=payments.toll[k]??0;
+                  const total=ingAmt+tollAmt;
+                  const past = k < monthKeyOf(new Date());
+                  return (
+                    <tr key={k} className="border-t border-border/60 hover:bg-muted/20">
+                      <td className={`px-4 py-2 font-semibold ${past?"text-red-600":""}`}>{payments.meta[k]??k}{past?" ⚠":""}</td>
+                      <td className="px-4 py-2 text-right font-mono">{ingAmt>0?`$${Math.round(ingAmt).toLocaleString()}`:"—"}</td>
+                      <td className="px-4 py-2 text-right font-mono">{tollAmt>0?`$${Math.round(tollAmt).toLocaleString()}`:"—"}</td>
+                      <td className="px-4 py-2 text-right font-mono font-bold" style={{color:"#A3224A"}}>${Math.round(total).toLocaleString()}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
+                  <td className="px-4 py-2 font-semibold text-xs">TOTAL (horizon)</td>
+                  <td className="px-4 py-2 text-right font-mono">${Math.round(Object.values(payments.ing).reduce((a,b)=>a+b,0)).toLocaleString()}</td>
+                  <td className="px-4 py-2 text-right font-mono">${Math.round(Object.values(payments.toll).reduce((a,b)=>a+b,0)).toLocaleString()}</td>
+                  <td className="px-4 py-2 text-right font-mono font-bold text-emerald-400">${Math.round(Object.values(payments.ing).reduce((a,b)=>a+b,0)+Object.values(payments.toll).reduce((a,b)=>a+b,0)).toLocaleString()}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+          <p className="text-[11px] text-muted-foreground">⚠ = payment date already in the past (order/produce ASAP). This is a planning forecast from the schedule &amp; shopping list, not booked I&amp;P payments.</p>
         </div>
       )}
     </div>
@@ -3146,7 +3294,7 @@ function OperationsPage() {
     <div>
       <PageHeader
         title="Operations"
-        subtitle="Inventory, production, and procurement planning"
+        description="Inventory, production, and procurement planning"
       />
 
       <div className="flex gap-1 overflow-x-auto border-b border-border mb-6 pb-0">
@@ -3168,8 +3316,8 @@ function OperationsPage() {
       </div>
 
       {tab === "stock"       && <FPStockTab movements={fpMovements} orders={orders} loading={loadingFP} baseline={baseline} lotMap={lotMap} />}
-      {tab === "summary"     && <FPSummaryTab />}
-      {tab === "lots"        && <LotMasterTab />}
+      {tab === "summary"     && <FPSummaryTab movements={fpMovements} orders={orders} loading={loadingFP} />}
+      {tab === "lots"        && <LotMasterTab movements={fpMovements} loading={loadingFP} />}
       {tab === "fp"          && <FPInputTab movements={fpMovements} loading={loadingFP} onAdded={reload} lotMap={lotMap} />}
       {tab === "ipsummary"   && <IPSummaryTab movements={ipMovements} />}
       {tab === "ip"          && <IPInputTab movements={ipMovements} loading={loadingIP} onAdded={reload} />}
