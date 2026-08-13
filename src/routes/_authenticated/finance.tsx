@@ -1912,7 +1912,7 @@ function FinancePage() {
     return MONTHS[idx] + ' ' + last.split('-')[0];
   }, [actuals]);
 
-  // ── PDF upload → Claude API ──
+  // ── PDF upload → Claude API (extracts P&L detail + Balance Sheet detail) ──
   async function handlePdfUpload(file: File) {
     setUploading(true);
     setUploadError(null);
@@ -1929,40 +1929,134 @@ function FinancePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "claude-sonnet-4-6",
-          max_tokens: 2000,
+          max_tokens: 8000,
           messages: [{
             role: "user",
             content: [
               { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } },
-              { type: "text", text: `Extract monthly P&L data from this Accountfully management report. Return ONLY a JSON array (no markdown, no explanation) where each item is one month:
+              { type: "text", text: `Extract ALL monthly financial data from this Accountfully management report.
+Return ONLY a JSON array (no markdown, no backticks, no explanation) where each item is one month with this EXACT structure:
+
 [
   {
-    "period": "2026-01",
-    "period_label": "Jan 2026",
-    "gross_sales": <Sales of Product Income in $K>,
-    "trade_spend": <negative: DSD Programs + Promos + Consumer Returns in $K>,
-    "distr_fees": <negative: Distributor Fees + KeHE + UNFI Allowance + Payment Terms in $K>,
-    "net_sales": <Total Income after all deductions in $K>,
-    "cogs": <Product Costs in $K>,
-    "storage": <Warehouse/Fulfillment + Freight In combined in $K>,
-    "freight_out": <Freight Out in $K>,
-    "gross_margin": <Gross Profit in $K>,
-    "gm_pct": <gross_margin / net_sales as decimal e.g. 0.256>,
-    "selling_exp": <negative: 6500 Selling Expenses in $K>,
-    "mkt_trade": <negative: 7000 Marketing & Trade in $K>,
-    "team": <negative: Payroll & Employee Related Costs in $K>,
-    "gen_exp": <negative: G&A minus payroll in $K>,
-    "ebitda": <Net Operating Income in $K>,
-    "business_contribution": <gross_margin + selling_exp + mkt_trade in $K>,
-    "cash": <Bank Accounts total in $K if Balance Sheet available, else null>,
-    "ar": <Accounts Receivable in $K if available, else null>,
-    "inventory": <Total Inventory in $K if available, else null>,
-    "total_assets": <Total Assets in $K if available, else null>,
-    "total_liab": <Total Liabilities in $K if available, else null>,
-    "total_equity": <Total Equity in $K if available, else null>
+    "period": "2026-03",
+    "period_label": "Mar 2026",
+    "units_sold": null,
+    "gross_sales": 196.70,
+    "trade_spend": -5.63,
+    "distr_fees": -7.22,
+    "net_sales": 183.85,
+    "cogs": -114.74,
+    "storage": -23.37,
+    "freight_out": 0,
+    "gross_margin": 45.73,
+    "gm_pct": 0.249,
+    "selling_exp": -156.37,
+    "mkt_trade": -18.36,
+    "team": -18.54,
+    "gen_exp": -20.28,
+    "ebitda": -167.81,
+    "business_contribution": -128.99,
+    "cash": 780.63,
+    "ar": 233.98,
+    "inventory": 431.27,
+    "total_assets": 1478.11,
+    "total_liab": 30.38,
+    "total_equity": 1447.73,
+    "pnl_detail": {
+      "sales_product": 196696.50,
+      "shipping_income": 0,
+      "consumer_returns": 0,
+      "distributor_fees": -1845.40,
+      "dsd_programs": 0,
+      "kehe_allowance": -1681.68,
+      "payment_terms": -2597.39,
+      "promos": -5625.86,
+      "unfi_allowance": -1094.94,
+      "returns_refunds": 0,
+      "product_costs": -114742.00,
+      "freight_in": -2825.00,
+      "freight_out_actual": 0,
+      "merchant_fees": 0,
+      "warehouse_fulfillment": -20549.52,
+      "broker_commissions": -10340.00,
+      "slotting_fees": -146027.37,
+      "demos_merchandising": -3500.00,
+      "digital_social": -4912.30,
+      "events_tradeshows": -6578.45,
+      "printing_promotional": 0,
+      "product_samples": -3368.42,
+      "bank_charges": -567.90,
+      "dues_subscriptions": -1011.03,
+      "rent": 0,
+      "utilities": -398.82,
+      "insurance": -973.69,
+      "meals_entertainment": -1892.39,
+      "office_supplies": -23.68,
+      "contractors": -2254.00,
+      "payroll_processing": -61.00,
+      "payroll_taxes": -1152.85,
+      "salaries_operations": -15070.00,
+      "accounting_finance": -5150.00,
+      "business_consultation": 0,
+      "legal_fees": 0,
+      "quality_rd": 0,
+      "taxes_licenses": -670.49,
+      "car_rental_uber": -1523.33,
+      "flights": -200.00,
+      "hotel": -554.57,
+      "uncategorized": -7295.00,
+      "vehicle_expenses": -19.17,
+      "other_income": 38.34
+    },
+    "bs_detail": {
+      "bofa_x6854": 329215.39,
+      "citi_bank": 451416.69,
+      "mercury_checking": 0,
+      "mercury_treasury": 0,
+      "accounts_receivable": 233976.15,
+      "finished_goods": 130541.63,
+      "raw_materials_packaging": 300726.83,
+      "loans_to_shareholders": 12961.14,
+      "equipment": 11193.81,
+      "accumulated_depreciation": -4928.88,
+      "due_from_shareholders": 996.75,
+      "boa_3724": 393.08,
+      "boa_7830": 100.97,
+      "boa_8781": 471.55,
+      "citi_credit": 19075.61,
+      "mercury_credit": 0,
+      "accrued_liabilities": 10340.00,
+      "capital_1st_round": 225000.00,
+      "capital_2nd_round": 399865.00,
+      "capital_3rd_round": 685970.00,
+      "capital_4th_round": 1910760.00,
+      "common_stock": 1096.75,
+      "opening_balance_equity": -1866.32,
+      "retained_earnings": -1548940.01,
+      "net_income_equity": -224158.01
+    }
   }
 ]
-All monetary values in $K (divide by 1000). Use null for unavailable fields.` }
+
+RULES:
+- The top-level summary fields (gross_sales, net_sales, etc.) are in $K (divide raw dollars by 1000).
+- pnl_detail values are in RAW DOLLARS (not $K). Expenses and costs are NEGATIVE.
+- bs_detail values are in RAW DOLLARS (not $K). Liabilities are positive. Accumulated depreciation is negative.
+- gm_pct = gross_margin / net_sales as a decimal.
+- trade_spend = negative sum of DSD Programs + Promos + Consumer Returns.
+- distr_fees = negative sum of Distributor Fees + KeHE Allowance + UNFI Allowance + Payment Terms.
+- storage = Warehouse/Fulfillment + Freight In combined in $K.
+- freight_out = Freight Out in $K.
+- team = negative Payroll & Employee Related Costs total in $K.
+- gen_exp = negative G&A total minus payroll in $K.
+- ebitda = Net Operating Income in $K.
+- business_contribution = gross_margin + selling_exp + mkt_trade in $K.
+- For the Balance Sheet: extract the LATEST snapshot only (end of the report period). If the report covers Jan-Mar, the BS is as of Mar 31 — assign bs_detail to the LAST month only. Earlier months get bs_detail: null.
+- If a line item is missing or zero, use 0 (not null) for pnl_detail/bs_detail.
+- For "BoA 3724", sum all sub-accounts (BoA 3724 Corp + BoA 3724 (4641), etc.) into one value.
+- Use null for unavailable top-level summary fields.
+- units_sold: set to null (we calculate it separately).` }
             ]
           }]
         })
@@ -1987,6 +2081,13 @@ All monetary values in $K (divide by 1000). Use null for unavailable fields.` }
         { ...row, source: 'Accountfully', uploaded_at: new Date().toISOString() },
         { onConflict: 'period' }
       );
+    }
+    // Reload actuals and recalculate forecast assumptions from the fresh data
+    const { data } = await supabase.from("finance_actuals").select("*").order("period");
+    if (data) {
+      const freshMap: Record<string, any> = {};
+      data.forEach((r: any) => { freshMap[r.period] = r; });
+      await recalcAssumptionsFromActuals(freshMap);
     }
     setUploading(false);
     setUploadOpen(false);
@@ -2034,7 +2135,7 @@ All monetary values in $K (divide by 1000). Use null for unavailable fields.` }
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="font-bold text-sm" style={{color:"#1C2340"}}>Upload Accountfully Management Report</h2>
-                <p className="text-xs text-muted-foreground mt-0.5">AI will extract P&L data and update actuals in the Finance module</p>
+                <p className="text-xs text-muted-foreground mt-0.5">AI will extract P&L + Balance Sheet data and update actuals in the Finance module</p>
               </div>
               <button onClick={() => { setUploadOpen(false); setUploadPreview(null); setUploadError(null); }}
                 className="text-muted-foreground hover:text-foreground text-lg">✕</button>
@@ -2050,7 +2151,7 @@ All monetary values in $K (divide by 1000). Use null for unavailable fields.` }
             )}
             {uploading && (
               <div className="rounded-xl bg-muted/40 p-6 text-center text-sm text-muted-foreground">
-                <span className="animate-pulse">🤖 AI is reading the PDF and extracting financial data…</span>
+                <span className="animate-pulse">🤖 AI is reading the PDF and extracting P&L + Balance Sheet data…</span>
               </div>
             )}
             {uploadError && (
@@ -2059,13 +2160,16 @@ All monetary values in $K (divide by 1000). Use null for unavailable fields.` }
             {uploadPreview && (
               <>
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-700 font-semibold">
-                  ✓ Extracted {uploadPreview.length} month{uploadPreview.length !== 1 ? 's' : ''} of data — review before saving
+                  ✓ Extracted {uploadPreview.length} month{uploadPreview.length !== 1 ? 's' : ''} of data
+                  {uploadPreview.some((r: any) => r.pnl_detail) && ' · P&L ✓'}
+                  {uploadPreview.some((r: any) => r.bs_detail) && ' · Balance Sheet ✓'}
+                   — review before saving
                 </div>
                 <div className="overflow-x-auto rounded-xl border border-border">
                   <table className="w-full text-xs min-w-max">
                     <thead className="bg-muted/30 border-b border-border">
                       <tr>
-                        {['Period','Gross Sales','Net Sales','COGS','Storage','Selling','EBITDA'].map(h => (
+                        {['Period','Gross Sales','Net Sales','COGS','GP','Selling','EBITDA','Cash','BS'].map(h => (
                           <th key={h} className="px-3 py-2 text-left font-semibold text-muted-foreground uppercase tracking-wide text-[10px]">{h}</th>
                         ))}
                       </tr>
@@ -2077,10 +2181,14 @@ All monetary values in $K (divide by 1000). Use null for unavailable fields.` }
                           <td className="px-3 py-1.5 font-mono">{row.gross_sales != null ? `$${Number(row.gross_sales).toFixed(0)}K` : '—'}</td>
                           <td className="px-3 py-1.5 font-mono">{row.net_sales != null ? `$${Number(row.net_sales).toFixed(0)}K` : '—'}</td>
                           <td className="px-3 py-1.5 font-mono">{row.cogs != null ? `$${Number(row.cogs).toFixed(0)}K` : '—'}</td>
-                          <td className="px-3 py-1.5 font-mono">{row.storage != null ? `$${Number(row.storage).toFixed(0)}K` : '—'}</td>
+                          <td className="px-3 py-1.5 font-mono">{row.gross_margin != null ? `$${Number(row.gross_margin).toFixed(0)}K` : '—'}</td>
                           <td className="px-3 py-1.5 font-mono">{row.selling_exp != null ? `$${Number(row.selling_exp).toFixed(0)}K` : '—'}</td>
                           <td className="px-3 py-1.5 font-mono font-semibold" style={{color: row.ebitda < 0 ? '#DC2626' : '#16A34A'}}>
                             {row.ebitda != null ? `$${Number(row.ebitda).toFixed(0)}K` : '—'}
+                          </td>
+                          <td className="px-3 py-1.5 font-mono">{row.cash != null ? `$${Number(row.cash).toFixed(0)}K` : '—'}</td>
+                          <td className="px-3 py-1.5">
+                            {row.bs_detail ? <span className="text-emerald-600 font-semibold">✓</span> : <span className="text-muted-foreground">—</span>}
                           </td>
                         </tr>
                       ))}
