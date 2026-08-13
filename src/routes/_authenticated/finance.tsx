@@ -1290,51 +1290,74 @@ function BalanceTab({ realMonths, actuals }: { realMonths: number; actuals: Reco
   for (const f of effectiveForecast) if (f.year === 2026) fcGrossByMonth[f.month-1] = f.revenue/1000;
   if (julyGrossSales != null) fcGrossByMonth[6] = julyGrossSales/1000;
 
-  // ── AR: Net Sales owed, split by distributor payment terms ──
-  // KeHE + UNFI pay Net Sales (Gross Sales − Deductions) at 30 days; Rainforest at 60 days.
-  // AR balance at month-end ≈ (this month's Net Sales collectible from KeHE/UNFI, still within
-  // their 30-day window) + (last ~2 months' Net Sales from Rainforest, within its 60-day window).
-  // Mix % and deduction % come from Finance Assumptions (editable, auto-recalculated from real data).
-  function forecastAR(idx: number): number {
-    const mixKeheUnfi = (assumptions.get('sales_mix_kehe', 50.5) + assumptions.get('sales_mix_unfi', 27.1)) / 100;
-    const mixRainforest = assumptions.get('sales_mix_rainforest', 22.3) / 100;
-    const deductionPct = assumptions.get('deduction_pct_overall', 19.78) / 100;
-    const netOf = (gsK: number) => gsK * (1 - deductionPct);
+  // ═══════════════════════════════════════════════════════════════════════════
+  // FORECAST MODEL (Jul-Dec) — accountant's roll-forward from the last real close.
+  // Everything keys off the sales forecast + editable assumptions, and the balance
+  // is forced to tie (Assets = Liabilities + Equity) with Cash as the balancing figure.
+  // ═══════════════════════════════════════════════════════════════════════════
+  const netOf = (gsK: number) => gsK * (1 - assumptions.get('deduction_pct_overall', 19.78) / 100);
+  const mixKU = (assumptions.get('sales_mix_kehe', 50.5) + assumptions.get('sales_mix_unfi', 27.1)) / 100;
+  const mixRF = assumptions.get('sales_mix_rainforest', 22.3) / 100;
 
-    // KeHE/UNFI (30-day terms): outstanding balance ≈ this month's net sales from that channel
-    const thisMonthNet = netOf(fcGrossByMonth[idx] ?? 0) * mixKeheUnfi;
-    // Rainforest (60-day terms): outstanding balance ≈ this + prior month's net sales from that channel
-    const prevMonthNet = netOf(fcGrossByMonth[idx-1] ?? fcGrossByMonth[idx] ?? 0) * mixRainforest;
-    const thisMonthRainforest = netOf(fcGrossByMonth[idx] ?? 0) * mixRainforest;
-    return thisMonthNet + prevMonthNet + thisMonthRainforest;
+  // Real Net Sales ($K) for a closed month (for the AR bridge across the real→forecast boundary)
+  function realNetSalesK(i: number): number {
+    const d = actuals[PERIODS[i]]?.pnl_detail;
+    if (!d) return fcGrossByMonth[i] != null ? netOf(fcGrossByMonth[i]) : 0;
+    const gross = (Number(d.sales_product ?? 0) + Number(d.shipping_income ?? 0)) / 1000;
+    return netOf(gross);
+  }
+  function monthNetSalesK(i: number): number {
+    // prefer real; else forecast
+    return actuals[PERIODS[i]]?.pnl_detail ? realNetSalesK(i) : netOf(fcGrossByMonth[i] ?? 0);
   }
 
-  // ── Inventory: anchor to the last real inventory level, then scale proportionally with sales
-  // volume (so it doesn't collapse from ~$589K real to a tiny days-of-COGS proxy overnight).
-  // This is a placeholder until Procurement Planning (BOM + lead times) drives it precisely.
+  // ── AR: money still uncollected at month-end, by distributor payment terms.
+  // KeHE + UNFI (≈78% of sales) pay in 30 days  → roughly this month's net sales still outstanding.
+  // Rainforest (≈22%) pays in 60 days           → this month + prior month still outstanding.
+  function forecastAR(idx: number): number {
+    const cur = netOf(fcGrossByMonth[idx] ?? 0);
+    const prev = monthNetSalesK(idx - 1);
+    return cur * mixKU + (cur + prev) * mixRF;
+  }
+
+  // ── Inventory: no production Jul→Nov (they sell down existing stock), then a large
+  // build in December (30,000 cases produced). Starts from the last real inventory level.
   const lastRealInvK = latestRealIdx >= 0
     ? (Number(bsByPeriod[PERIODS[latestRealIdx]]?.finished_goods ?? 0) + Number(bsByPeriod[PERIODS[latestRealIdx]]?.raw_materials_packaging ?? 0)) / 1000
     : 0;
-  const lastRealGrossK = latestRealIdx >= 0
-    ? (Number(actuals[PERIODS[latestRealIdx]]?.pnl_detail?.sales_product ?? 0) + Number(actuals[PERIODS[latestRealIdx]]?.pnl_detail?.shipping_income ?? 0)) / 1000
-    : 0;
+  const cogsPerUnitK = assumptions.get('cogs_per_unit', 22.27) / 1000; // $K per case
+  const DEC_PRODUCTION_CASES = 30000;
   function forecastInventory(idx: number): number {
-    if (lastRealInvK <= 0) {
-      const gs = fcGrossByMonth[idx] ?? 0;
-      const cogsPerUnit = assumptions.get('cogs_per_unit', 22.27);
-      return ((gs*1000/37) * cogsPerUnit * 45/30) / 1000;
+    if (lastRealInvK <= 0) return 0;
+    // Draw down by each month's COGS (units sold × cost/case) from Jul onward; no replenishment until Dec.
+    let inv = lastRealInvK;
+    for (let i = latestRealIdx + 1; i <= idx; i++) {
+      const unitsSold = (fcGrossByMonth[i] ?? 0) * 1000 / 37;
+      const cogsOut = unitsSold * cogsPerUnitK;         // inventory consumed by sales
+      const production = i === 11 ? DEC_PRODUCTION_CASES * cogsPerUnitK : 0; // Dec build
+      inv = Math.max(40, inv - cogsOut + production);   // floor so it never goes negative/absurd
     }
-    // Scale last real inventory by the ratio of this month's forecast sales to the last real month's sales,
-    // damped (sqrt) so inventory moves with demand but not 1:1 spike-to-spike.
-    const gs = fcGrossByMonth[idx] ?? lastRealGrossK;
-    const ratio = lastRealGrossK > 0 ? gs / lastRealGrossK : 1;
-    const damped = Math.sqrt(Math.max(0.25, Math.min(2.5, ratio)));
-    return lastRealInvK * damped;
+    return inv;
   }
 
-  // ── Cash: roll forward from the last real close using the P&L's own Net Income ──
-  // Cash(idx) = Cash(last real month) + Σ Net Income (forecast months, last real+1..idx)
-  //           − Δ AR − Δ Inventory (a receivables/inventory build-up ties up cash, a drawdown frees it)
+  // ── Credit Cards: average of the real monthly balances (they always carry a revolving balance).
+  const avgCreditCardsK = useMemo(() => {
+    const reals = PERIODS.map((p,i)=>bsByPeriod[p]).filter(Boolean)
+      .map(bs => ['boa_3724','boa_7830','boa_8781','citi_credit','mercury_credit'].reduce((s,k)=>s+Number(bs![k] ?? 0)/1000, 0));
+    return reals.length ? reals.reduce((a,b)=>a+b,0)/reals.length : 0;
+  }, [bsByPeriod]);
+  const accruedK = 10.34; // accrued liabilities, flat per recent months
+
+  // ── Fixed forward-carried balances (don't change without a financing/capex event) ──
+  const fwdLoansShK = latestRealIdx >= 0 ? Number(bsByPeriod[PERIODS[latestRealIdx]]?.loans_to_shareholders ?? 0)/1000 : 0;
+  const fwdDueShK   = latestRealIdx >= 0 ? Number(bsByPeriod[PERIODS[latestRealIdx]]?.due_from_shareholders ?? 0)/1000 : 0;
+  const fwdFixedK   = latestRealIdx >= 0 ? (Number(bsByPeriod[PERIODS[latestRealIdx]]?.equipment ?? 0)+Number(bsByPeriod[PERIODS[latestRealIdx]]?.accumulated_depreciation ?? 0))/1000 : 6.26;
+  const fwdCapitalK = latestRealIdx >= 0 ? ['capital_1st_round','capital_2nd_round','capital_3rd_round','capital_4th_round'].reduce((s,k)=>s+Number(bsByPeriod[PERIODS[latestRealIdx]]?.[k] ?? 0)/1000,0) : 3457.57;
+  const fwdCommonK  = latestRealIdx >= 0 ? Number(bsByPeriod[PERIODS[latestRealIdx]]?.common_stock ?? 0)/1000 : 1.10;
+  const fwdOpenEqK  = latestRealIdx >= 0 ? Number(bsByPeriod[PERIODS[latestRealIdx]]?.opening_balance_equity ?? 0)/1000 : -1.87;
+  const fwdRetEarnK = latestRealIdx >= 0 ? Number(bsByPeriod[PERIODS[latestRealIdx]]?.retained_earnings ?? 0)/1000 : -1548.94;
+  const lastRealNetIncEqK = latestRealIdx >= 0 ? Number(bsByPeriod[PERIODS[latestRealIdx]]?.net_income_equity ?? 0)/1000 : -366.29;
+
   function buildContextForMonth(idx: number): ForecastContext {
     const monthNum = idx + 1;
     const cogsPerUnit = assumptions.get('cogs_per_unit', 22.27);
@@ -1344,26 +1367,32 @@ function BalanceTab({ realMonths, actuals }: { realMonths: number; actuals: Reco
     const unitsSold = grossSalesK > 0 ? Math.round((grossSalesK * 1000) / 37) : 0;
     return { grossSales: grossSalesK, unitsSold, cogsPerUnit, logisticsPct, deductionPct, fixedCostsK: FIXED_COSTS_BEST_ESTIMATE[monthNum] ?? {} };
   }
+  // Cumulative Net Income since the last real close (drives the Equity "Net Income" line forward).
   function forecastCumulativeNI(idx: number): number {
     if (latestRealIdx < 0 || idx <= latestRealIdx) return 0;
     let acc = 0;
     for (let i = latestRealIdx + 1; i <= idx; i++) acc += computeMonthlyNetIncome(buildContextForMonth(i));
     return acc;
   }
+
+  // Equity total for a forecast month (capital flat + retained + cumulative net income).
+  function forecastEquityK(idx: number): number {
+    const netIncEq = lastRealNetIncEqK + forecastCumulativeNI(idx);
+    return fwdCapitalK + fwdCommonK + fwdOpenEqK + fwdRetEarnK + netIncEq;
+  }
+  // Liabilities total for a forecast month (credit cards avg + accrued).
+  function forecastLiabK(): number {
+    return avgCreditCardsK + accruedK;
+  }
+  // Non-cash assets for a forecast month.
+  function forecastNonCashAssetsK(idx: number): number {
+    return forecastAR(idx) + forecastInventory(idx) + fwdLoansShK + fwdFixedK + fwdDueShK;
+  }
+  // ── Cash is the BALANCING figure: Cash = (Liabilities + Equity) − (all non-cash assets).
+  // This guarantees the balance sheet ties every forecast month, and naturally reflects that
+  // drawing down inventory (Jul-Nov) releases cash, while the Dec production build consumes it.
   function forecastCash(idx: number): number {
-    if (latestRealIdx < 0) return 0;
-    const baseCash = ['bofa_x6854','citi_bank','mercury_checking','mercury_treasury']
-      .reduce((s,k) => s + Number(bsByPeriod[PERIODS[latestRealIdx]]?.[k] ?? 0)/1000, 0);
-    let cash = baseCash;
-    let prevAR = ['accounts_receivable'].reduce((s,k)=>s+Number(bsByPeriod[PERIODS[latestRealIdx]]?.[k] ?? 0)/1000, 0);
-    let prevInv = ['finished_goods','raw_materials_packaging'].reduce((s,k)=>s+Number(bsByPeriod[PERIODS[latestRealIdx]]?.[k] ?? 0)/1000, 0);
-    for (let i = latestRealIdx + 1; i <= idx; i++) {
-      const ni = computeMonthlyNetIncome(buildContextForMonth(i));
-      const ar = forecastAR(i), inv = forecastInventory(i);
-      cash += ni - (ar - prevAR) - (inv - prevInv);
-      prevAR = ar; prevInv = inv;
-    }
-    return cash;
+    return forecastLiabK() + forecastEquityK(idx) - forecastNonCashAssetsK(idx);
   }
 
   const childMap = useMemo(() => {
@@ -1427,10 +1456,10 @@ function BalanceTab({ realMonths, actuals }: { realMonths: number; actuals: Reco
       if (row.id === "t-bank") return real ? getValue(BS_ROWS.find(r=>r.id==="g-bank")!, idx) : forecastCash(idx);
       if (row.id === "t-ar")   return real ? getValue(BS_ROWS.find(r=>r.id==="g-ar")!, idx)   : forecastAR(idx);
       if (row.id === "t-inv")  return real ? getValue(BS_ROWS.find(r=>r.id==="g-inv")!, idx)  : forecastInventory(idx);
-      if (row.id === "t-fixed") return real ? getValue(BS_ROWS.find(r=>r.id==="g-fixed")!, idx) : 6.26;
-      if (row.id === "t-cc") return real ? getValue(BS_ROWS.find(r=>r.id==="g-cc")!, idx) : 0;
-      if (row.id === "t-other-liab") return 10.34;
-      if (row.id === "t-capital") return 3457.57;
+      if (row.id === "t-fixed") return real ? getValue(BS_ROWS.find(r=>r.id==="g-fixed")!, idx) : fwdFixedK;
+      if (row.id === "t-cc") return real ? getValue(BS_ROWS.find(r=>r.id==="g-cc")!, idx) : avgCreditCardsK;
+      if (row.id === "t-other-liab") return accruedK;
+      if (row.id === "t-capital") return real ? getValue(BS_ROWS.find(r=>r.id==="g-capital")!, idx) : fwdCapitalK;
       if (row.id === "t-curr-assets") {
         return (getValue(BS_ROWS.find(r=>r.id==="t-bank")!, idx) ?? 0)
           + (getValue(BS_ROWS.find(r=>r.id==="t-ar")!, idx) ?? 0)
@@ -1459,24 +1488,31 @@ function BalanceTab({ realMonths, actuals }: { realMonths: number; actuals: Reco
     if (real && row.actualKey && real[row.actualKey] != null) {
       return Number(real[row.actualKey]) / 1000;
     }
-    // Forecast items (idx > last real): use fixed forecast values for balance-sheet lines that don't move
+    // Forecast items (idx > last real): carry forward the last real balance-sheet values.
     if (isForecast) {
-      if (row.id === "loans_sh") return 12.96;
-      if (row.id === "equip") return 11.19;
-      if (row.id === "accum_dep") return -4.93;
-      if (row.id === "due_sh") return 1.0;
-      if (row.id === "accrued") return 10.34;
-      if (row.id === "cap1") return 225;
-      if (row.id === "cap2") return 399.87;
-      if (row.id === "cap3") return 685.97;
-      if (row.id === "cap4") return 2146.73;
-      if (row.id === "common_stock") return 1.10;
-      if (row.id === "open_bal_eq") return -1.87;
-      if (row.id === "ret_earn") return -1548.94;
-      if (row.id === "net_inc_eq") {
-        // Cumulative Net Income: last real retained + net income since, from the P&L roll-forward
-        return -366.29 + forecastCumulativeNI(idx);
-      }
+      if (row.id === "loans_sh") return fwdLoansShK;
+      if (row.id === "equip") return latestRealIdx>=0 ? Number(bsByPeriod[PERIODS[latestRealIdx]]?.equipment ?? 0)/1000 : 11.19;
+      if (row.id === "accum_dep") return latestRealIdx>=0 ? Number(bsByPeriod[PERIODS[latestRealIdx]]?.accumulated_depreciation ?? 0)/1000 : -4.93;
+      if (row.id === "due_sh") return fwdDueShK;
+      if (row.id === "accrued") return accruedK;
+      if (row.id === "cap1") return latestRealIdx>=0 ? Number(bsByPeriod[PERIODS[latestRealIdx]]?.capital_1st_round ?? 0)/1000 : 225;
+      if (row.id === "cap2") return latestRealIdx>=0 ? Number(bsByPeriod[PERIODS[latestRealIdx]]?.capital_2nd_round ?? 0)/1000 : 399.87;
+      if (row.id === "cap3") return latestRealIdx>=0 ? Number(bsByPeriod[PERIODS[latestRealIdx]]?.capital_3rd_round ?? 0)/1000 : 685.97;
+      if (row.id === "cap4") return latestRealIdx>=0 ? Number(bsByPeriod[PERIODS[latestRealIdx]]?.capital_4th_round ?? 0)/1000 : 2146.73;
+      if (row.id === "common_stock") return fwdCommonK;
+      if (row.id === "open_bal_eq") return fwdOpenEqK;
+      if (row.id === "ret_earn") return fwdRetEarnK;
+      if (row.id === "net_inc_eq") return lastRealNetIncEqK + forecastCumulativeNI(idx);
+      // Individual credit-card lines: show blended average on the primary line, 0 on the rest.
+      if (row.id === "boa3724") return avgCreditCardsK;
+      if (["boa7830","boa8781","citi_cc","merc_cc"].includes(row.id)) return 0;
+      // Individual bank lines: show total cash on the primary line, 0 on the rest.
+      if (row.id === "bofa") return forecastCash(idx);
+      if (["citi_b","merc_chk","merc_trs"].includes(row.id)) return 0;
+      // AR / inventory detail: total on the primary line, 0 on the secondary.
+      if (row.id === "ar_item") return forecastAR(idx);
+      if (row.id === "fin_goods") return forecastInventory(idx);
+      if (row.id === "raw_mat") return 0;
       return 0;
     }
     return null;
@@ -1493,7 +1529,7 @@ function BalanceTab({ realMonths, actuals }: { realMonths: number; actuals: Reco
           <span className="h-2 w-2 rounded-full bg-emerald-500 inline-block"/>
           <strong className="text-foreground">Bold</strong> = Accountfully real snapshot
         </span>
-        <span className="opacity-60">Gray = forecast · AR = Net Sales owed by distributor terms (KeHE/UNFI 30d, Rainforest 60d) · Cash rolls forward from P&L Net Income · Inventory = days-of-COGS proxy</span>
+        <span className="opacity-60">Gray = forecast · AR from distributor terms (KeHE/UNFI 30d, Rainforest 60d) · Inventory draws down Jul–Nov then Dec production build (30k cases) · Cash is the balancing figure so Assets = Liab + Equity every month · Credit Cards = avg of real months</span>
       </div>
 
       <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
