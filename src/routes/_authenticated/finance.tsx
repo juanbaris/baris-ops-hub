@@ -1217,7 +1217,8 @@ function CashFlowTab({ actuals }: { actuals: Record<string, any> }) {
       labels: MONTHS,
       datasets: [
         { label: 'Cash EOP (real)', data: cashEop.map((v,i)=>S[i].isBsReal?v:null), borderColor:'#1C2340', backgroundColor:'rgba(28,35,64,0.1)', tension:0.3, fill:true, pointRadius:5, spanGaps:true },
-        { label: 'Cash EOP (forecast)', data: cashEop.map((v,i)=>S[i].isForecast?v:null), borderColor:'#A3224A', backgroundColor:'rgba(163,34,74,0.08)', borderDash:[4,3], tension:0.3, fill:true, pointRadius:4, spanGaps:true },
+        // Include the last real month so the forecast line starts where the real one ends.
+        { label: 'Cash EOP (forecast)', data: cashEop.map((v,i)=>(S[i].isForecast || i === latestBsIdx) ? v : null), borderColor:'#A3224A', backgroundColor:'rgba(163,34,74,0.08)', borderDash:[4,3], tension:0.3, fill:true, pointRadius:(ctx:any)=>ctx.dataIndex===latestBsIdx?0:4, spanGaps:true },
         { label: 'Runway = 0', data: MONTHS.map(()=>0), borderColor:'#DC2626', borderDash:[5,5], pointRadius:0, fill:false }
       ]
     },
