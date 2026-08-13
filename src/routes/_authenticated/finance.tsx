@@ -57,6 +57,14 @@ const fmt = (n: number, dec=0) => {
   return sign + '$' + Math.abs(n).toLocaleString('en-US', {maximumFractionDigits: dec});
 };
 const fmtK = (n: number) => n === null ? '—' : (n < 0 ? '-' : '') + '$' + Math.abs(n).toFixed(0) + 'K';
+// Full-precision dollar display (value stored in $K -> shown as exact dollars with 2 decimals),
+// used for REAL months in Actual mode so the P&L reads like a copy of the Accountfully PDF.
+const fmtExact = (nK: number) => {
+  if (nK === null || nK === undefined) return '—';
+  const n = nK * 1000;
+  const sign = n < 0 ? '-' : '';
+  return sign + '$' + Math.abs(n).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+};
 const fmtPct = (n: number) => (n*100).toFixed(1) + '%';
 
 type Period = 'mtd'|'qtd'|'ytd'|'fy';
@@ -623,6 +631,25 @@ function PNLTab({ realMonths, actuals, actualOnly }: { realMonths: number; actua
       return children.reduce((s, c) => s + (getValue(c, idx) ?? 0), 0);
     }
 
+    // Group-level subtotals: their siblings hang off the GROUP id, not the total id.
+    // Sum the group's non-total children directly.
+    const groupSubtotalMap: Record<string, string> = {
+      "t-4000": "g-4000", "t-disc": "g-disc", "t-4500": "g-4500",
+      "t-5000": "g-5000", "t-6000": "g-6000",
+      "t-6500": "g-6500", "t-7000": "g-7000",
+      "t-facility": "g-facility", "t-payroll": "g-payroll",
+      "t-profsvcs": "g-profsvcs", "t-travel": "g-travel",
+      "t-9000": "g-9000",
+    };
+    if (groupSubtotalMap[row.id]) {
+      const gid = groupSubtotalMap[row.id];
+      const children = (childMap[gid] || [])
+        .map(cid => PL_ROWS.find(r => r.id === cid)!)
+        .filter(Boolean)
+        .filter(c => c.kind !== "total" && c.id !== row.id);
+      return children.reduce((s, c) => s + (getValue(c, idx) ?? 0), 0);
+    }
+
     if (row.kind === "pct") {
       if (row.id === "t-gp-pct") {
         const ns = getValue(PL_ROWS.find(r => r.id === "t-income")!, idx) ?? 1;
@@ -814,14 +841,15 @@ function PNLTab({ realMonths, actuals, actualOnly }: { realMonths: number; actua
                           : "#1C2340"
                       }}>
                       {row.kind==="pct" ? fmtPct(v??0)
-                        : (!v || v===0) ? "—"
+                        : (v==null || v===0) ? "—"
+                        : (actualOnly && isRealIdx(i)) ? fmtExact(v)
                         : fmt(v,0)}
                     </td>
                     );
                   })}
                   <td className="text-right px-2 py-1.5 font-mono font-semibold tabular-nums"
                     style={{color: row.kind==="pct" ? "#1C2340" : (fy??0)<0 ? "#EF4444" : "#10B981"}}>
-                    {row.kind==="pct" ? fmtPct(fy??0) : (!fy || fy===0) ? "—" : fmt(fy,0)}
+                    {row.kind==="pct" ? fmtPct(fy??0) : (!fy || fy===0) ? "—" : (actualOnly ? fmtExact(fy) : fmt(fy,0))}
                   </td>
                   <td className="text-right px-2 py-1.5 font-mono text-muted-foreground tabular-nums text-[10px]">
                     {row.kind==="pct" ? "—" : pctGS}
@@ -1513,7 +1541,7 @@ function BalanceTab({ realMonths, actuals }: { realMonths: number; actuals: Reco
                   {vals.map((v, i) => (
                     <td key={i} className="text-right px-2 py-1.5 font-mono tabular-nums"
                       style={{color: isRealMonth(i) ? "#1C2340" : "#9CA3AF", fontWeight: isRealMonth(i) ? 700 : 400}}>
-                      {v == null || v === 0 ? "—" : fmt(v, 0)}
+                      {v == null || v === 0 ? "—" : isRealMonth(i) ? fmtExact(v) : fmt(v, 0)}
                     </td>
                   ))}
                 </tr>
