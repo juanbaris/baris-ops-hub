@@ -24,6 +24,7 @@ const FP_CONCEPTS: FPConcept[] = ["Production","Sale","Sample","Damage","Transfe
 const IP_CONCEPTS: IPConcept[] = ["Procurement","Consumption","Damage","Transfer"];
 const FACILITIES: Facility[] = ["Heinlein","Empire","OOE"];
 const FULL_TRUCK = 6630;
+const LOT_BASELINE_DATE = "2026-08-14"; // Lot Master fixed as of this date; later FP movements adjust each lot
 
 type BaselineRow = {
   id: string;
@@ -116,33 +117,64 @@ const STATUS_PILL: Record<string, string> = {
 function FPStockTab({ movements, orders, loading, baseline, lotMap }: { movements: FPRow[]; orders: any[]; loading: boolean; baseline: BaselineRow[]; lotMap: Record<string, LotCard> }) {
   const { bySkuMonthKey } = useSalesForecast();
   const [showValue, setShowValue] = useState(false);
-  // Average COGS per SKU from lot master, expressed PER CASE ($/pote × 8) for $ valuation
-  const cogsBySku = useMemo(() => {
-    const acc: Record<string, number[]> = {};
-    for (const [key, card] of Object.entries(lotMap)) {
-      if (card.cogs != null && card.sku) {
-        if (!acc[card.sku]) acc[card.sku] = [];
-        acc[card.sku].push(card.cogs);
-      }
+  const [lots, setLots] = useState<any[]>([]);
+  useEffect(() => { (async () => { const { data } = await supabase.from("lot_master").select("*"); setLots(data ?? []); })(); }, []);
+
+  // Live lot on-hand = master cases (as of LOT_BASELINE_DATE) + signed movements after it (keyed by lot+warehouse).
+  const deltaByLot = useMemo(() => {
+    const d: Record<string, number> = {};
+    for (const m of (movements ?? [])) {
+      const lot = (m.lot_number ?? "").trim();
+      if (!lot || m.movement_date <= LOT_BASELINE_DATE) continue;
+      const k = `${lot}||${m.warehouse ?? "—"}`;
+      d[k] = (d[k] ?? 0) + (m.type === "In" ? Number(m.cases) : -Number(m.cases));
     }
-    return Object.fromEntries(Object.entries(acc).map(([sku, vals]) => [sku, (vals.reduce((a,b)=>a+b,0)/vals.length) * 8]));
-  }, [lotMap]);
+    return d;
+  }, [movements]);
+
+  // Aggregate lot on-hand into per-SKU and per-SKU/warehouse stock + $ value (from Lot Master COGS × 8).
+  const { bySku, whRows, cogsBySku } = useMemo(() => {
+    const casesSku: Record<string, number> = {};
+    const casesWh: Record<string, number> = {};
+    const valWh: Record<string, number> = {};
+    const valSku: Record<string, number> = {};
+    const seen = new Set<string>();
+    const add = (sku: string, wh: string, c: number, cogs: number | null) => {
+      casesSku[sku] = (casesSku[sku] ?? 0) + c;
+      const k = `${sku}|${wh}`;
+      casesWh[k] = (casesWh[k] ?? 0) + c;
+      const v = c * (Number(cogs) || 0) * 8;
+      valWh[k] = (valWh[k] ?? 0) + v;
+      valSku[sku] = (valSku[sku] ?? 0) + v;
+    };
+    for (const r of lots) { const k=`${r.lot_number}||${r.warehouse ?? "—"}`; seen.add(k); add(r.sku, r.warehouse ?? "—", (Number(r.cases_initial) || 0) + (deltaByLot[k] ?? 0), r.cogs_per_case); }
+    for (const m of (movements ?? [])) {
+      const lot = (m.lot_number ?? "").trim();
+      const k = `${lot}||${m.warehouse ?? "—"}`;
+      if (!lot || seen.has(k) || m.movement_date <= LOT_BASELINE_DATE) continue;
+      seen.add(k); add(m.sku, m.warehouse ?? "—", deltaByLot[k] ?? 0, m.cogs_per_case);
+    }
+    const bySku: Record<string, number> = {};
+    const cogsBySku: Record<string, number> = {};
+    for (const sku of SKUS) {
+      const c = casesSku[sku] ?? 0;
+      bySku[sku] = Math.max(0, Math.round(c));               // stock never < 0
+      cogsBySku[sku] = c > 0 ? (valSku[sku] ?? 0) / c : 0;    // effective $/case (per-pote × 8, weighted)
+    }
+    const whRows = Object.entries(casesWh).map(([k, c]) => {
+      const [sku, warehouse] = k.split("|");
+      return { sku, warehouse, cases: Math.max(0, c), value: Math.max(0, valWh[k] ?? 0) };
+    });
+    return { bySku, whRows, cogsBySku };
+  }, [lots, movements, deltaByLot]);
+
   const forecastNextMonth = useMemo(() => {
     const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() + 1);
     const key = `${d.getFullYear()}-${d.getMonth() + 1}`;
     return Object.fromEntries(SKUS.map(sku => [sku, bySkuMonthKey[sku]?.[key] ?? FORECAST_FALLBACK[sku]])) as Record<SKU, number>;
   }, [bySkuMonthKey]);
 
-  const { bySku, bySkuWh } = useMemo(() => calcStockFromBaseline(baseline, movements), [baseline, movements]);
-
-  const stock = useMemo(() => {
-    return Object.values(bySkuWh).sort((a,b) => a.sku.localeCompare(b.sku));
-  }, [bySkuWh]);
-
-  const baselineDate = useMemo(() => {
-    if (baseline.length === 0) return null;
-    return baseline.reduce((max, b) => b.baseline_date > max ? b.baseline_date : max, "");
-  }, [baseline]);
+  const baselineDate = LOT_BASELINE_DATE;
 
   const committed = useMemo(() => {
     const m: Record<string, number> = {};
@@ -182,7 +214,12 @@ function FPStockTab({ movements, orders, loading, baseline, lotMap }: { movement
 
       {(['Lineage Newark', 'other'] as const).map(wh => {
         const isLineage = wh === 'Lineage Newark';
-        const rows = stock.filter(s => s.cases > 0 && (isLineage ? s.warehouse === 'Lineage Newark' : s.warehouse !== 'Lineage Newark'));
+        const rows = isLineage
+          ? SKUS.map(sku => {
+              const r = whRows.find(x => x.sku === sku && x.warehouse === 'Lineage Newark');
+              return r ?? { sku, warehouse: 'Lineage Newark', cases: 0, value: 0 };
+            })
+          : whRows.filter(s => s.warehouse !== 'Lineage Newark' && s.cases > 0).sort((a, b) => a.sku.localeCompare(b.sku));
         if (rows.length === 0) return null;
         return (
           <div key={wh} className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
@@ -191,9 +228,7 @@ function FPStockTab({ movements, orders, loading, baseline, lotMap }: { movement
                 {isLineage ? '📦 Lineage Newark' : '🏭 Other Warehouses'}
               </p>
               <p className="text-xs text-muted-foreground">
-                {baselineDate
-                  ? `Baseline: ${baselineDate} + movements after`
-                  : `Calculated from all fp_movements`} · as of {ymd()}
+                From Lot Master · fixed {baselineDate} + later FP movements · as of {ymd()}
               </p>
             </div>
             <table className="w-full text-sm">
@@ -219,7 +254,7 @@ function FPStockTab({ movements, orders, loading, baseline, lotMap }: { movement
                   const comm = Math.round(committed[s.sku] ?? 0);
                   const share = skuStock > 0 ? s.cases / skuStock : 0;
                   const rowComm = Math.round(comm * share);
-                  const available = Math.round(s.cases) - rowComm;
+                  const available = Math.round(s.cases) - rowComm;   // can be < 0
                   const fc = forecastNextMonth[s.sku] ?? 0;
                   const woh = fc > 0 ? (available / (fc * share || fc)) * 4 : 0;
                   const st = stockStatus(available, woh);
@@ -229,12 +264,10 @@ function FPStockTab({ movements, orders, loading, baseline, lotMap }: { movement
                       <td className="px-4 py-2 font-mono text-xs text-muted-foreground">{SKU_ITEMS[s.sku]}</td>
                       {!isLineage && <td className="px-4 py-2 text-xs text-muted-foreground">{s.warehouse}</td>}
                       <td className="px-4 py-2 text-right font-mono font-semibold" style={{color:"#A3224A"}}>
-                        {cogsBySku[s.sku]
-                          ? `$${Math.round(s.cases * cogsBySku[s.sku]).toLocaleString()}`
-                          : <span className="text-muted-foreground text-xs">—</span>}
+                        {s.value ? `$${Math.round(s.value).toLocaleString()}` : <span className="text-muted-foreground text-xs">—</span>}
                       </td>
                       <td className="px-4 py-2 text-right font-mono font-semibold">
-                        {showValue && cogsBySku[s.sku] ? `$${Math.round(s.cases * cogsBySku[s.sku] / 1000).toLocaleString()}K` : (
+                        {showValue ? `$${Math.round(s.value / 1000).toLocaleString()}K` : (
                           <span>
                             {Math.round(s.cases).toLocaleString()}
                             <span className="block text-[10px] font-normal text-muted-foreground">{Math.round(s.cases * 8).toLocaleString()} potes</span>
@@ -249,7 +282,7 @@ function FPStockTab({ movements, orders, loading, baseline, lotMap }: { movement
                           ? <span style={{color:"#A3224A"}}>${Math.round(available * cogsBySku[s.sku] / 1000).toLocaleString()}K</span>
                           : available.toLocaleString()}
                       </td>
-                      <td className="px-4 py-2 text-right font-mono text-xs text-muted-foreground">{Math.round(fc * share).toLocaleString()}</td>
+                      <td className="px-4 py-2 text-right font-mono text-xs text-muted-foreground">{Math.round(fc * (share || (isLineage ? 1 : 0))).toLocaleString()}</td>
                       <td className="px-4 py-2 text-right font-mono text-xs">{woh.toFixed(1)}</td>
                       <td className="px-4 py-2 text-center">
                         <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${STATUS_PILL[st]}`}>{st}</span>
@@ -264,7 +297,7 @@ function FPStockTab({ movements, orders, loading, baseline, lotMap }: { movement
                     TOTAL ({rows.length} SKUs)
                   </td>
                   <td className="px-4 py-2 text-right font-mono font-semibold" style={{color:"#f87171"}}>
-                    ${Math.round(rows.reduce((s,r)=>s+(cogsBySku[r.sku]?r.cases*cogsBySku[r.sku]:0),0)).toLocaleString()}
+                    ${Math.round(rows.reduce((s,r)=>s+r.value,0)).toLocaleString()}
                   </td>
                   <td className="px-4 py-2 text-right font-mono font-semibold">
                     {rows.reduce((s,r)=>s+Math.round(r.cases),0).toLocaleString()}
@@ -2202,30 +2235,93 @@ function COGSSimulatorTab() {
   );
 }
 // ─── Procurement Planning Tab (full) ─────────────────────────────────────────
-const BOM_PCT: Record<string, Record<string, number>> = {
-  XD:     { "IQF Raspberry":45.0, "RASG Dark 72%":55.0 },
-  WD:     { "IQF Raspberry":30.0, "Corinthian White":38.8, "RASG Dark 72%":30.0, "Cocoa Butter":1.2, "Soy Lecithin":0.1 },
-  WM:     { "IQF Raspberry":30.0, "Corinthian White":38.8, "Valcour Milk":30.0,  "Cocoa Butter":1.2, "Soy Lecithin":0.1 },
-  PW:     { "IQF Raspberry":33.0, "Corinthian White":57.1, "Pistachio Paste":8.0, "Cocoa Butter":1.7, "Soy Lecithin":0.04, "Sea Salt":0.05, "Spirulina":0.04 },
-  HM:     { "IQF Raspberry":33.0, "Corinthian White":22.9, "Valcour Milk":33.0, "Hazelnut Paste":10.0, "Cocoa Butter":0.9, "Soy Lecithin":0.04, "Sea Salt":0.10 },
-  Matcha: { "IQF Raspberry":45.0, "Corinthian White":52.9, "Matcha Powder":0.9, "Cocoa Butter":1.0, "Soy Lecithin":0.10, "Sea Salt":0.10 },
-};
-const LBS_PER_CASE_BOM = 2.5;
+const LBS_PER_CASE_BOM = 2.5;   // legacy reference basis
 const UNITS_PER_CASE_BOM = 8;
-const DEFAULT_ING_PRICES: Record<string, number> = {
-  "IQF Raspberry":2.91,"RASG Dark 72%":5.50,"Corinthian White":3.20,
-  "Valcour Milk":5.20,"Duluth Dark":4.88,"Pistachio Paste":17.23,
-  "Hazelnut Paste":12.20,"Matcha Powder":19.50,"Spirulina":11.88,
-  "Cocoa Butter":6.50,"Soy Lecithin":3.10,"Sea Salt":8.45,
-};
 const DEFAULT_PROD_COSTS = { tolling_per_unit:0.65, cup_per_unit:0.095, lid_per_unit:0.092, sealer_per_unit:0.030, case_per_case:0.36 };
-const ING_PACK_SIZES: Record<string, number> = {
-  "IQF Raspberry":22,"RASG Dark 72%":1100,"Corinthian White":1100,"Valcour Milk":1100,
-  "Duluth Dark":1100,"Pistachio Paste":550,"Hazelnut Paste":550,"Matcha Powder":44,
-  "Spirulina":55,"Cocoa Butter":1100,"Soy Lecithin":55,"Sea Salt":55,
+
+// ─── Procurement material master + BOM (quantities are PER CASE of 8 units) ───
+const PROC_SKUS: string[] = ["XD","PW","HM","WM","WD","Matcha","Strawberry"];
+const PROC_SKU_LABEL: Record<string,string> = {
+  XD:"Extra Dark", PW:"Pistachio & White", HM:"Hazelnut & Milk",
+  WM:"White & Milk", WD:"White & Dark", Matcha:"Matcha & White", Strawberry:"Strawberry",
 };
-const ALL_INGS = Object.keys(DEFAULT_ING_PRICES);
+const RAW_MATS = [
+  "IQF Raspberries","Choc Extra Dark (Revere 70%)","Choc Dark (Duluth)","Choc Milk (Valcour)",
+  "Choc White (Corinthian)","Cocoa Butter","Hazelnut Butter","Pistachio Paste",
+  "Matcha Powder","Spirulina","Sea Salt","Soy Lecithin",
+];
+const PACK_MATS = [
+  ...PROC_SKUS.map(s=>`Cup - ${PROC_SKU_LABEL[s]}`),
+  ...PROC_SKUS.map(s=>`Lid - ${PROC_SKU_LABEL[s]}`),
+  "Sealers (Momar)","Master Cases (8u)",
+];
+const ALL_INGS = [...RAW_MATS, ...PACK_MATS];
+const RAW_SET = new Set(RAW_MATS);
+const isRawMat = (m:string)=>RAW_SET.has(m);
+
+// Per-case BOM (lbs for raw, units for packaging). Packaging filled programmatically.
+const BOM_QTY: Record<string, Record<string, number>> = (()=>{
+  const b: Record<string, Record<string, number>> = {
+    XD:     { "IQF Raspberries":1.159794, "Choc Extra Dark (Revere 70%)":1.417526 },
+    PW:     { "IQF Raspberries":0.850515, "Choc White (Corinthian)":1.472552, "Cocoa Butter":0.043428, "Pistachio Paste":0.206186, "Spirulina":0.000747, "Sea Salt":0.001289, "Soy Lecithin":0.002655 },
+    HM:     { "IQF Raspberries":0.850515, "Choc Milk (Valcour)":0.850515, "Choc White (Corinthian)":0.602835, "Cocoa Butter":0.012062, "Hazelnut Butter":0.257732, "Sea Salt":0.002577, "Soy Lecithin":0.001082 },
+    WM:     { "IQF Raspberries":0.773196, "Choc Milk (Valcour)":0.773196, "Choc White (Corinthian)":0.998892, "Cocoa Butter":0.030232, "Soy Lecithin":0.001804 },
+    WD:     { "IQF Raspberries":0.773196, "Choc White (Corinthian)":0.999149, "Cocoa Butter":0.029974, "Soy Lecithin":0.001804 },
+    Matcha: { "IQF Raspberries":1.159794, "Choc White (Corinthian)":1.363067, "Cocoa Butter":0.025773, "Matcha Powder":0.022680, "Sea Salt":0.003557, "Soy Lecithin":0.002448 },
+    Strawberry: {},
+  };
+  for (const s of PROC_SKUS) {
+    b[s] = b[s] || {};
+    b[s][`Cup - ${PROC_SKU_LABEL[s]}`] = 8;
+    b[s][`Lid - ${PROC_SKU_LABEL[s]}`] = 8;
+    b[s]["Sealers (Momar)"] = 8;
+    b[s]["Master Cases (8u)"] = 1;
+  }
+  return b;
+})();
+
+const DEFAULT_SCRAP: Record<string,number> = (()=>{
+  const o:Record<string,number>={};
+  for (const m of RAW_MATS) o[m] = m==="IQF Raspberries" ? 25
+    : ["Choc Dark (Duluth)","Choc Milk (Valcour)","Choc White (Corinthian)"].includes(m) ? 20 : 10;
+  for (const m of PACK_MATS) o[m] = 2;
+  return o;
+})();
+const DEFAULT_OVERFILL: Record<string,number> = Object.fromEntries(
+  ALL_INGS.map(m=>[m, isRawMat(m)?5:0]));
+const DEFAULT_LEAD_MAT: Record<string,number> = (()=>{
+  const o:Record<string,number>={};
+  for (const m of RAW_MATS) o[m] = m==="IQF Raspberries" ? 12
+    : ["Choc Extra Dark (Revere 70%)","Choc Dark (Duluth)","Choc Milk (Valcour)","Choc White (Corinthian)"].includes(m) ? 10 : 6;
+  for (const s of PROC_SKUS){ o[`Cup - ${PROC_SKU_LABEL[s]}`]=12; o[`Lid - ${PROC_SKU_LABEL[s]}`]=12; }
+  o["Sealers (Momar)"]=6; o["Master Cases (8u)"]=6;
+  return o;
+})();
+const RAW_PRICES: Record<string,number> = {
+  "IQF Raspberries":2.91,"Choc Extra Dark (Revere 70%)":5.50,"Choc Dark (Duluth)":4.88,
+  "Choc Milk (Valcour)":5.20,"Choc White (Corinthian)":3.20,"Cocoa Butter":6.50,
+  "Hazelnut Butter":12.20,"Pistachio Paste":17.23,"Matcha Powder":19.50,
+  "Spirulina":11.88,"Sea Salt":8.45,"Soy Lecithin":3.10,
+};
+const DEFAULT_ING_PRICES: Record<string,number> = (()=>{
+  const o:Record<string,number>={...RAW_PRICES};
+  for (const s of PROC_SKUS){ o[`Cup - ${PROC_SKU_LABEL[s]}`]=0.095; o[`Lid - ${PROC_SKU_LABEL[s]}`]=0.092; }
+  o["Sealers (Momar)"]=0.030; o["Master Cases (8u)"]=0.36;
+  return o;
+})();
+const RAW_PACK: Record<string,number> = {
+  "IQF Raspberries":22,"Choc Extra Dark (Revere 70%)":1100,"Choc Dark (Duluth)":1100,
+  "Choc Milk (Valcour)":1100,"Choc White (Corinthian)":1100,"Cocoa Butter":1100,
+  "Hazelnut Butter":550,"Pistachio Paste":550,"Matcha Powder":44,
+  "Spirulina":55,"Sea Salt":55,"Soy Lecithin":55,
+};
+const ING_PACK_SIZES: Record<string,number> = (()=>{
+  const o:Record<string,number>={...RAW_PACK};
+  for (const m of PACK_MATS) o[m] = 1;
+  return o;
+})();
 const SKU_MIX_PCT: Record<string,number> = {XD:0.30,PW:0.25,HM:0.18,WM:0.12,WD:0.08,Matcha:0.07};
+
 
 const FORECAST_MONTHS_OPS = Array.from({ length: 12 }, (_, i) => {
   const d = new Date();
@@ -2267,11 +2363,11 @@ const DEFAULT_LEAD_WEEKS = 4;
 /** Production requirements coming from the Sales simulator (committed scenario wins). */
 function CommittedRequirements({ planScenario, onPlanScenarioChange, forecast, months }: { planScenario: SalesScenario; onPlanScenarioChange: (s: SalesScenario) => void; forecast: Record<string,number[]>; months: string[] }) {
   function exportCsv(){
-    const head = ["Month",...SKUS,"TOTAL"];
+    const head = ["Month",...PROC_SKUS,"TOTAL"];
     const rows = months.map((label,i)=>[
       label,
-      ...SKUS.map(s=>Math.round(forecast[s]?.[i]??0)),
-      SKUS.reduce((a,s)=>a+Math.round(forecast[s]?.[i]??0),0),
+      ...PROC_SKUS.map(s=>Math.round(forecast[s]?.[i]??0)),
+      PROC_SKUS.reduce((a,s)=>a+Math.round(forecast[s]?.[i]??0),0),
     ]);
     const csv=[head,...rows].map(r=>r.join(",")).join("\n");
     const url=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
@@ -2309,17 +2405,17 @@ function CommittedRequirements({ planScenario, onPlanScenarioChange, forecast, m
           <thead>
             <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
               <th className="px-4 py-2 text-left">Month</th>
-              {SKUS.map(s=><th key={s} className="px-3 py-2 text-right">{s}</th>)}
+              {PROC_SKUS.map(s=><th key={s} className="px-3 py-2 text-right" title={PROC_SKU_LABEL[s]}>{s}</th>)}
               <th className="px-4 py-2 text-right font-bold">TOTAL</th>
             </tr>
           </thead>
           <tbody>
             {months.map((label,i)=>{
-              const rowTotal = SKUS.reduce((a,s)=>a+Math.round(forecast[s]?.[i]??0),0);
+              const rowTotal = PROC_SKUS.reduce((a,s)=>a+Math.round(forecast[s]?.[i]??0),0);
               return (
                 <tr key={label} className="border-t border-border/60 hover:bg-muted/20">
                   <td className="px-4 py-1.5 font-semibold">{label}</td>
-                  {SKUS.map(s=><td key={s} className="px-3 py-1.5 text-right font-mono">{Math.round(forecast[s]?.[i]??0).toLocaleString()}</td>)}
+                  {PROC_SKUS.map(s=><td key={s} className="px-3 py-1.5 text-right font-mono">{Math.round(forecast[s]?.[i]??0).toLocaleString()}</td>)}
                   <td className="px-4 py-1.5 text-right font-mono font-bold">{rowTotal.toLocaleString()}</td>
                 </tr>
               );
@@ -2331,23 +2427,27 @@ function CommittedRequirements({ planScenario, onPlanScenarioChange, forecast, m
   );
 }
 
-function calcCOGSFull(prices: Record<string,number>, costs: typeof DEFAULT_PROD_COSTS, scrap: {raspberry:number;chocolate:number}, bomPct: Record<string, Record<string, number>>) {
-  return Object.fromEntries(SKUS.map(sku => {
-    const bom = bomPct[sku]??{};
-    let rasp=0,choc=0,other=0;
-    for (const [ing,pct] of Object.entries(bom)) {
-      const lbs=(pct/100)*LBS_PER_CASE_BOM;
-      const price=prices[ing]??0;
-      const isRasp=ing==="IQF Raspberry";
-      const isChoc=["RASG Dark 72%","Corinthian White","Valcour Milk","Duluth Dark"].includes(ing);
-      const sc=isRasp?(1+scrap.raspberry):isChoc?(1+scrap.chocolate):1;
-      if(isRasp) rasp+=lbs*price*sc;
-      else if(isChoc) choc+=lbs*price*sc;
-      else other+=lbs*price*sc;
+function calcCOGSFull(prices: Record<string,number>, costs: typeof DEFAULT_PROD_COSTS, matScrap: Record<string,number>, matOverfill: Record<string,number>, bomQty: Record<string, Record<string, number>>) {
+  return Object.fromEntries(PROC_SKUS.map(sku => {
+    const bom = bomQty[sku]??{};
+    let rasp=0,choc=0,other=0,pkg=0;
+    for (const [mat,qty] of Object.entries(bom)) {
+      if (!qty) continue;
+      const price=prices[mat]??0;
+      const factor=(1+(matScrap[mat]??0)/100)*(1+(matOverfill[mat]??0)/100);
+      const cost=qty*price*factor;   // per case
+      if (isRawMat(mat)) {
+        if (mat==="IQF Raspberries") rasp+=cost;
+        else if (mat.startsWith("Choc")) choc+=cost;
+        else other+=cost;
+      } else {
+        pkg+=cost;
+      }
     }
-    const pkg=(costs.cup_per_unit+costs.lid_per_unit+costs.sealer_per_unit)+(costs.case_per_case/UNITS_PER_CASE_BOM);
-    const per_unit=rasp/UNITS_PER_CASE_BOM+choc/UNITS_PER_CASE_BOM+other/UNITS_PER_CASE_BOM+pkg+costs.tolling_per_unit;
-    return [sku,{rasp:rasp/UNITS_PER_CASE_BOM,choc:choc/UNITS_PER_CASE_BOM,other:other/UNITS_PER_CASE_BOM,pkg,tolling:costs.tolling_per_unit,per_unit,per_case:per_unit*UNITS_PER_CASE_BOM}];
+    const tollingCase=(costs.tolling_per_unit??0)*UNITS_PER_CASE_BOM;
+    const per_case=rasp+choc+other+pkg+tollingCase;
+    const per_unit=per_case/UNITS_PER_CASE_BOM;
+    return [sku,{rasp:rasp/UNITS_PER_CASE_BOM,choc:choc/UNITS_PER_CASE_BOM,other:other/UNITS_PER_CASE_BOM,pkg:pkg/UNITS_PER_CASE_BOM,tolling:costs.tolling_per_unit,per_unit,per_case}];
   }));
 }
 
@@ -2363,7 +2463,9 @@ function calcProdSchedule(
   skuMinRuns: Record<string,number>,
   manualProd: Record<string,number[]>,
   optimizeTruck: boolean,
-  bomPct: Record<string, Record<string, number>>,
+  bomQty: Record<string, Record<string, number>>,
+  matScrap: Record<string,number>,
+  matOverfill: Record<string,number>,
 ) {
   const SK: Record<string,string>={XD:"xd_cases",PW:"pw_cases",HM:"hm_cases",WM:"wm_cases",WD:"wd_cases",Matcha:"matcha_cases"};
   const committed: Record<string,number>={};
@@ -2373,7 +2475,7 @@ function calcProdSchedule(
   const stockProj: Record<string,number[]>={};
   const ingNeeded: Record<string,number>={};
   const ingByMonth: Record<string,number[]>={};
-  for(const sku of SKUS) {
+  for(const sku of PROC_SKUS) {
     let running=Math.max(0,(stockBySku[sku]??0)-(committed[sku]??0))+(wipBySku[sku]??0);
     plan[sku]=[]; stockProj[sku]=[];
     const skuMin = Math.max(minRun, skuMinRuns[sku] ?? 0);
@@ -2408,15 +2510,14 @@ function calcProdSchedule(
       running=running+produce-fcst;
       stockProj[sku].push(Math.round(running));
       if(produce>0) {
-        const bom=bomPct[sku]??{};
-        for(const [ing,pct] of Object.entries(bom)) {
-          const lbs=(pct/100)*LBS_PER_CASE_BOM*produce;
-          const isR=ing==="IQF Raspberry";
-          const isC=["RASG Dark 72%","Corinthian White","Valcour Milk","Duluth Dark"].includes(ing);
-          const qty=lbs*(isR?1.10:isC?1.08:1);
-          ingNeeded[ing]=(ingNeeded[ing]??0)+qty;
-          if(!ingByMonth[ing]) ingByMonth[ing]=FORECAST_MONTHS_OPS.map(()=>0);
-          ingByMonth[ing][i]+=qty;
+        const bom=bomQty[sku]??{};
+        for(const [mat,q] of Object.entries(bom)) {
+          if(!q) continue;
+          const factor=(1+(matScrap[mat]??0)/100)*(1+(matOverfill[mat]??0)/100);
+          const qty=q*produce*factor;
+          ingNeeded[mat]=(ingNeeded[mat]??0)+qty;
+          if(!ingByMonth[mat]) ingByMonth[mat]=FORECAST_MONTHS_OPS.map(()=>0);
+          ingByMonth[mat][i]+=qty;
         }
       }
     }
@@ -2428,27 +2529,49 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
   const [safetyWoh,  setSafetyWoh]  = useState(6);
   const [minRun,     setMinRun]     = useState(2000);
   const [freqMonths, setFreqMonths] = useState(3);
-  const [ingPrices,  setIngPrices]  = useState({...DEFAULT_ING_PRICES});
+  const [ingPrices,  setIngPrices]  = useState<Record<string,number>>(()=>{
+    try { const raw = window.localStorage.getItem("baris.ops.ingPrices.v2"); if (raw) return {...DEFAULT_ING_PRICES, ...JSON.parse(raw)}; } catch {}
+    return {...DEFAULT_ING_PRICES};
+  });
+  useEffect(()=>{ try { window.localStorage.setItem("baris.ops.ingPrices.v2", JSON.stringify(ingPrices)); } catch {} },[ingPrices]);
   const [prodCosts,  setProdCosts]  = useState({...DEFAULT_PROD_COSTS});
-  const [scrap,      setScrap]      = useState({raspberry:0.10,chocolate:0.08});
   const [ingInv,     setIngInv]     = useState<Record<string,string>>(Object.fromEntries(ALL_INGS.map(k=>[k,""])));
-  // ─── NEW: editable BOM percentages ───
-  const [bomPct, setBomPct] = useState<Record<string, Record<string, number>>>(
+  // ─── Editable BOM — stored as QTY PER CASE (lbs raw / units packaging); % is a synced view ───
+  const [bomQty, setBomQty] = useState<Record<string, Record<string, number>>>(
     () => {
       try { const raw = window.localStorage.getItem(BOM_PCT_KEY); if (raw) return JSON.parse(raw); } catch {}
-      return JSON.parse(JSON.stringify(BOM_PCT));
+      return JSON.parse(JSON.stringify(BOM_QTY));
     }
   );
-  useEffect(()=>{ try { window.localStorage.setItem(BOM_PCT_KEY, JSON.stringify(bomPct)); } catch {} },[bomPct]);
-  function updateBomPct(sku:string, ing:string, val:number){
-    setBomPct(prev=>({...prev,[sku]:{...(prev[sku]??{}),[ing]:val}}));
+  useEffect(()=>{ try { window.localStorage.setItem(BOM_PCT_KEY, JSON.stringify(bomQty)); } catch {} },[bomQty]);
+  function setBomQtyCell(sku:string, mat:string, val:number){
+    setBomQty(prev=>({...prev,[sku]:{...(prev[sku]??{}),[mat]:val}}));
   }
-  function resetBomPct(){ setBomPct(JSON.parse(JSON.stringify(BOM_PCT))); toast.success("BOM reset to default"); }
-  // ─── NEW: editable per-material lead times (weeks) ───
+  // Editing the % re-derives qty using the SKU's current total raw lbs as basis
+  function setBomPctCell(sku:string, mat:string, pct:number){
+    setBomQty(prev=>{
+      const row=prev[sku]??{};
+      const rawTotal=RAW_MATS.reduce((s,m)=>s+(row[m]??0),0);
+      const basis = rawTotal>0 ? rawTotal : LBS_PER_CASE_BOM;
+      return {...prev,[sku]:{...row,[mat]:(pct/100)*basis}};
+    });
+  }
+  function resetBom(){ setBomQty(JSON.parse(JSON.stringify(BOM_QTY))); toast.success("BOM reset to default"); }
+  // ─── Editable material master: scrap %, overfill %, lead weeks (per material) ───
+  const [matScrap, setMatScrap] = useState<Record<string,number>>(()=>{
+    try { const raw = window.localStorage.getItem("baris.ops.matScrap.v1"); if (raw) return {...DEFAULT_SCRAP, ...JSON.parse(raw)}; } catch {}
+    return {...DEFAULT_SCRAP};
+  });
+  useEffect(()=>{ try { window.localStorage.setItem("baris.ops.matScrap.v1", JSON.stringify(matScrap)); } catch {} },[matScrap]);
+  const [matOverfill, setMatOverfill] = useState<Record<string,number>>(()=>{
+    try { const raw = window.localStorage.getItem("baris.ops.matOverfill.v1"); if (raw) return {...DEFAULT_OVERFILL, ...JSON.parse(raw)}; } catch {}
+    return {...DEFAULT_OVERFILL};
+  });
+  useEffect(()=>{ try { window.localStorage.setItem("baris.ops.matOverfill.v1", JSON.stringify(matOverfill)); } catch {} },[matOverfill]);
   const [leadTimes, setLeadTimes] = useState<Record<string,number>>(
     () => {
-      try { const raw = window.localStorage.getItem(LEAD_KEY); if (raw) return {...Object.fromEntries(ALL_INGS.map(k=>[k,DEFAULT_LEAD_WEEKS])), ...JSON.parse(raw)}; } catch {}
-      return Object.fromEntries(ALL_INGS.map(k=>[k,DEFAULT_LEAD_WEEKS]));
+      try { const raw = window.localStorage.getItem(LEAD_KEY); if (raw) return {...DEFAULT_LEAD_MAT, ...JSON.parse(raw)}; } catch {}
+      return {...DEFAULT_LEAD_MAT};
     }
   );
   useEffect(()=>{ try { window.localStorage.setItem(LEAD_KEY, JSON.stringify(leadTimes)); } catch {} },[leadTimes]);
@@ -2456,6 +2579,7 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
   const [wip, setWip] = useState<Record<string,{cases:string;due:string}>>(
     Object.fromEntries(SKUS.map(s=>[s,{cases:"",due:""}])));
   const [shopScope, setShopScope] = useState<"next"|"3m"|"all">("next");
+  const [bomView, setBomView] = useState<"qty"|"pct">("qty");
   // ─── NEW: truck optimization ───
   const [optimizeTruck, setOptimizeTruck] = useState(false);
   // ─── NEW: per-SKU minimum runs ───
@@ -2511,7 +2635,7 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
     toast.success("All manual overrides cleared");
   }
 
-  const hasAnyManual = useMemo(()=>SKUS.some(sku=>(manualProd[sku]??[]).some(v=>v>0)),[manualProd]);
+  const hasAnyManual = useMemo(()=>PROC_SKUS.some(sku=>(manualProd[sku]??[]).some(v=>v>0)),[manualProd]);
 
   const wipBySku = useMemo(()=>Object.fromEntries(SKUS.map(s=>[s,parseInt(wip[s]?.cases??"")||0])),[wip]);
   const { bySkuMonthKey } = useSalesForecast();
@@ -2528,10 +2652,10 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
   const { bySku } = useMemo(()=>calcStockFromBaseline(baseline, movements),[baseline, movements]);
 
   const {plan,stockProj,ingNeeded,ingByMonth} = useMemo(
-    ()=>calcProdSchedule(bySku,orders,safetyWoh,minRun,freqMonths,fcstOps,wipBySku,skuMinRuns,manualProd,optimizeTruck,bomPct),
-    [bySku,orders,safetyWoh,minRun,freqMonths,fcstOps,wipBySku,skuMinRuns,manualProd,optimizeTruck,bomPct]
+    ()=>calcProdSchedule(bySku,orders,safetyWoh,minRun,freqMonths,fcstOps,wipBySku,skuMinRuns,manualProd,optimizeTruck,bomQty,matScrap,matOverfill),
+    [bySku,orders,safetyWoh,minRun,freqMonths,fcstOps,wipBySku,skuMinRuns,manualProd,optimizeTruck,bomQty,matScrap,matOverfill]
   );
-  const cogs = useMemo(()=>calcCOGSFull(ingPrices,prodCosts,scrap,bomPct),[ingPrices,prodCosts,scrap,bomPct]);
+  const cogs = useMemo(()=>calcCOGSFull(ingPrices,prodCosts,matScrap,matOverfill,bomQty),[ingPrices,prodCosts,matScrap,matOverfill,bomQty]);
 
   // ─── NEW: Payments forecast — ingredient purchases (timed by lead time) + Heinlein tolling (30d after production) ───
   const payments = useMemo(()=>{
@@ -2562,7 +2686,7 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
     }
     // Heinlein tolling: cases produced month i -> units×tolling, paid 30 days later (next month)
     for (let i=0;i<FORECAST_MONTHS_OPS.length;i++){
-      const cases = SKUS.reduce((s,sku)=>s+(plan[sku]?.[i]??0),0);
+      const cases = PROC_SKUS.reduce((s,sku)=>s+(plan[sku]?.[i]??0),0);
       if (cases<=0) continue;
       const amt = cases * UNITS_PER_CASE_BOM * (prodCosts.tolling_per_unit ?? 0);
       const prod = opsMonthDate(i);
@@ -2572,7 +2696,7 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
     return { ing, toll, meta, keys };
   },[ingByMonth, plan, ingInv, ingPrices, leadTimes, prodCosts]);
 
-  const totalByMonth = FORECAST_MONTHS_OPS.map((_,i)=>SKUS.reduce((s,sku)=>s+(plan[sku]?.[i]??0),0));
+  const totalByMonth = FORECAST_MONTHS_OPS.map((_,i)=>PROC_SKUS.reduce((s,sku)=>s+(plan[sku]?.[i]??0),0));
   const nextRunIdx = totalByMonth.findIndex(t=>t>0);
   const shopRange = useMemo(()=>{
     if(nextRunIdx<0) return null;
@@ -2591,7 +2715,7 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
   },[ingByMonth,shopRange]);
   const shopCasesWindow = shopRange
     ? totalByMonth.slice(shopRange[0],shopRange[1]+1).reduce((a,b)=>a+b,0) : 0;
-  const totalProduce = SKUS.reduce((s,sku)=>s+(plan[sku]??[]).reduce((a,b)=>a+b,0),0);
+  const totalProduce = PROC_SKUS.reduce((s,sku)=>s+(plan[sku]??[]).reduce((a,b)=>a+b,0),0);
   const weightedCOGS = SKUS.reduce((s,sku)=>s+(cogs[sku]?.per_case??0)*(SKU_MIX_PCT[sku]??0),0);
 
   // ─── NEW: compute WoH coverage per SKU when manual overrides exist ───
@@ -2750,7 +2874,7 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
                 </tr>
               </thead>
               <tbody>
-                {SKUS.map(sku=>{
+                {PROC_SKUS.map(sku=>{
                   const SK: Record<string,string>={XD:"xd_cases",PW:"pw_cases",HM:"hm_cases",WM:"wm_cases",WD:"wd_cases",Matcha:"matcha_cases"};
                   const comm=orders.filter(o=>COMMITTED_STATUSES.includes(o.status)).reduce((s,o)=>s+(Number(o[SK[sku]])||0),0);
                   const avail=Math.max(0,(bySku[sku]??0)-comm);
@@ -2763,7 +2887,7 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
                   const skuMinVal = skuMinRuns[sku] ?? 0;
                   return (
                     <tr key={sku} className="border-t border-border/60 hover:bg-muted/20">
-                      <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{sku} <span className="text-muted-foreground font-normal text-[10px]">({SKU_ITEMS[sku as SKU]})</span></td>
+                      <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{sku} <span className="text-muted-foreground font-normal text-[10px]">({SKU_ITEMS[sku as SKU] ?? "new"})</span></td>
                       <td className="px-3 py-1.5 text-right font-mono">{avail.toLocaleString()}</td>
                       <td className="px-3 py-1.5">
                         <div className="flex items-center justify-center gap-1">
@@ -2858,7 +2982,7 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
                 </tr>
               </thead>
               <tbody>
-                {SKUS.map(sku=>(
+                {PROC_SKUS.map(sku=>(
                   <tr key={sku} className="border-t border-border/60">
                     <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{sku}</td>
                     {(stockProj[sku]??[]).map((stock,i)=>{
@@ -2894,89 +3018,93 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
       {/* ── BOM + COGS ── */}
       {procTab==="bom_cogs" && (
         <div className="space-y-5">
-          <div className="rounded-2xl border border-border bg-card p-4 shadow-sm flex flex-wrap gap-6 items-center">
-            <p className="text-xs font-semibold text-muted-foreground">Scrap %:</p>
-            <div className="flex items-center gap-2">
-              <label className="text-xs text-muted-foreground">Raspberry</label>
-              <input type="number" step="0.01" min={0} max={0.5} value={scrap.raspberry}
-                onChange={e=>setScrap(s=>({...s,raspberry:parseFloat(e.target.value)||0}))} className={`${inp} w-16`}/>
-            </div>
-            <div className="flex items-center gap-2">
-              <label className="text-xs text-muted-foreground">Chocolate/flavor</label>
-              <input type="number" step="0.01" min={0} max={0.5} value={scrap.chocolate}
-                onChange={e=>setScrap(s=>({...s,chocolate:parseFloat(e.target.value)||0}))} className={`${inp} w-16`}/>
-            </div>
-            <p className="text-xs text-muted-foreground">Cambios recalculan COGS en vivo</p>
-          </div>
-
           <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
-            <div className="px-5 py-3 border-b border-border bg-muted/30 flex items-center justify-between">
+            <div className="px-5 py-3 border-b border-border bg-muted/30 flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className="text-sm font-bold" style={{color:"#1C2340"}}>Formula (BOM) — % Receta · Source: Super BOM Consolidado</p>
-                <p className="text-xs text-muted-foreground">Editable % per SKU and $/lb prices · recalculates COGS, schedule &amp; shopping live</p>
+                <p className="text-sm font-bold" style={{color:"#1C2340"}}>Formula (BOM) per case (8 units)</p>
+                <p className="text-xs text-muted-foreground">Editable in <strong>{bomView==="qty"?"quantity per case":"% of recipe"}</strong>. Both stay in sync. Scrap/overfill/lead live in Raw Materials.</p>
               </div>
-              <button onClick={resetBomPct} className="rounded border border-border px-3 py-1 text-[10px] text-muted-foreground hover:bg-muted">Reset BOM</button>
+              <div className="flex items-center gap-2">
+                <div className="flex gap-1 rounded-xl bg-muted p-1">
+                  {(["qty","pct"] as const).map(v=>(
+                    <button key={v} onClick={()=>setBomView(v)}
+                      className={`rounded-lg px-3 py-1 text-xs font-semibold ${bomView===v?"text-white":"text-muted-foreground"}`}
+                      style={bomView===v?{backgroundColor:"#1C2340"}:{}}>
+                      {v==="qty"?"Qty / case":"% receta"}
+                    </button>
+                  ))}
+                </div>
+                <button onClick={resetBom} className="rounded border border-border px-3 py-1 text-[10px] text-muted-foreground hover:bg-muted">Reset BOM</button>
+              </div>
             </div>
             <table className="text-xs min-w-max w-full">
               <thead>
                 <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
-                  <th className="px-4 py-2.5 text-left">Material</th>
-                  {SKUS.map(s=><th key={s} className="px-3 py-2.5 text-center">{s}</th>)}
-                  <th className="px-4 py-2.5 text-right">Precio/lb</th>
+                  <th className="px-4 py-2.5 text-left sticky left-0 bg-muted/20">Material</th>
+                  <th className="px-2 py-2.5 text-center">UOM</th>
+                  {PROC_SKUS.map(s=><th key={s} className="px-3 py-2.5 text-center" title={PROC_SKU_LABEL[s]}>{s}</th>)}
+                  <th className="px-4 py-2.5 text-right">$/unit</th>
                 </tr>
               </thead>
               <tbody>
-                {ALL_INGS.filter(ing=>SKUS.some(sku=>(bomPct[sku]?.[ing]??0)>0)).map(ing=>(
-                  <tr key={ing} className="border-t border-border/60 hover:bg-muted/20">
-                    <td className="px-4 py-1.5 font-medium">{ing}</td>
-                    {SKUS.map(sku=>{
-                      const pct=bomPct[sku]?.[ing]??0;
-                      return <td key={sku} className="px-2 py-1 text-center">
-                        <input type="number" step="0.1" min={0} value={pct||""} placeholder="—"
-                          onChange={e=>updateBomPct(sku, ing, parseFloat(e.target.value)||0)}
-                          className={`${inp} w-16 text-center ${pct>0?"font-semibold":"text-muted-foreground"}`}/>
-                      </td>;
-                    })}
-                    <td className="px-4 py-1.5 text-right">
-                      <input type="number" step="0.01" value={ingPrices[ing]??0}
-                        onChange={e=>setIngPrices(p=>({...p,[ing]:parseFloat(e.target.value)||0}))}
-                        className={`${inp} w-20 text-right`}/>
-                    </td>
-                  </tr>
-                ))}
+                {ALL_INGS.filter(mat=>PROC_SKUS.some(sku=>(bomQty[sku]?.[mat]??0)>0)).map(mat=>{
+                  const raw=isRawMat(mat);
+                  return (
+                    <tr key={mat} className="border-t border-border/60 hover:bg-muted/20">
+                      <td className="px-4 py-1.5 font-medium sticky left-0 bg-card">{mat}</td>
+                      <td className="px-2 py-1.5 text-center text-[10px] text-muted-foreground">{raw?"lbs":"units"}</td>
+                      {PROC_SKUS.map(sku=>{
+                        const qty=bomQty[sku]?.[mat]??0;
+                        const rawTotal=RAW_MATS.reduce((s,m)=>s+(bomQty[sku]?.[m]??0),0);
+                        const pct = raw && rawTotal>0 ? (qty/rawTotal)*100 : 0;
+                        if (bomView==="pct" && !raw) {
+                          return <td key={sku} className="px-2 py-1 text-center text-muted-foreground">{qty>0?qty:"—"}</td>;
+                        }
+                        const showVal = bomView==="qty" ? qty : pct;
+                        return <td key={sku} className="px-2 py-1 text-center">
+                          <input type="number" step={bomView==="qty"?"0.0001":"0.1"} min={0} value={showVal?Number(showVal.toFixed(bomView==="qty"?4:2)):""} placeholder="—"
+                            onChange={e=>{ const v=parseFloat(e.target.value)||0; bomView==="qty"?setBomQtyCell(sku,mat,v):setBomPctCell(sku,mat,v); }}
+                            className={`${inp} w-[70px] text-center ${qty>0?"font-semibold":"text-muted-foreground"}`}/>
+                        </td>;
+                      })}
+                      <td className="px-4 py-1.5 text-right">
+                        <input type="number" step="0.001" value={ingPrices[mat]??0}
+                          onChange={e=>setIngPrices(p=>({...p,[mat]:parseFloat(e.target.value)||0}))}
+                          className={`${inp} w-20 text-right`}/>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
-              <tfoot>
-                <tr className="border-t border-border bg-muted/10">
-                  <td className="px-4 py-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">Σ %</td>
-                  {SKUS.map(sku=>{
-                    const sum=ALL_INGS.reduce((s,ing)=>s+(bomPct[sku]?.[ing]??0),0);
-                    const ok=Math.abs(sum-100)<0.5;
-                    return <td key={sku} className={`px-2 py-1.5 text-center font-mono text-[10px] ${ok?"text-emerald-600":"text-orange-500 font-bold"}`}>{sum.toFixed(1)}%</td>;
-                  })}
-                  <td/>
-                </tr>
-              </tfoot>
+              {bomView==="pct" && (
+                <tfoot>
+                  <tr className="border-t border-border bg-muted/10">
+                    <td className="px-4 py-1.5 text-[10px] uppercase tracking-wide text-muted-foreground" colSpan={2}>Σ % (raw)</td>
+                    {PROC_SKUS.map(sku=>{
+                      const rawTotal=RAW_MATS.reduce((s,m)=>s+(bomQty[sku]?.[m]??0),0);
+                      const sum=rawTotal>0?100:0;
+                      return <td key={sku} className={`px-2 py-1.5 text-center font-mono text-[10px] ${sum>0?"text-emerald-600":"text-muted-foreground"}`}>{sum?sum.toFixed(0)+"%":"—"}</td>;
+                    })}
+                    <td/>
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
 
           <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-            <p className="text-xs font-semibold text-muted-foreground mb-3 uppercase tracking-wide">Tolling + Packaging ($/unit)</p>
-            <div className="grid grid-cols-3 md:grid-cols-5 gap-3">
-              {[["Tolling (Heinlein)","tolling_per_unit"],["Cup","cup_per_unit"],["Lid","lid_per_unit"],["Sealer","sealer_per_unit"],["Case $/case","case_per_case"]].map(([label,key])=>(
-                <div key={key}>
-                  <label className="text-[10px] text-muted-foreground uppercase tracking-wide font-semibold">{label}</label>
-                  <input type="number" step="0.001" value={prodCosts[key as keyof typeof prodCosts]}
-                    onChange={e=>setProdCosts(c=>({...c,[key]:parseFloat(e.target.value)||0}))}
-                    className={`${inp} mt-1 w-full`}/>
-                </div>
-              ))}
+            <p className="text-xs font-semibold text-muted-foreground mb-3 uppercase tracking-wide">Heinlein tolling ($/unit)</p>
+            <div className="w-40">
+              <input type="number" step="0.001" value={prodCosts.tolling_per_unit}
+                onChange={e=>setProdCosts(c=>({...c,tolling_per_unit:parseFloat(e.target.value)||0}))}
+                className={`${inp} w-full`}/>
             </div>
+            <p className="text-[11px] text-muted-foreground mt-2">Packaging (cups, lids, sealers, cases) now lives in the BOM above with its own price. COGS below applies each material's scrap % + overfill % from Raw Materials.</p>
           </div>
 
           <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
             <div className="px-5 py-3 border-b border-border bg-muted/30">
-              <p className="text-sm font-bold" style={{color:"#1C2340"}}>COGS unitario calculado</p>
-              <p className="text-xs text-muted-foreground">All inputs editable above</p>
+              <p className="text-sm font-bold" style={{color:"#1C2340"}}>COGS calculado (incluye scrap + overfill)</p>
             </div>
             <table className="w-full text-sm">
               <thead>
@@ -2992,7 +3120,7 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
                 </tr>
               </thead>
               <tbody>
-                {SKUS.map(sku=>{
+                {PROC_SKUS.map(sku=>{
                   const c=cogs[sku]; if(!c) return null;
                   return (
                     <tr key={sku} className="border-t border-border/60 hover:bg-muted/20">
@@ -3124,58 +3252,70 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
       {procTab==="raw_materials" && (
         <div className="space-y-3">
           <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-700">
-            💡 Enter current inventory. These values flow into the Shopping List. Update them after each receipt.
+            💡 Material master — UOM, scrap %, overfill %, lead time, price &amp; current stock. Scrap and overfill inflate purchase quantities in the Shopping List &amp; Payments; lead time drives the "order by" date. Stock feeds the Shopping List. All editable.
           </div>
-          <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
-            <table className="w-full text-sm">
+          <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
+            <table className="w-full text-sm min-w-max">
               <thead>
                 <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
-                  <th className="px-4 py-2.5 text-left">Material</th>
-                  <th className="px-4 py-2.5 text-right">Pack size (lbs)</th>
-                  <th className="px-4 py-2.5 text-center">Lead time (weeks)</th>
-                  <th className="px-4 py-2.5 text-right">Precio/lb</th>
-                  <th className="px-4 py-2.5 text-right">Stock actual (lbs)</th>
-                  <th className="px-4 py-2.5 text-right">Valor ($)</th>
-                  <th className="px-4 py-2.5 text-left">Notes / Lot</th>
+                  <th className="px-4 py-2.5 text-left sticky left-0 bg-muted/20">Material</th>
+                  <th className="px-3 py-2.5 text-center">Cat</th>
+                  <th className="px-3 py-2.5 text-center">UOM</th>
+                  <th className="px-3 py-2.5 text-center">Scrap %</th>
+                  <th className="px-3 py-2.5 text-center">Overfill %</th>
+                  <th className="px-3 py-2.5 text-center">Factor</th>
+                  <th className="px-3 py-2.5 text-center">Lead (wks)</th>
+                  <th className="px-3 py-2.5 text-right">Pack size</th>
+                  <th className="px-3 py-2.5 text-right">$/unit</th>
+                  <th className="px-3 py-2.5 text-right">Stock</th>
+                  <th className="px-3 py-2.5 text-right">Valor ($)</th>
                 </tr>
               </thead>
               <tbody>
                 {ALL_INGS.map(ing=>{
                   const inv=parseInt(ingInv[ing])||0;
                   const price=ingPrices[ing]??0;
+                  const raw=isRawMat(ing);
+                  const sc=matScrap[ing]??0, ov=matOverfill[ing]??0;
+                  const factor=(1+sc/100)*(1+ov/100);
                   return (
                     <tr key={ing} className="border-t border-border/60 hover:bg-muted/20">
-                      <td className="px-4 py-2 font-medium">{ing}</td>
-                      <td className="px-4 py-2 text-right font-mono text-muted-foreground">{(ING_PACK_SIZES[ing]??0).toLocaleString()}</td>
-                      <td className="px-4 py-2 text-center">
+                      <td className="px-4 py-2 font-medium sticky left-0 bg-card">{ing}</td>
+                      <td className="px-3 py-2 text-center text-[10px] text-muted-foreground">{raw?"Raw":"Pack"}</td>
+                      <td className="px-3 py-2 text-center text-[10px] text-muted-foreground">{raw?"lbs":"units"}</td>
+                      <td className="px-3 py-2 text-center">
+                        <input type="number" min={0} step={1} value={sc}
+                          onChange={e=>setMatScrap(m=>({...m,[ing]:parseFloat(e.target.value)||0}))} className={`${inp} w-14 text-center`}/>
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <input type="number" min={0} step={1} value={ov}
+                          onChange={e=>setMatOverfill(m=>({...m,[ing]:parseFloat(e.target.value)||0}))} className={`${inp} w-14 text-center`}/>
+                      </td>
+                      <td className="px-3 py-2 text-center font-mono text-[11px] text-muted-foreground">{factor.toFixed(3)}</td>
+                      <td className="px-3 py-2 text-center">
                         <input type="number" min={0} step={1} value={leadTimes[ing]??DEFAULT_LEAD_WEEKS}
-                          onChange={e=>setLeadTimes(l=>({...l,[ing]:parseInt(e.target.value)||0}))}
-                          className={`${inp} w-16 text-center`} title="Weeks from ordering to receiving"/>
+                          onChange={e=>setLeadTimes(l=>({...l,[ing]:parseInt(e.target.value)||0}))} className={`${inp} w-14 text-center`}/>
                       </td>
-                      <td className="px-4 py-2 text-right">
-                        <input type="number" step="0.01" value={ingPrices[ing]??0}
-                          onChange={e=>setIngPrices(p=>({...p,[ing]:parseFloat(e.target.value)||0}))}
-                          className={`${inp} w-20 text-right`}/>
+                      <td className="px-3 py-2 text-right font-mono text-muted-foreground">{(ING_PACK_SIZES[ing]??0).toLocaleString()}</td>
+                      <td className="px-3 py-2 text-right">
+                        <input type="number" step="0.001" value={price}
+                          onChange={e=>setIngPrices(p=>({...p,[ing]:parseFloat(e.target.value)||0}))} className={`${inp} w-20 text-right`}/>
                       </td>
-                      <td className="px-4 py-2 text-right">
+                      <td className="px-3 py-2 text-right">
                         <input type="number" min={0} value={ingInv[ing]??""}
                           onChange={e=>setIngInv(v=>({...v,[ing]:e.target.value}))}
-                          placeholder="0" className={`${inp} w-28 text-right ${inv>0?"bg-emerald-50":""}`}/>
+                          placeholder="0" className={`${inp} w-24 text-right ${inv>0?"bg-emerald-50":""}`}/>
                       </td>
-                      <td className="px-4 py-2 text-right font-mono text-muted-foreground">{inv>0?`$${(inv*price).toLocaleString()}`:"—"}</td>
-                      <td className="px-4 py-2">
-                        <input placeholder="Lot, date, vendor..." className={`${inp} w-full`}/>
-                      </td>
+                      <td className="px-3 py-2 text-right font-mono text-muted-foreground">{inv>0?`$${Math.round(inv*price).toLocaleString()}`:"—"}</td>
                     </tr>
                   );
                 })}
               </tbody>
               <tfoot>
                 <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
-                  <td className="px-4 py-2 font-semibold text-xs" colSpan={4}>TOTAL INVENTORY</td>
-                  <td className="px-4 py-2 text-right font-mono">{ALL_INGS.reduce((s,ing)=>s+(parseInt(ingInv[ing])||0),0).toLocaleString()} lbs</td>
-                  <td className="px-4 py-2 text-right font-mono font-bold text-emerald-400">${ALL_INGS.reduce((s,ing)=>{const inv=parseInt(ingInv[ing])||0;return s+inv*(ingPrices[ing]??0);},0).toLocaleString()}</td>
-                  <td/>
+                  <td className="px-4 py-2 font-semibold text-xs sticky left-0" style={{backgroundColor:"#1C2340"}} colSpan={9}>TOTAL INVENTORY VALUE</td>
+                  <td className="px-3 py-2 text-right font-mono">{ALL_INGS.reduce((s,ing)=>s+(parseInt(ingInv[ing])||0),0).toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right font-mono font-bold text-emerald-400">${Math.round(ALL_INGS.reduce((s,ing)=>{const inv=parseInt(ingInv[ing])||0;return s+inv*(ingPrices[ing]??0);},0)).toLocaleString()}</td>
                 </tr>
               </tfoot>
             </table>
