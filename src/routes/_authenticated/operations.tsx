@@ -133,7 +133,7 @@ function FPStockTab({ movements, orders, loading, baseline, lotMap }: { movement
   }, [movements]);
 
   // Aggregate lot on-hand into per-SKU and per-SKU/warehouse stock + $ value (from Lot Master COGS × 8).
-  const { bySku, whRows, cogsBySku } = useMemo(() => {
+  const { bySku, whRows, cogsBySku, valBySku } = useMemo(() => {
     const casesSku: Record<string, number> = {};
     const casesWh: Record<string, number> = {};
     const valWh: Record<string, number> = {};
@@ -165,7 +165,9 @@ function FPStockTab({ movements, orders, loading, baseline, lotMap }: { movement
       const [sku, warehouse] = k.split("|");
       return { sku, warehouse, cases: Math.max(0, c), value: Math.max(0, valWh[k] ?? 0) };
     });
-    return { bySku, whRows, cogsBySku };
+    const valBySku: Record<string, number> = {};
+    for (const sku of SKUS) valBySku[sku] = Math.max(0, valSku[sku] ?? 0);
+    return { bySku, whRows, cogsBySku, valBySku };
   }, [lots, movements, deltaByLot]);
 
   const forecastNextMonth = useMemo(() => {
@@ -185,6 +187,50 @@ function FPStockTab({ movements, orders, loading, baseline, lotMap }: { movement
 
   return (
     <div className="space-y-5">
+      {/* ── Total stock across ALL warehouses (as of today) ── */}
+      <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+        <div className="px-5 py-3 border-b border-border bg-muted/30">
+          <p className="text-sm font-bold" style={{color:"#1C2340"}}>📊 Total stock — all warehouses</p>
+          <p className="text-xs text-muted-foreground">Newark + Cold Chain + Linden · from Lot Master · as of {ymd()}</p>
+        </div>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
+              <th className="px-4 py-2.5 text-left">SKU</th>
+              <th className="px-4 py-2.5 text-left">Item #</th>
+              <th className="px-4 py-2.5 text-right">Stock (cajas)</th>
+              <th className="px-4 py-2.5 text-right">Potes</th>
+              <th className="px-4 py-2.5 text-right text-amber-700">Inv. $</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr><td colSpan={5} className="p-6 text-center text-muted-foreground">Loading…</td></tr>
+            ) : SKUS.map(sku => {
+              const cs = Math.round(bySku[sku] ?? 0);
+              const v = valBySku[sku] ?? 0;
+              return (
+                <tr key={sku} className="border-t border-border/60 hover:bg-muted/20">
+                  <td className="px-4 py-2 font-semibold" style={{color:"#1C2340"}}>{sku}</td>
+                  <td className="px-4 py-2 font-mono text-xs text-muted-foreground">{SKU_ITEMS[sku]}</td>
+                  <td className="px-4 py-2 text-right font-mono font-semibold">{cs.toLocaleString()}</td>
+                  <td className="px-4 py-2 text-right font-mono text-xs text-muted-foreground">{(cs*8).toLocaleString()}</td>
+                  <td className="px-4 py-2 text-right font-mono font-semibold" style={{color:"#A3224A"}}>{v?`$${Math.round(v).toLocaleString()}`:"—"}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+          <tfoot>
+            <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
+              <td className="px-4 py-2 text-xs font-semibold" colSpan={2}>TOTAL</td>
+              <td className="px-4 py-2 text-right font-mono font-bold">{SKUS.reduce((s,sku)=>s+Math.round(bySku[sku]??0),0).toLocaleString()}</td>
+              <td className="px-4 py-2 text-right font-mono text-slate-300">{SKUS.reduce((s,sku)=>s+Math.round(bySku[sku]??0)*8,0).toLocaleString()}</td>
+              <td className="px-4 py-2 text-right font-mono font-bold text-emerald-400">${Math.round(SKUS.reduce((s,sku)=>s+(valBySku[sku]??0),0)).toLocaleString()}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
       <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
         {SKUS.map(sku => {
           const qty = Math.round(bySku[sku] ?? 0);
@@ -212,20 +258,24 @@ function FPStockTab({ movements, orders, loading, baseline, lotMap }: { movement
         })}
       </div>
 
-      {(['Lineage Newark', 'other'] as const).map(wh => {
-        const isLineage = wh === 'Lineage Newark';
-        const rows = isLineage
+      {(['Lineage Newark', 'Cold Chain', 'Lineage Linden', 'other'] as const).map(wh => {
+        const isFixed = wh !== 'other';
+        const KNOWN = ['Lineage Newark', 'Cold Chain', 'Lineage Linden'];
+        const rows = isFixed
           ? SKUS.map(sku => {
-              const r = whRows.find(x => x.sku === sku && x.warehouse === 'Lineage Newark');
-              return r ?? { sku, warehouse: 'Lineage Newark', cases: 0, value: 0 };
+              const r = whRows.find(x => x.sku === sku && x.warehouse === wh);
+              return r ?? { sku, warehouse: wh, cases: 0, value: 0 };
             })
-          : whRows.filter(s => s.warehouse !== 'Lineage Newark' && s.cases > 0).sort((a, b) => a.sku.localeCompare(b.sku));
+          : whRows.filter(s => !KNOWN.includes(s.warehouse) && s.cases > 0).sort((a, b) => a.sku.localeCompare(b.sku));
         if (rows.length === 0) return null;
+        const isLineage = wh === 'Lineage Newark';
+        const whIcon = wh === 'Lineage Newark' ? '📦' : wh === 'Cold Chain' ? '❄️' : wh === 'Lineage Linden' ? '🏬' : '🏭';
+        const whTitle = isFixed ? `${whIcon} ${wh}` : '🏭 Other Warehouses';
         return (
           <div key={wh} className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
             <div className="px-5 py-3 border-b border-border bg-muted/30">
               <p className="text-sm font-semibold" style={{color:"#1C2340"}}>
-                {isLineage ? '📦 Lineage Newark' : '🏭 Other Warehouses'}
+                {whTitle}
               </p>
               <p className="text-xs text-muted-foreground">
                 From Lot Master · fixed {baselineDate} + later FP movements · as of {ymd()}
@@ -236,7 +286,7 @@ function FPStockTab({ movements, orders, loading, baseline, lotMap }: { movement
                 <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
                   <th className="px-4 py-2.5 text-left">SKU</th>
                   <th className="px-4 py-2.5 text-left">Item #</th>
-                  {!isLineage && <th className="px-4 py-2.5 text-left">Warehouse</th>}
+                  {!isFixed && <th className="px-4 py-2.5 text-left">Warehouse</th>}
                   <th className="px-4 py-2.5 text-right text-amber-700">Inv. $</th>
                   <th className="px-4 py-2.5 text-right">{showValue ? "Stock $" : "Stock (cajas)"}</th>
                   <th className="px-4 py-2.5 text-right">{showValue ? "Committed $" : "Committed"}</th>
@@ -262,7 +312,7 @@ function FPStockTab({ movements, orders, loading, baseline, lotMap }: { movement
                     <tr key={`${s.sku}|${s.warehouse}`} className="border-t border-border/60 hover:bg-muted/20">
                       <td className="px-4 py-2 font-semibold" style={{color:"#1C2340"}}>{s.sku}</td>
                       <td className="px-4 py-2 font-mono text-xs text-muted-foreground">{SKU_ITEMS[s.sku]}</td>
-                      {!isLineage && <td className="px-4 py-2 text-xs text-muted-foreground">{s.warehouse}</td>}
+                      {!isFixed && <td className="px-4 py-2 text-xs text-muted-foreground">{s.warehouse}</td>}
                       <td className="px-4 py-2 text-right font-mono font-semibold" style={{color:"#A3224A"}}>
                         {s.value ? `$${Math.round(s.value).toLocaleString()}` : <span className="text-muted-foreground text-xs">—</span>}
                       </td>
@@ -293,7 +343,7 @@ function FPStockTab({ movements, orders, loading, baseline, lotMap }: { movement
               </tbody>
               <tfoot>
                 <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
-                  <td className="px-4 py-2 text-xs font-semibold" colSpan={isLineage ? 2 : 3}>
+                  <td className="px-4 py-2 text-xs font-semibold" colSpan={isFixed ? 2 : 3}>
                     TOTAL ({rows.length} SKUs)
                   </td>
                   <td className="px-4 py-2 text-right font-mono font-semibold" style={{color:"#f87171"}}>
@@ -2823,7 +2873,26 @@ function ProcurementTab({ movements, orders, baseline, ipMovements }: { movement
   const planSkuByMonthKey = useMemo(()=>skuForecastByMonthKey(planForecast),[planForecast]);
   const fcstOps = useMemo(()=>buildOpsForecast(planSkuByMonthKey),[planSkuByMonthKey]);
 
-  const { bySku } = useMemo(()=>calcStockFromBaseline(baseline, movements),[baseline, movements]);
+  // Stock from Lot Master (all warehouses) — same source as FP Stock, so Schedule "available"
+  // = total stock (Newark + Cold Chain + Linden) − committed, matching FP Stock exactly.
+  const [procLots, setProcLots] = useState<any[]>([]);
+  useEffect(()=>{ (async()=>{ const { data } = await supabase.from("lot_master").select("sku,warehouse,cases_initial,lot_number,cogs_per_case").limit(10000); setProcLots(data ?? []); })(); },[]);
+  const bySku = useMemo(()=>{
+    const delta: Record<string,number> = {};
+    for (const m of (movements ?? [])) {
+      const lot=(m.lot_number ?? "").trim();
+      if(!lot || m.movement_date <= LOT_BASELINE_DATE) continue;
+      const k=`${lot}||${m.warehouse ?? "—"}`;
+      delta[k]=(delta[k]??0)+(m.type==="In"?Number(m.cases):-Number(m.cases));
+    }
+    const casesSku: Record<string,number> = {};
+    const seen=new Set<string>();
+    for (const r of procLots){ const k=`${r.lot_number}||${r.warehouse ?? "—"}`; seen.add(k); casesSku[r.sku]=(casesSku[r.sku]??0)+(Number(r.cases_initial)||0)+(delta[k]??0); }
+    for (const m of (movements ?? [])){ const lot=(m.lot_number??"").trim(); const k=`${lot}||${m.warehouse??"—"}`; if(!lot||seen.has(k)||m.movement_date<=LOT_BASELINE_DATE) continue; seen.add(k); casesSku[m.sku]=(casesSku[m.sku]??0)+(delta[k]??0); }
+    const out: Record<string,number> = {};
+    for (const sku of SKUS) out[sku]=Math.max(0,Math.round(casesSku[sku]??0));
+    return out;
+  },[procLots, movements]);
 
   const {plan,stockProj,ingNeeded,ingByMonth} = useMemo(
     ()=>calcProdSchedule(bySku,orders,safetyWoh,minRun,freqMonths,fcstOps,wipBySku,skuMinRuns,manualProd,optimizeTruck,bomQty,matScrap,matOverfill),
