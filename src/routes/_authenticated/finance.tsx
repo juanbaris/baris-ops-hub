@@ -1230,51 +1230,68 @@ function AssumptionsModal({ assumptions, onClose }: { assumptions: ReturnType<ty
 
 
 // ─── Cash Flow Tab ────────────────────────────────────────────────────────────
-function CashFlowTab({ actuals }: { actuals: Record<string, any> }) {
+function CashFlowTab({ actuals, actualOnly, scenario }: { actuals: Record<string, any>; actualOnly: boolean; scenario: Scenario }) {
   const cashCanvas = useRef<HTMLCanvasElement>(null);
-  const { effectiveForecast } = useSalesForecast();
   const { julyGrossSales } = useJulyRealFromFulfillment();
+  const scenarioForecast = useFinanceScenarioForecast(scenario); // "2026-8" -> $ (not $K)
   const assumptions = useFinanceAssumptions();
 
   const fcGrossByMonth: Record<number, number> = {};
-  for (const f of effectiveForecast) if (f.year === 2026) fcGrossByMonth[f.month-1] = f.revenue/1000;
+  for (let mo = 1; mo <= 12; mo++) {
+    const v = scenarioForecast[`2026-${mo}`];
+    if (v != null) fcGrossByMonth[mo-1] = v/1000;
+  }
   if (julyGrossSales != null) fcGrossByMonth[6] = julyGrossSales/1000;
 
-  // Single source of truth — identical to what the Balance Sheet shows.
+  // Single source of truth — identical to what the Balance Sheet shows (same scenario).
   const S = useMemo(
     () => buildFinanceForecast(actuals, fcGrossByMonth, assumptions.get),
-    [actuals, assumptions.rows, effectiveForecast, julyGrossSales]
+    [actuals, assumptions.rows, scenario, julyGrossSales]
   );
 
   const isReal = (i: number) => S[i].isBsReal || S[i].isPnlReal;
-  // A month is "reportable" on the cash flow only if we can compute its working-capital
-  // deltas — i.e. both this month and the previous month have balance-sheet figures.
   const hasBS = (i: number) => S[i].ar != null && S[i].inventory != null && S[i].cash != null;
 
-  // Indirect cash flow, entirely derived from the P&L (Net Income) and the Balance Sheet
-  // (working-capital deltas). A month is blank if we can't bridge it (e.g. March has no
-  // balance sheet yet, so March and April deltas can't be computed until it's loaded).
+  // In Actual mode show only real months; in Forecast mode show all 12.
+  const visIdx = MONTHS.map((_,i)=>i).filter(i => actualOnly ? isReal(i) : true);
+
+  // Real Other Income ($K) per month, from the P&L — this is "Interest / Other Income".
+  const otherIncomeK = (i: number): number|null => {
+    const d = actuals[PERIODS[i]]?.pnl_detail;
+    if (d) return Number(d.other_income ?? 0)/1000;
+    return S[i].hasPnl ? 0 : null; // forecast: assume ~0 unless modeled
+  };
+  // Capital Contributions ($K) for a month, from the Balance Sheet.
+  const capitalK = (i: number): number|null => (S[i].isBsReal || S[i].isForecast) ? S[i].capital : null;
+
   const N = 12;
   const netIncome: (number|null)[] = [], dAR: (number|null)[] = [], dInv: (number|null)[] = [],
-        dAP: (number|null)[] = [], cfo: (number|null)[] = [],
+        dAP: (number|null)[] = [], cfo: (number|null)[] = [], cfi: (number|null)[] = [],
+        dCapital: (number|null)[] = [], interest: (number|null)[] = [],
         cashBop: (number|null)[] = [], cashEop: (number|null)[] = [];
 
   for (let i = 0; i < N; i++) {
     const m = S[i], prev = i > 0 ? S[i-1] : null;
     netIncome[i] = m.netIncome;
     cashEop[i] = m.cash;
+    interest[i] = otherIncomeK(i);
 
     const canBridge = hasBS(i) && prev != null && prev.ar != null && prev.inventory != null && prev.cash != null;
     if (canBridge) {
-      dAR[i]  = -((m.ar as number) - (prev!.ar as number));            // AR up → cash down
-      dInv[i] = -((m.inventory as number) - (prev!.inventory as number));// Inv up → cash down
+      dAR[i]  = -((m.ar as number) - (prev!.ar as number));
+      dInv[i] = -((m.inventory as number) - (prev!.inventory as number));
       const apNow = (m.creditCards ?? 0) + (m.accrued ?? 0);
       const apPrev = (prev!.creditCards ?? 0) + (prev!.accrued ?? 0);
-      dAP[i]  = (apNow - apPrev);                                       // Payables up → cash up
+      dAP[i]  = (apNow - apPrev);
       cashBop[i] = prev!.cash as number;
-      cfo[i] = (m.cash as number) - (prev!.cash as number);            // actual cash movement (ties to BS)
+      cfo[i] = (m.cash as number) - (prev!.cash as number);
+      // Investing: change in Capital Contributions month-over-month (new investment rounds).
+      const capNow = capitalK(i), capPrev = capitalK(i-1);
+      dCapital[i] = (capNow != null && capPrev != null) ? (capNow - capPrev) : null;
+      cfi[i] = (dCapital[i] ?? 0) + (interest[i] ?? 0);
     } else {
       dAR[i] = null; dInv[i] = null; dAP[i] = null; cfo[i] = null; cashBop[i] = null;
+      dCapital[i] = null; cfi[i] = null;
     }
   }
 
@@ -1291,8 +1308,6 @@ function CashFlowTab({ actuals }: { actuals: Record<string, any> }) {
       datasets: [
         { label: 'Cash EOP (real)', data: cashEop.map((v,i)=>S[i].isBsReal?v:null), borderColor:'#1C2340', backgroundColor:'rgba(28,35,64,0.1)', tension:0.3, fill:true, pointRadius:5, spanGaps:true },
         { label: 'Cash EOP (forecast)', data: cashEop.map((v,i)=>{
-            // include the last real month as the forecast line's starting point so there's no gap,
-            // but don't draw a marker on that bridge point (it belongs to the real series).
             const firstForecast = S.findIndex(x=>x.isForecast);
             return (S[i].isForecast || (firstForecast>0 && i===firstForecast-1)) ? v : null;
           }),
@@ -1302,7 +1317,7 @@ function CashFlowTab({ actuals }: { actuals: Record<string, any> }) {
       ]
     },
     options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{ position:'bottom', labels:{ boxWidth:12, font:{ size:11 } } } }, scales:{ y:{ ticks:{ callback:(v:number)=>'$'+v+'K' } } } }
-  }), [S]);
+  }), [S, actualOnly]);
 
   type CFRow = { name: string; type?: string; indent?: boolean; data: (number|null)[] };
   const cfRows: CFRow[] = [
@@ -1312,6 +1327,9 @@ function CashFlowTab({ actuals }: { actuals: Record<string, any> }) {
     { name: 'Inventory', indent:true,            data: dInv },
     { name: 'Accounts Payable & Accrued', indent:true, data: dAP },
     { name: 'Cash from Operations',       type:'total', data: cfo },
+    { name: 'Cash from Investing',        type:'sub', data: cfi },
+    { name: 'Capital Contributions', indent:true, data: dCapital },
+    { name: 'Interest / Other Income', indent:true, data: interest },
     { name: 'Cash — Beginning of Month',         data: cashBop },
     { name: 'Cash — End of Month',        type:'total', data: cashEop },
   ];
@@ -1336,36 +1354,42 @@ function CashFlowTab({ actuals }: { actuals: Record<string, any> }) {
           <thead>
             <tr className="border-b border-border bg-muted/50">
               <th className="text-left px-4 py-2.5 text-[10px] uppercase tracking-wide text-muted-foreground w-52">Line</th>
-              {MONTHS.map((mo,i) => (
-                <th key={mo} className="text-right px-2 py-2.5 text-[10px] uppercase w-12"
-                  style={{color: S[i].isBsReal || S[i].isPnlReal ? "#1C2340" : "#C9A3B5"}}>{mo}</th>
+              {visIdx.map((i) => (
+                <th key={MONTHS[i]} className="text-right px-2 py-2.5 text-[10px] uppercase w-12"
+                  style={{color: isReal(i) ? "#1C2340" : "#C9A3B5"}}>{MONTHS[i]}</th>
               ))}
-              <th className="text-right px-2 py-2.5 text-[10px] uppercase text-muted-foreground w-14">FY</th>
+              <th className="text-right px-2 py-2.5 text-[10px] uppercase text-muted-foreground w-14">{actualOnly ? "YTD" : "FY"}</th>
             </tr>
           </thead>
           <tbody>
             {cfRows.map((row, ri) => {
               const isTotal = row.type === 'total';
               const isSub = row.type === 'sub';
-              const fyVals = row.data.filter((v): v is number => v != null);
-              const fy = row.name.startsWith('Cash —') ? (row.data[11] ?? null) : (fyVals.length ? fyVals.reduce((a,b)=>a+b,0) : null);
+              const visVals = visIdx.map(i => row.data[i]);
+              const fyVals = visVals.filter((v): v is number => v != null);
+              const fy = row.name.startsWith('Cash —')
+                ? (row.data[visIdx[visIdx.length-1]] ?? null)
+                : (fyVals.length ? fyVals.reduce((a,b)=>a+b,0) : null);
               return (
                 <tr key={ri} className={`border-t border-border/40 hover:bg-muted/20 ${isTotal ? "font-bold bg-muted/10" : ""} ${isSub ? "font-semibold" : ""}`}>
                   <td className={`px-4 py-1.5 ${isTotal||isSub ? "" : "text-muted-foreground"} ${row.indent ? "pl-10" : ""}`}
                     style={{color:"#1C2340"}}>{row.name}</td>
-                  {row.data.map((v,i) => (
+                  {visIdx.map((i) => {
+                    const v = row.data[i];
+                    return (
                     <td key={i} className="text-right px-2 py-1.5 font-mono tabular-nums"
                       style={{
                         color: v == null ? "#D1D5DB"
                           : v === 0 ? "#9CA3AF"
-                          : S[i].isBsReal || S[i].isPnlReal
+                          : isReal(i)
                             ? (v < 0 ? "#EF4444" : "#10B981")
                             : (v < 0 ? "#F3B8C4" : "#8FD9BC"),
-                        fontWeight: (S[i].isBsReal || S[i].isPnlReal) ? 700 : 400,
+                        fontWeight: isReal(i) ? 700 : 400,
                       }}>
                       {v == null ? "—" : v === 0 ? "—" : fmt(v,0)}
                     </td>
-                  ))}
+                    );
+                  })}
                   <td className="text-right px-2 py-1.5 font-mono font-semibold tabular-nums"
                     style={{color: fy == null ? "#D1D5DB" : fy < 0 ? "#EF4444" : fy > 0 ? "#10B981" : "#9CA3AF"}}>
                     {fy == null ? "—" : fy === 0 ? "—" : fmt(fy,0)}
@@ -1446,13 +1470,17 @@ const BS_ROWS: BSNode[] = [
   {id:"t-liab-equity",label:"TOTAL LIABILITIES AND EQUITY",kind:"total",indent:0,forecastFn:(m,i)=>m.total_assets[i]},
 ];
 
-function BalanceTab({ realMonths, actuals }: { realMonths: number; actuals: Record<string,any> }) {
+function BalanceTab({ realMonths, actuals, actualOnly, scenario }: { realMonths: number; actuals: Record<string,any>; actualOnly: boolean; scenario: Scenario }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(
     new Set(["g-bank","g-ar","g-inv","g-fixed","g-cc","g-other-liab","g-capital"])
   );
-  const { effectiveForecast } = useSalesForecast();
   const { julyGrossSales } = useJulyRealFromFulfillment();
+  const scenarioForecast = useFinanceScenarioForecast(scenario);
   const assumptions = useFinanceAssumptions();
+
+  // Manual forecast adjustment: move $X from Bank into Inventory (or vice-versa) per forecast month.
+  // Positive = extra inventory (cash goes down by the same amount). Keyed by month index.
+  const [invAdjust, setInvAdjust] = useState<Record<number, number>>({});
 
   // bs_detail per period (real, wherever Accountfully sent a balance sheet snapshot)
   const bsByPeriod = useMemo(() => {
@@ -1466,7 +1494,7 @@ function BalanceTab({ realMonths, actuals }: { realMonths: number; actuals: Reco
   }, [bsByPeriod]);
 
   const fcGrossByMonth: Record<number, number> = {}; // month index 0-11 -> $K, Gross Sales
-  for (const f of effectiveForecast) if (f.year === 2026) fcGrossByMonth[f.month-1] = f.revenue/1000;
+  for (let mo = 1; mo <= 12; mo++) { const v = scenarioForecast[`2026-${mo}`]; if (v != null) fcGrossByMonth[mo-1] = v/1000; }
   if (julyGrossSales != null) fcGrossByMonth[6] = julyGrossSales/1000;
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1475,13 +1503,15 @@ function BalanceTab({ realMonths, actuals }: { realMonths: number; actuals: Reco
   // ═══════════════════════════════════════════════════════════════════════════
   const S = useMemo(
     () => buildFinanceForecast(actuals, fcGrossByMonth, assumptions.get),
-    [actuals, assumptions.rows, effectiveForecast, julyGrossSales]
+    [actuals, assumptions.rows, scenario, julyGrossSales]
   );
+  // Apply the manual inventory/bank adjustment (inversely proportional) for forecast months.
+  const adj = (idx: number) => (S[idx]?.isForecast ? (invAdjust[idx] ?? 0) : 0);
   const forecastAR = (idx: number) => S[idx].ar ?? 0;
-  const forecastFinishedGoods = (idx: number) => S[idx].fg ?? 0;
+  const forecastFinishedGoods = (idx: number) => (S[idx].fg ?? 0) + adj(idx); // adjustment lands on FG
   const forecastRawMaterials = (idx: number) => S[idx].rm ?? 0;
-  const forecastInventory = (idx: number) => S[idx].inventory ?? 0;
-  const forecastCash = (idx: number) => S[idx].cash ?? 0;
+  const forecastInventory = (idx: number) => (S[idx].inventory ?? 0) + adj(idx);
+  const forecastCash = (idx: number) => (S[idx].cash ?? 0) - adj(idx);         // inversely proportional
   const avgCreditCardsK = S.find(m => m.isForecast)?.creditCards ?? 0;
   const accruedK = S.find(m => m.isForecast)?.accrued ?? 10.34;
   const fwdLoansShK = S.find(m => m.isForecast)?.loansSh ?? 0;
@@ -1493,6 +1523,9 @@ function BalanceTab({ realMonths, actuals }: { realMonths: number; actuals: Reco
   const fwdRetEarnK = S.find(m => m.isForecast)?.retEarn ?? -1548.94;
   const forecastNetIncEq = (idx: number) => S[idx].netIncEq ?? 0;
   const forecastEquityK = (idx: number) => S[idx].totalEquity ?? 0;
+
+  const isRealMonthFn = (idx: number) => !!bsByPeriod[PERIODS[idx]];
+  const visIdx = MONTHS.map((_,i)=>i).filter(i => actualOnly ? isRealMonthFn(i) : true);
 
   const childMap = useMemo(() => {
     const map: Record<string, string[]> = {};
@@ -1618,17 +1651,21 @@ function BalanceTab({ realMonths, actuals }: { realMonths: number; actuals: Reco
   }
 
   const indentPx = [0, 16, 28, 40];
+  const firstFcIdx = S.findIndex(x => x.isForecast);
 
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
         <button onClick={() => setCollapsed(new Set())} className="rounded-full border border-border px-2 py-0.5 hover:bg-muted">Expand all</button>
         <button onClick={() => setCollapsed(new Set(BS_ROWS.filter(r=>r.kind==="group").map(r=>r.id)))} className="rounded-full border border-border px-2 py-0.5 hover:bg-muted">Collapse all</button>
+        {Object.keys(invAdjust).length > 0 && (
+          <button onClick={() => setInvAdjust({})} className="rounded-full border border-amber-300 bg-amber-50 text-amber-700 px-2 py-0.5 hover:bg-amber-100">↺ Reset inventory edits</button>
+        )}
         <span className="flex items-center gap-1">
           <span className="h-2 w-2 rounded-full bg-emerald-500 inline-block"/>
           <strong className="text-foreground">Bold</strong> = Accountfully real snapshot
         </span>
-        <span className="opacity-60">Gray = forecast · AR from distributor terms (KeHE/UNFI 30d, Rainforest 60d) · Finished Goods sells down through Dec; Raw Materials build Oct–Nov (~$600K) for the Dec run, which converts RM→FG · Cash is the balancing figure so Assets = Liab + Equity every month · Credit Cards = avg of real months</span>
+        <span className="opacity-60">Gray = forecast · edit forecast Inventory in the row below (Bank moves inversely, $-for-$) · Cash is the balancing figure so Assets = Liab + Equity every month</span>
       </div>
 
       <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
@@ -1636,10 +1673,10 @@ function BalanceTab({ realMonths, actuals }: { realMonths: number; actuals: Reco
           <thead>
             <tr className="bg-muted/50 border-b border-border">
               <th className="text-left px-4 py-2.5 font-semibold text-[10px] uppercase tracking-wide text-muted-foreground min-w-[240px]">Line</th>
-              {MONTHS.map((mo, i) => (
-                <th key={mo} className="text-right px-2 py-2.5 text-[10px] uppercase tracking-wide w-12"
+              {visIdx.map((i) => (
+                <th key={MONTHS[i]} className="text-right px-2 py-2.5 text-[10px] uppercase tracking-wide w-12"
                   style={{color: isRealMonth(i) ? "#1C2340" : "#9CA3AF"}}>
-                  {mo}
+                  {MONTHS[i]}
                   <div className="text-[8px]">{isRealMonth(i) ? "A" : "F"}</div>
                 </th>
               ))}
@@ -1649,15 +1686,15 @@ function BalanceTab({ realMonths, actuals }: { realMonths: number; actuals: Reco
             {BS_ROWS.filter(r => isVisible(r)).map(row => {
               if (row.kind === "section") return (
                 <tr key={row.id}>
-                  <td colSpan={13} className="px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-white" style={{backgroundColor:"#1C2340"}}>{row.label}</td>
+                  <td colSpan={visIdx.length+1} className="px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-white" style={{backgroundColor:"#1C2340"}}>{row.label}</td>
                 </tr>
               );
               const isGroup = row.kind === "group";
               const isTotal = row.kind === "total";
               const isOpen = !collapsed.has(row.id);
-              const vals = MONTHS.map((_, i) => getValue(row, i));
+              const vals = visIdx.map((i) => getValue(row, i));
 
-              return (
+              const rows = [(
                 <tr key={row.id} className={`border-t border-border/40 hover:bg-muted/20 ${isTotal && row.indent === 0 ? "bg-muted/10 font-semibold" : ""}`}>
                   <td className="px-4 py-1.5" style={{paddingLeft: `${16+indentPx[row.indent]}px`, color:"#1C2340"}}>
                     <span className="flex items-center gap-1.5">
@@ -1673,14 +1710,38 @@ function BalanceTab({ realMonths, actuals }: { realMonths: number; actuals: Reco
                       </span>
                     </span>
                   </td>
-                  {vals.map((v, i) => (
+                  {vals.map((v, k) => {
+                    const i = visIdx[k];
+                    return (
                     <td key={i} className="text-right px-2 py-1.5 font-mono tabular-nums"
                       style={{color: isRealMonth(i) ? "#1C2340" : "#9CA3AF", fontWeight: isRealMonth(i) ? 700 : 400}}>
                       {v == null || v === 0 ? "—" : isRealMonth(i) ? fmtExact(v) : fmt(v, 0)}
                     </td>
-                  ))}
+                    );
+                  })}
                 </tr>
-              );
+              )];
+
+              // Editable adjustment row directly under Total Inventory (forecast months only).
+              if (row.id === "t-inv" && !actualOnly && firstFcIdx >= 0) {
+                rows.push(
+                  <tr key="inv-edit" className="border-t border-dashed border-amber-200 bg-amber-50/40">
+                    <td className="px-4 py-1.5 text-[10px] italic text-amber-700" style={{paddingLeft: 20}}>
+                      ✎ Adjust forecast inventory (± $K) — Bank moves inversely
+                    </td>
+                    {visIdx.map((i) => (
+                      <td key={i} className="text-right px-1 py-1">
+                        {S[i]?.isForecast ? (
+                          <input type="number" step={10} value={invAdjust[i] ?? 0}
+                            onChange={e => setInvAdjust(prev => ({ ...prev, [i]: Number(e.target.value) }))}
+                            className="w-12 rounded border border-amber-300 px-1 py-0.5 text-[10px] text-right font-mono bg-white focus:outline-none focus:ring-1 focus:ring-amber-400" />
+                        ) : <span className="text-muted-foreground text-[10px]">—</span>}
+                      </td>
+                    ))}
+                  </tr>
+                );
+              }
+              return rows;
             })}
           </tbody>
         </table>
@@ -1934,6 +1995,7 @@ function FinancePage() {
   const [period, setPeriod] = useState<Period>("fy");
   const [refMonth, setRefMonth] = useState(6); // Jul
   const [scenario, setScenario] = useState<"Forecast"|"Actual">("Actual");
+  const [projScenario, setProjScenario] = useState<Scenario>("Normal");
 
   // ── Actuals from Supabase ──
   const [actuals, setActuals] = useState<Record<string, any>>({});
@@ -2355,10 +2417,38 @@ RULES:
         </div>
       )}
 
+      {(tab === "cashflow" || tab === "balance") && (
+        <div className="flex items-center gap-4 flex-wrap">
+          <div className="flex gap-1 rounded-xl bg-muted p-1">
+            {(["Forecast","Actual"] as const).map(s => (
+              <button key={s} onClick={() => setScenario(s)}
+                className={`rounded-lg px-3 py-1 text-xs font-semibold transition-colors ${scenario===s ? "text-white shadow-sm" : "text-muted-foreground"}`}
+                style={scenario===s ? {backgroundColor:"#1C2340"} : {}}>
+                {s}
+              </button>
+            ))}
+          </div>
+          {scenario === "Forecast" && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">Scenario</span>
+              <div className="flex gap-1 rounded-xl bg-muted p-1">
+                {(["Pessimistic","Normal","Optimistic"] as Scenario[]).map(s => (
+                  <button key={s} onClick={() => setProjScenario(s)}
+                    className={`rounded-lg px-3 py-1 text-xs font-semibold transition-colors ${projScenario===s ? "text-white shadow-sm" : "text-muted-foreground"}`}
+                    style={projScenario===s ? {backgroundColor:"#A3224A"} : {}}>
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {tab === "dashboard" && <DashboardTab period={period} refMonth={refMonth} actuals={actuals} realMonths={realMonths} actualOnly={actualOnly} />}
       {tab === "pnl"       && <PNLTab realMonths={realMonths} actuals={actuals} actualOnly={actualOnly} />}
-      {tab === "cashflow"  && <CashFlowTab actuals={actuals} />}
-      {tab === "balance"   && <BalanceTab realMonths={realMonths} actuals={actuals} />}
+      {tab === "cashflow"  && <CashFlowTab actuals={actuals} actualOnly={actualOnly} scenario={projScenario} />}
+      {tab === "balance"   && <BalanceTab realMonths={realMonths} actuals={actuals} actualOnly={actualOnly} scenario={projScenario} />}
       {tab === "runway"    && <RunwayTab />}
       {tab === "ebitda"    && <EBITDATab />}
     </div>
