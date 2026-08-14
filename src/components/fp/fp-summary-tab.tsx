@@ -49,11 +49,15 @@ function sortWarehouses(list: string[]): string[] {
 }
 
 const UNITS_PER_CASE = 8;
+// Accumulated inventory anchors to the Lot Master snapshot as of this date;
+// only FP movements AFTER it move the current-month (and later) closing balance.
+const LOT_BASELINE = "2026-08-14";
 const monthLabel = (m: string) => m.slice(2).replace("-", "/");
 
 export function FPSummaryTab() {
   const [movements, setMovements] = useState<Mv[]>([]);
   const [lotMap, setLotMap] = useState<Record<string, LotCard>>({});
+  const [lotRows, setLotRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [month, setMonth] = useState<string>("all");
 
@@ -65,9 +69,10 @@ export function FPSummaryTab() {
           .select("movement_date, type, sku, cases, lot_number, concept, warehouse, cogs_per_case")
           .order("movement_date")
           .limit(10000),
-        supabase.from("lot_master").select("lot_number,cogs_per_case,cogs_status,expiry_date,sku"),
+        supabase.from("lot_master").select("lot_number,sku,warehouse,cases_initial,cogs_per_case,cogs_status,expiry_date"),
       ]);
       setMovements((mv.data as unknown as Mv[]) ?? []);
+      setLotRows(lots.data ?? []);
       setLotMap(buildLotMap(lots.data ?? []));
       setLoading(false);
     })();
@@ -140,50 +145,76 @@ export function FPSummaryTab() {
 
   const anyMissing = rows.some((r) => r.cogsMissing);
 
-  // ── Accumulated inventory over time, broken down by warehouse ─────────────
+  // ── Accumulated inventory over time, by warehouse ──────────────────────────
+  //   Months BEFORE the Lot Master baseline month: accumulated from FP movements (fixed history).
+  //   Baseline month (current) & later: anchored to the Lot Master snapshot as of LOT_BASELINE,
+  //   then moved only by FP movements dated AFTER LOT_BASELINE. So the current month's closing
+  //   always equals Lot Master today; month-end shows how the month closed.
   const { monthList, whList, accCases, accValue } = useMemo(() => {
     const mList = [...new Set(movements.map((m) => m.movement_date.slice(0, 7)))].sort();
+    const CUR = LOT_BASELINE.slice(0, 7); // baseline month, e.g. "2026-08"
+    if (!mList.includes(CUR)) { mList.push(CUR); mList.sort(); }
+
     const whSet = new Set<string>(ALWAYS_SHOW_WAREHOUSES);
     for (const m of movements) if (m.warehouse) whSet.add(m.warehouse);
+    for (const r of lotRows) if (r.warehouse) whSet.add(r.warehouse);
     for (const h of HIDDEN_WAREHOUSES) whSet.delete(h);
     const whs = sortWarehouses([...whSet]);
 
-    // running balances keyed by sku|wh
-    const balCases: Record<string, number> = {};
-    const balValue: Record<string, number> = {};
-    const sorted = [...movements].sort((a, b) => a.movement_date.localeCompare(b.movement_date));
-
-    // snapshots[monthIndex][sku][wh] = closing balance at end of that month
     const snapC: Record<string, Record<string, Record<string, number>>> = {};
     const snapV: Record<string, Record<string, Record<string, number>>> = {};
-    const takeSnap = (mo: string) => {
+    const take = (mo: string, balC: Record<string, number>, balV: Record<string, number>) => {
       const c: Record<string, Record<string, number>> = {};
       const v: Record<string, Record<string, number>> = {};
       for (const sku of SKUS) {
         c[sku] = {}; v[sku] = {};
-        for (const wh of whs) {
-          c[sku][wh] = balCases[`${sku}|${wh}`] ?? 0;
-          v[sku][wh] = balValue[`${sku}|${wh}`] ?? 0;
-        }
+        for (const wh of whs) { c[sku][wh] = balC[`${sku}|${wh}`] ?? 0; v[sku][wh] = balV[`${sku}|${wh}`] ?? 0; }
       }
       snapC[mo] = c; snapV[mo] = v;
     };
 
+    // ── Phase 1: historical accumulation for months < CUR ──
+    const balCases: Record<string, number> = {};
+    const balValue: Record<string, number> = {};
+    const sorted = [...movements].sort((a, b) => a.movement_date.localeCompare(b.movement_date));
     let mi = 0;
+    const histMonths = mList.filter((m) => m < CUR);
     for (const mv of sorted) {
       const mo = mv.movement_date.slice(0, 7);
-      while (mi < mList.length && mList[mi] < mo) { takeSnap(mList[mi]); mi++; }
-      const cases = Number(mv.cases);
-      const signed = mv.type === "In" ? cases : -cases;
+      while (mi < histMonths.length && histMonths[mi] < mo) { take(histMonths[mi], balCases, balValue); mi++; }
+      if (mo >= CUR) continue; // stop feeding once we reach the baseline month
+      const signed = mv.type === "In" ? Number(mv.cases) : -Number(mv.cases);
       const key = `${mv.sku}|${mv.warehouse}`;
       balCases[key] = (balCases[key] ?? 0) + signed;
       const { cogs: pote } = resolveCogs(mv, lotMap);
       if (pote != null) balValue[key] = (balValue[key] ?? 0) + signed * pote * 8;
     }
-    while (mi < mList.length) { takeSnap(mList[mi]); mi++; }
+    while (mi < histMonths.length) { take(histMonths[mi], balCases, balValue); mi++; }
+
+    // ── Phase 2: baseline month & later anchored to Lot Master snapshot ──
+    const curC: Record<string, number> = {};
+    const curV: Record<string, number> = {};
+    for (const r of lotRows) {
+      const key = `${r.sku}|${r.warehouse ?? "—"}`;
+      const cases = Number(r.cases_initial) || 0;
+      curC[key] = (curC[key] ?? 0) + cases;
+      curV[key] = (curV[key] ?? 0) + cases * (Number(r.cogs_per_case) || 0) * 8;
+    }
+    for (const mo of mList.filter((m) => m >= CUR)) {
+      for (const mv of sorted) {
+        if (mv.movement_date.slice(0, 7) !== mo) continue;
+        if (mv.movement_date <= LOT_BASELINE) continue; // ≤ baseline is already in the snapshot
+        const signed = mv.type === "In" ? Number(mv.cases) : -Number(mv.cases);
+        const key = `${mv.sku}|${mv.warehouse}`;
+        curC[key] = (curC[key] ?? 0) + signed;
+        const { cogs: pote } = resolveCogs(mv, lotMap);
+        if (pote != null) curV[key] = (curV[key] ?? 0) + signed * pote * 8;
+      }
+      take(mo, curC, curV);
+    }
 
     return { monthList: mList, whList: whs, accCases: snapC, accValue: snapV };
-  }, [movements, lotMap]);
+  }, [movements, lotMap, lotRows]);
 
   // ── Monthly COGS of sales (net: Out adds, In/return subtracts) ────────────
   const salesByMonth = useMemo(() => {
