@@ -583,6 +583,21 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
                 </tr>
               ))}
           </tbody>
+          {!loading && filtered.length > 0 && (() => {
+            const totCases = filtered.reduce((s, r) => s + Number(r.cases || 0), 0);
+            const totValue = filtered.reduce((s, r) => { const { cogs } = resolveCogs(r, lotMap); return s + (cogs != null ? Number(r.cases || 0) * cogs * 8 : 0); }, 0);
+            return (
+              <tfoot>
+                <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
+                  <td className="px-4 py-2 text-xs font-semibold" colSpan={3}>TOTAL ({filtered.length} mov.)</td>
+                  <td className="px-4 py-2 text-right font-mono font-bold">{totCases.toLocaleString()}</td>
+                  <td/>
+                  <td className="px-4 py-2 text-right font-mono font-bold text-emerald-400">${Math.round(totValue).toLocaleString()}</td>
+                  <td colSpan={5}/>
+                </tr>
+              </tfoot>
+            );
+          })()}
         </table>
       </div>
     </div>
@@ -620,6 +635,9 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
   const [filterConcept, setFilterConcept] = useState("all");
   const [filterType, setFilterType] = useState("all");
   const [filterMaterial, setFilterMaterial] = useState("all");
+  const [filterWarehouse, setFilterWarehouse] = useState("all");
+  const [filterReceived, setFilterReceived] = useState("all");
+  const [filterPaid, setFilterPaid] = useState("all");
   const [sortCol, setSortCol] = useState<"date"|"material"|"qty">("date");
   const [sortDir, setSortDir] = useState<"asc"|"desc">("desc");
 
@@ -725,14 +743,19 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
   }
 
   const materials = useMemo(() => [...new Set(movements.map(r => r.material))].sort(), [movements]);
+  const warehouses = useMemo(() => [...new Set(movements.map(r => (r as any).warehouse).filter(Boolean))].sort(), [movements]);
 
   const filtered = useMemo(() => {
     return [...movements]
-      .filter(r =>
-        (filterConcept  === "all" || r.concept  === filterConcept) &&
+      .filter(r => {
+        const rr = r as any;
+        return (filterConcept  === "all" || r.concept  === filterConcept) &&
         (filterType     === "all" || r.type     === filterType) &&
-        (filterMaterial === "all" || r.material === filterMaterial)
-      )
+        (filterMaterial === "all" || r.material === filterMaterial) &&
+        (filterWarehouse === "all" || rr.warehouse === filterWarehouse) &&
+        (filterReceived === "all" || (filterReceived === "yes" ? (rr.received ?? false) : !(rr.received ?? false))) &&
+        (filterPaid === "all" || (filterPaid === "yes" ? (rr.paid ?? false) : !(rr.paid ?? false)));
+      })
       .sort((a, b) => {
         let cmp = 0;
         if (sortCol === "date")     cmp = a.movement_date.localeCompare(b.movement_date);
@@ -740,7 +763,7 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
         if (sortCol === "qty")      cmp = Number(a.quantity) - Number(b.quantity);
         return sortDir === "asc" ? cmp : -cmp;
       });
-  }, [movements, filterConcept, filterType, filterMaterial, sortCol, sortDir]);
+  }, [movements, filterConcept, filterType, filterMaterial, filterWarehouse, filterReceived, filterPaid, sortCol, sortDir]);
 
   function toggleSort(col: "date"|"material"|"qty") {
     if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc");
@@ -896,6 +919,23 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
           <option value="all">All materials</option>
           {materials.map(m => <option key={m} value={m}>{m}</option>)}
         </select>
+        <select value={filterWarehouse} onChange={e => setFilterWarehouse(e.target.value)}
+          className="rounded-lg border border-border bg-background px-2 py-1 text-xs focus:outline-none">
+          <option value="all">All warehouses</option>
+          {warehouses.map(w => <option key={w} value={w}>{w}</option>)}
+        </select>
+        <select value={filterReceived} onChange={e => setFilterReceived(e.target.value)}
+          className="rounded-lg border border-border bg-background px-2 py-1 text-xs focus:outline-none">
+          <option value="all">Received: all</option>
+          <option value="yes">Received ✓</option>
+          <option value="no">Not received</option>
+        </select>
+        <select value={filterPaid} onChange={e => setFilterPaid(e.target.value)}
+          className="rounded-lg border border-border bg-background px-2 py-1 text-xs focus:outline-none">
+          <option value="all">Paid: all</option>
+          <option value="yes">Paid ✓</option>
+          <option value="no">Not paid</option>
+        </select>
         <span className="rounded-full bg-muted px-2.5 py-1 font-mono text-[11px] text-muted-foreground">
           {filtered.length} records
         </span>
@@ -994,6 +1034,18 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
                 );
               })}
           </tbody>
+          {!loading && filtered.length > 0 && (() => {
+            const totCost = filtered.reduce((s, r) => { const rr = r as any; return s + Number(rr.total_price || 0) + Number(rr.shipping_price || 0) + Number(rr.other_costs || 0); }, 0);
+            return (
+              <tfoot>
+                <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
+                  <td className="px-3 py-2 text-xs font-semibold" colSpan={8}>TOTAL ({filtered.length} mov.)</td>
+                  <td className="px-3 py-2 text-right font-mono font-bold text-emerald-400">${Math.round(totCost).toLocaleString()}</td>
+                  <td colSpan={4}/>
+                </tr>
+              </tfoot>
+            );
+          })()}
         </table>
       </div>
     </div>
@@ -1502,6 +1554,7 @@ function FPTransferForm({ fpMovements, onAdded }: { fpMovements: FPRow[]; onAdde
 function IPHistoryTable({ movements }: { movements: IPRow[] }) {
   const [viewMode, setViewMode] = useState<"units"|"value">("units");
   const [filterMaterial, setFilterMaterial] = useState("all");
+  const [stockView, setStockView] = useState<"ordered"|"received"|"paid"|"both">("ordered");
 
   const materials = useMemo(() => [...new Set(movements.map(r => r.material))].sort(), [movements]);
 
@@ -1511,6 +1564,17 @@ function IPHistoryTable({ movements }: { movements: IPRow[] }) {
     const balance: Record<string, number> = {};
     const valueBalance: Record<string, number> = {};
     shown.forEach(s => { balance[s] = 0; valueBalance[s] = 0; });
+
+    // View filter applies to purchases (In). Out (consumption) always counts.
+    //   ordered  = count everything ordered · received = only In that arrived
+    //   paid     = only In already paid   · both = In received AND paid
+    const passes = (mv: any) => {
+      if (stockView === "ordered" || mv.type !== "In") return true;
+      const rc = mv.received ?? false, pd = mv.paid ?? false;
+      if (stockView === "received") return rc;
+      if (stockView === "paid") return pd;
+      return rc && pd; // both
+    };
 
     const sorted = [...movements].sort((a,b) => a.movement_date.localeCompare(b.movement_date));
     let mi = 0;
@@ -1523,6 +1587,7 @@ function IPHistoryTable({ movements }: { movements: IPRow[] }) {
         snaps.push({ month: mList[mi], units: {...balance}, value: {...valueBalance} });
         mi++;
       }
+      if (!passes(mv)) continue;
       const delta = mv.type === "In" ? Number(mv.quantity) : -Number(mv.quantity);
       balance[mv.material] = (balance[mv.material] || 0) + delta;
       const cogs = (mv as any).cogs_per_unit;
@@ -1535,7 +1600,7 @@ function IPHistoryTable({ movements }: { movements: IPRow[] }) {
     // carried into the first visible column (accumulation stays correct).
     const visible = snaps.filter(s => s.month >= "2025-07");
     return { monthList: visible.map(s => s.month), history: visible };
-  }, [movements, filterMaterial, materials]);
+  }, [movements, filterMaterial, materials, stockView]);
 
   const shownMaterials = filterMaterial === "all" ? materials : [filterMaterial];
 
@@ -1544,7 +1609,19 @@ function IPHistoryTable({ movements }: { movements: IPRow[] }) {
       <div className="px-5 py-3 border-b border-border bg-muted/30 flex items-center justify-between flex-wrap gap-3">
         <div>
           <p className="text-sm font-bold" style={{color:"#1C2340"}}>Inventory history — closing stock by month</p>
-          <p className="text-xs text-muted-foreground">End-of-month balance from all I&P movements · from Jul 2025</p>
+          <p className="text-xs text-muted-foreground">
+            End-of-month balance · from Jul 2025 · {
+              stockView === "ordered" ? "all ordered" :
+              stockView === "received" ? "only received" :
+              stockView === "paid" ? "only paid" : "received & paid"}
+          </p>
+          <div className="mt-2 flex gap-1 rounded-xl bg-muted p-1 w-fit">
+            {([["ordered","Ordered"],["received","Received"],["paid","Paid"],["both","Recv+Paid"]] as const).map(([v,label])=>(
+              <button key={v} onClick={()=>setStockView(v)}
+                className={`rounded-lg px-2.5 py-1 text-[11px] font-semibold ${stockView===v?"text-white":"text-muted-foreground"}`}
+                style={stockView===v?{backgroundColor:"#1C2340"}:{}}>{label}</button>
+            ))}
+          </div>
         </div>
         <div className="flex gap-2 flex-wrap">
           <select value={filterMaterial} onChange={e => setFilterMaterial(e.target.value)}
@@ -2333,6 +2410,39 @@ const ING_PACK_SIZES: Record<string,number> = (()=>{
 })();
 const SKU_MIX_PCT: Record<string,number> = {XD:0.30,PW:0.25,HM:0.18,WM:0.12,WD:0.08,Matcha:0.07};
 
+// Maps an IP Summary material name → Procurement material name (to pull current stock from I&P).
+const IP_TO_PROC_MAT: Record<string,string> = {
+  "IQF Rasp":"IQF Raspberries",
+  "Choc Ex Dark":"Choc Extra Dark (Revere 70%)",
+  "Choc Dark":"Choc Dark (Duluth)",
+  "Choc Milk":"Choc Milk (Valcour)",
+  "Choc White":"Choc White (Corinthian)",
+  "Cocoa Butter":"Cocoa Butter",
+  "Hazelnut Butter":"Hazelnut Butter",
+  "Pistachio Paste":"Pistachio Paste",
+  "Matcha":"Matcha Powder",
+  "Spirulina":"Spirulina",
+  "Sea Salt":"Sea Salt",
+  "Soy Lecithin":"Soy Lecithin",
+  "Cup ED":"Cup - Extra Dark",
+  "Cup P&W":"Cup - Pistachio & White",
+  "Cup H&M":"Cup - Hazelnut & Milk",
+  "Cup W&M":"Cup - White & Milk",
+  "Cup W&D":"Cup - White & Dark",
+  "Cup Matcha":"Cup - Matcha & White",
+  "Lid ED":"Lid - Extra Dark",
+  "Lid P&W":"Lid - Pistachio & White",
+  "Lid H&M":"Lid - Hazelnut & Milk",
+  "Lid W&M":"Lid - White & Milk",
+  "Lid W&D":"Lid - White & Dark",
+  "Lid Matcha":"Lid - Matcha & White",
+  "Sealers":"Sealers (Momar)",
+  "Cases":"Master Cases (8u)",
+};
+type PayTerm = "t0"|"lead"|"lead1m";
+const PAY_TERM_LABEL: Record<PayTerm,string> = { t0:"On order (t=0)", lead:"On arrival (t=lead)", lead1m:"30d after receipt" };
+const PAY_TERM_KEY = "baris.ops.payTerms.v1";
+
 
 const FORECAST_MONTHS_OPS = Array.from({ length: 12 }, (_, i) => {
   const d = new Date();
@@ -2362,6 +2472,12 @@ function shiftWeeks(d: Date, weeks: number): Date {
 }
 function fmtMonthShort(d: Date): string { return d.toLocaleString("en-US", { month: "short", year: "2-digit" }); }
 function monthKeyOf(d: Date): string { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; }
+// When a purchase is paid, given production month date, its lead time, and payment terms.
+function payDateFor(prodDate: Date, leadWeeks: number, term: PayTerm): Date {
+  if (term === "t0") return shiftWeeks(prodDate, leadWeeks);              // pay when ordered (production − lead)
+  if (term === "lead") return new Date(prodDate);                        // pay on arrival (≈ production month)
+  return new Date(prodDate.getFullYear(), prodDate.getMonth() + 1, 1);   // 30d after receipt (next month)
+}
 
 type ProcSubTab = "schedule"|"stock_proj"|"bom_cogs"|"shopping"|"raw_materials"|"payments";
 
@@ -2535,7 +2651,7 @@ function calcProdSchedule(
   }
   return {plan,stockProj,ingNeeded,ingByMonth};
 }
-function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; orders: any[]; baseline: BaselineRow[] }) {
+function ProcurementTab({ movements, orders, baseline, ipMovements }: { movements: FPRow[]; orders: any[]; baseline: BaselineRow[]; ipMovements: IPRow[] }) {
   const [procTab, setProcTab] = useState<ProcSubTab>("schedule");
   const [safetyWoh,  setSafetyWoh]  = useState(6);
   const [minRun,     setMinRun]     = useState(2000);
@@ -2546,7 +2662,54 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
   });
   useEffect(()=>{ try { window.localStorage.setItem("baris.ops.ingPrices.v2", JSON.stringify(ingPrices)); } catch {} },[ingPrices]);
   const [prodCosts,  setProdCosts]  = useState({...DEFAULT_PROD_COSTS});
-  const [ingInv,     setIngInv]     = useState<Record<string,string>>(Object.fromEntries(ALL_INGS.map(k=>[k,""])));
+  // ── Current raw-material stock: defaults live from I&P Summary (net on-hand), editable override ──
+  // From I&P: stock = only RECEIVED purchases minus consumption; ordered = In not yet received.
+  const { ipOnHand, ipOrdered } = useMemo(() => {
+    const stock: Record<string, number> = {};
+    const ordered: Record<string, number> = {};
+    for (const m of (ipMovements ?? [])) {
+      const proc = IP_TO_PROC_MAT[(m as any).material];
+      if (!proc) continue;
+      const q = Number(m.quantity || 0);
+      const received = (m as any).received ?? false;
+      if (m.type === "In") {
+        if (received) stock[proc] = (stock[proc] ?? 0) + q;   // arrived → counts as stock
+        else ordered[proc] = (ordered[proc] ?? 0) + q;        // on the way → "Pedido"
+      } else {
+        stock[proc] = (stock[proc] ?? 0) - q;                 // consumption reduces stock
+      }
+    }
+    return { ipOnHand: stock, ipOrdered: ordered };
+  }, [ipMovements]);
+  const [ingInvOverride, setIngInvOverride] = useState<Record<string,string>>(() => {
+    try { const raw = window.localStorage.getItem("baris.ops.ingInvOverride.v1"); if (raw) return JSON.parse(raw); } catch {}
+    return {};
+  });
+  useEffect(()=>{ try { window.localStorage.setItem("baris.ops.ingInvOverride.v1", JSON.stringify(ingInvOverride)); } catch {} },[ingInvOverride]);
+  // Effective inventory: manual override wins; otherwise the live I&P on-hand.
+  const ingInv: Record<string,string> = useMemo(() => {
+    const o: Record<string,string> = {};
+    for (const k of ALL_INGS) {
+      o[k] = (ingInvOverride[k] !== undefined && ingInvOverride[k] !== "")
+        ? ingInvOverride[k]
+        : (ipOnHand[k] != null ? String(Math.round(ipOnHand[k])) : "");
+    }
+    return o;
+  }, [ingInvOverride, ipOnHand]);
+  const setIngInv = (updater: any) => {
+    setIngInvOverride(prev => {
+      const cur: Record<string,string> = {}; for (const k of ALL_INGS) cur[k] = prev[k] ?? "";
+      const next = typeof updater === "function" ? updater(cur) : updater;
+      return next;
+    });
+  };
+  const resetIngInv = (mat: string) => setIngInvOverride(prev => { const n = {...prev}; delete n[mat]; return n; });
+  // ── Payment terms per material (drives Shopping "Paid by" & Payments timing) ──
+  const [payTerms, setPayTerms] = useState<Record<string,PayTerm>>(() => {
+    try { const raw = window.localStorage.getItem(PAY_TERM_KEY); if (raw) return JSON.parse(raw); } catch {}
+    return Object.fromEntries(ALL_INGS.map(k=>[k,"lead" as PayTerm]));
+  });
+  useEffect(()=>{ try { window.localStorage.setItem(PAY_TERM_KEY, JSON.stringify(payTerms)); } catch {} },[payTerms]);
   // ─── Editable BOM — stored as QTY PER CASE (lbs raw / units packaging); % is a synced view ───
   const [bomQty, setBomQty] = useState<Record<string, Record<string, number>>>(
     () => {
@@ -2680,10 +2843,11 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
     };
     // Ingredient purchases: net current inventory greedily against earliest needs
     for (const ingName of ALL_INGS) {
-      let remInv = parseInt(ingInv[ingName])||0;
+      let remInv = (parseInt(ingInv[ingName])||0) + Math.round(ipOrdered[ingName]??0); // stock + already ordered
       const price = ingPrices[ingName] ?? 0;
       const ps = ING_PACK_SIZES[ingName] ?? 1;
       const lead = leadTimes[ingName] ?? DEFAULT_LEAD_WEEKS;
+      const term = payTerms[ingName] ?? "lead";
       for (let i=0;i<FORECAST_MONTHS_OPS.length;i++) {
         const need = ingByMonth[ingName]?.[i] ?? 0;
         if (need<=0) continue;
@@ -2692,7 +2856,7 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
         if (buy<=0) continue;
         const finalAmt = Math.ceil(buy/ps)*ps;
         const cost = finalAmt*price;
-        bump(ing, shiftWeeks(opsMonthDate(i), lead), cost);   // pay when ordered
+        bump(ing, payDateFor(opsMonthDate(i), lead, term), cost);   // pay per payment terms
       }
     }
     // Heinlein tolling: cases produced month i -> units×tolling, paid 30 days later (next month)
@@ -2705,7 +2869,7 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
     }
     const keys = [...new Set([...Object.keys(ing),...Object.keys(toll)])].sort();
     return { ing, toll, meta, keys };
-  },[ingByMonth, plan, ingInv, ingPrices, leadTimes, prodCosts]);
+  },[ingByMonth, plan, ingInv, ipOrdered, ingPrices, leadTimes, payTerms, prodCosts]);
 
   const totalByMonth = FORECAST_MONTHS_OPS.map((_,i)=>PROC_SKUS.reduce((s,sku)=>s+(plan[sku]?.[i]??0),0));
   const nextRunIdx = totalByMonth.findIndex(t=>t>0);
@@ -3186,7 +3350,7 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
             {shopScope==="next" && nextRunIdx>=0
               ? `📅 Next production run: ${FORECAST_MONTHS_OPS[nextRunIdx]} — ${shopCasesWindow.toLocaleString()} cases. `
               : ""}
-            💡 Inventory = load actual stock in the "Raw Materials" tab. To Acquire = Needed − Inventory rounded to pack size.
+            💡 Inventory (lbs) = pedido Y recibido en I&P (stock real). Pedido (lbs) = pedido en I&P pero aún no recibido. To Acquire = Needed − Inventory − Pedido. "Paid by" = según los payment terms.
           </div>
           <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
             <table className="w-full text-sm">
@@ -3195,12 +3359,14 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
                   <th className="px-4 py-2.5 text-left">Material</th>
                   <th className="px-4 py-2.5 text-right">Needed (lbs)</th>
                   <th className="px-4 py-2.5 text-right">Inventory (lbs)</th>
+                  <th className="px-4 py-2.5 text-right">Pedido (lbs)</th>
                   <th className="px-4 py-2.5 text-right">To Acquire</th>
                   <th className="px-4 py-2.5 text-right">Pack size</th>
                   <th className="px-4 py-2.5 text-right">Final amount</th>
                   <th className="px-4 py-2.5 text-center">Lead</th>
                   <th className="px-4 py-2.5 text-center">Need by</th>
                   <th className="px-4 py-2.5 text-center">Order by</th>
+                  <th className="px-4 py-2.5 text-center">Paid by</th>
                   <th className="px-4 py-2.5 text-right">$/lb</th>
                   <th className="px-4 py-2.5 text-right font-bold">Total cost</th>
                 </tr>
@@ -3209,9 +3375,10 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
                 {ALL_INGS.filter(ing=>(ingWindow[ing]??0)>0).map(ing=>{
                   const needed=Math.round(ingWindow[ing]??0);
                   const inv=parseInt(ingInv[ing])||0;
-                  const toAcq=Math.max(0,needed-inv);
+                  const ordered=Math.round(ipOrdered[ing]??0);   // ordered in I&P, not yet received
+                  const toAcq=Math.max(0,needed-inv-ordered);
                   const ps=ING_PACK_SIZES[ing]??1;
-                  const finalAmt=toAcq>0?Math.ceil(toAcq/ps)*ps:0;
+                  const finalAmt=Math.max(0, toAcq>0?Math.ceil(toAcq/ps)*ps:0);
                   const price=ingPrices[ing]??0;
                   const cost=finalAmt*price;
                   const lead=leadTimes[ing]??DEFAULT_LEAD_WEEKS;
@@ -3221,11 +3388,14 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
                   const needBy=opsMonthDate(needIdx);
                   const orderBy=shiftWeeks(needBy,lead);
                   const orderLate = orderBy < new Date();
+                  const term=payTerms[ing]??"lead";
+                  const paidBy=payDateFor(needBy,lead,term);
                   return (
                     <tr key={ing} className="border-t border-border/60 hover:bg-muted/20">
                       <td className="px-4 py-2 font-medium">{ing}</td>
                       <td className="px-4 py-2 text-right font-mono">{needed.toLocaleString()}</td>
                       <td className="px-4 py-2 text-right font-mono text-muted-foreground">{inv>0?inv.toLocaleString():"—"}</td>
+                      <td className="px-4 py-2 text-right font-mono text-blue-600" title="Ordered in I&P, not yet received">{ordered>0?ordered.toLocaleString():"—"}</td>
                       <td className={`px-4 py-2 text-right font-mono ${toAcq>0?"font-semibold text-orange-600":""}`}>{toAcq>0?toAcq.toLocaleString():"✓"}</td>
                       <td className="px-4 py-2 text-right font-mono text-muted-foreground">{ps.toLocaleString()}</td>
                       <td className="px-4 py-2 text-right font-mono font-bold" style={{color:"#1C2340"}}>{finalAmt>0?finalAmt.toLocaleString():"—"}</td>
@@ -3234,6 +3404,7 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
                       <td className={`px-4 py-2 text-center font-mono font-semibold ${orderLate?"text-red-600":"text-blue-700"}`} title={orderLate?"Order date is in the past — order ASAP":""}>
                         {fmtMonthShort(orderBy)}{orderLate?" ⚠":""}
                       </td>
+                      <td className="px-4 py-2 text-center font-mono font-semibold text-emerald-700" title={PAY_TERM_LABEL[term]}>{fmtMonthShort(paidBy)}</td>
                       <td className="px-4 py-2 text-right font-mono text-muted-foreground">${price.toFixed(2)}</td>
                       <td className="px-4 py-2 text-right font-mono font-bold" style={{color:cost>0?"#A3224A":"#10B981"}}>{cost>0?`$${cost.toLocaleString()}`:"$0"}</td>
                     </tr>
@@ -3242,12 +3413,13 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
               </tbody>
               <tfoot>
                 <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
-                  <td className="px-4 py-2 font-semibold text-xs" colSpan={10}>TOTAL INGREDIENTS</td>
+                  <td className="px-4 py-2 font-semibold text-xs" colSpan={12}>TOTAL INGREDIENTS</td>
                   <td className="px-4 py-2 text-right font-mono font-bold text-emerald-400">
                     ${ALL_INGS.filter(ing=>(ingWindow[ing]??0)>0).reduce((s,ing)=>{
                       const needed=Math.round(ingWindow[ing]??0);
                       const inv=parseInt(ingInv[ing])||0;
-                      const toAcq=Math.max(0,needed-inv);
+                      const ordered=Math.round(ipOrdered[ing]??0);
+                      const toAcq=Math.max(0,needed-inv-ordered);
                       const ps=ING_PACK_SIZES[ing]??1;
                       return s+(toAcq>0?Math.ceil(toAcq/ps)*ps*(ingPrices[ing]??0):0);
                     },0).toLocaleString()}
@@ -3276,6 +3448,7 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
                   <th className="px-3 py-2.5 text-center">Overfill %</th>
                   <th className="px-3 py-2.5 text-center">Factor</th>
                   <th className="px-3 py-2.5 text-center">Lead (wks)</th>
+                  <th className="px-3 py-2.5 text-center">Payment terms</th>
                   <th className="px-3 py-2.5 text-right">Pack size</th>
                   <th className="px-3 py-2.5 text-right">$/unit</th>
                   <th className="px-3 py-2.5 text-right">Stock</th>
@@ -3307,15 +3480,29 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
                         <input type="number" min={0} step={1} value={leadTimes[ing]??DEFAULT_LEAD_WEEKS}
                           onChange={e=>setLeadTimes(l=>({...l,[ing]:parseInt(e.target.value)||0}))} className={`${inp} w-14 text-center`}/>
                       </td>
+                      <td className="px-3 py-2 text-center">
+                        <select value={payTerms[ing]??"lead"} onChange={e=>setPayTerms(p=>({...p,[ing]:e.target.value as PayTerm}))}
+                          className={`${inp} text-[11px]`} title="When this material is paid, relative to ordering/receiving">
+                          <option value="t0">On order (t=0)</option>
+                          <option value="lead">On arrival (t=lead)</option>
+                          <option value="lead1m">30d after receipt</option>
+                        </select>
+                      </td>
                       <td className="px-3 py-2 text-right font-mono text-muted-foreground">{(ING_PACK_SIZES[ing]??0).toLocaleString()}</td>
                       <td className="px-3 py-2 text-right">
                         <input type="number" step="0.001" value={price}
                           onChange={e=>setIngPrices(p=>({...p,[ing]:parseFloat(e.target.value)||0}))} className={`${inp} w-20 text-right`}/>
                       </td>
                       <td className="px-3 py-2 text-right">
-                        <input type="number" min={0} value={ingInv[ing]??""}
-                          onChange={e=>setIngInv(v=>({...v,[ing]:e.target.value}))}
-                          placeholder="0" className={`${inp} w-24 text-right ${inv>0?"bg-emerald-50":""}`}/>
+                        <div className="flex items-center justify-end gap-1">
+                          <input type="number" min={0} value={ingInv[ing]??""}
+                            onChange={e=>setIngInv((v:any)=>({...v,[ing]:e.target.value}))}
+                            placeholder="0" className={`${inp} w-24 text-right ${inv>0?"bg-emerald-50":""}`}
+                            title={ingInvOverride[ing]!==undefined&&ingInvOverride[ing]!==""?"Manual override — ↻ to use I&P":"Live from I&P Summary"}/>
+                          {ingInvOverride[ing]!==undefined&&ingInvOverride[ing]!==""
+                            ? <button onClick={()=>resetIngInv(ing)} className="text-[10px] text-muted-foreground hover:text-foreground" title="Reset to I&P on-hand">↻</button>
+                            : ipOnHand[ing]!=null ? <span className="text-[9px] text-emerald-600" title="From I&P Summary">IP</span> : null}
+                        </div>
                       </td>
                       <td className="px-3 py-2 text-right font-mono text-muted-foreground">{inv>0?`$${Math.round(inv*price).toLocaleString()}`:"—"}</td>
                     </tr>
@@ -3324,7 +3511,7 @@ function ProcurementTab({ movements, orders, baseline }: { movements: FPRow[]; o
               </tbody>
               <tfoot>
                 <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
-                  <td className="px-4 py-2 font-semibold text-xs sticky left-0" style={{backgroundColor:"#1C2340"}} colSpan={9}>TOTAL INVENTORY VALUE</td>
+                  <td className="px-4 py-2 font-semibold text-xs sticky left-0" style={{backgroundColor:"#1C2340"}} colSpan={10}>TOTAL INVENTORY VALUE</td>
                   <td className="px-3 py-2 text-right font-mono">{ALL_INGS.reduce((s,ing)=>s+(parseInt(ingInv[ing])||0),0).toLocaleString()}</td>
                   <td className="px-3 py-2 text-right font-mono font-bold text-emerald-400">${Math.round(ALL_INGS.reduce((s,ing)=>{const inv=parseInt(ingInv[ing])||0;return s+inv*(ingPrices[ing]??0);},0)).toLocaleString()}</td>
                 </tr>
@@ -3427,7 +3614,7 @@ function OperationsPage() {
 
   useEffect(() => { loadFP(); loadIP(); loadOrders(); loadBaseline(); loadLots(); }, []);
 
-  function reload() { loadFP(); loadIP(); loadOrders(); loadBaseline(); }
+  function reload() { loadFP(); loadIP(); loadOrders(); loadBaseline(); loadLots(); }
 
   const TABS: { id: OpsTab; label: string; emoji: string }[] = [
     { id: "stock",       label: "FP Stock",             emoji: "📊" },
@@ -3474,7 +3661,7 @@ function OperationsPage() {
       {tab === "ip"          && <IPInputTab movements={ipMovements} loading={loadingIP} onAdded={reload} />}
       {tab === "production"  && <ProductionTab fpMovements={fpMovements} ipMovements={ipMovements} onAdded={reload} />}
       {tab === "cogs"        && <COGSSimulatorTab />}
-      {tab === "procurement" && <ProcurementTab movements={fpMovements} orders={orders} baseline={baseline} />}
+      {tab === "procurement" && <ProcurementTab movements={fpMovements} orders={orders} baseline={baseline} ipMovements={ipMovements} />}
     </div>
   );
 }
