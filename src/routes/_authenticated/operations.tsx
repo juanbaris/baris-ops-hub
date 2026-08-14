@@ -345,6 +345,7 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
   const [filterSku, setFilterSku] = useState<string>("all");
   const [filterType, setFilterType] = useState<string>("all");
   const [filterMonth, setFilterMonth] = useState<string>("all");
+  const [filterConcept, setFilterConcept] = useState<string>("all");
   const [sortDir, setSortDir] = useState<"asc"|"desc">("desc");
 
   function set(k: string, v: string) { setForm(f => ({ ...f, [k]: v })); }
@@ -408,15 +409,20 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
     () => [...new Set(movements.map(r => r.movement_date.slice(0, 7)))].sort().reverse(),
     [movements],
   );
+  const conceptOptions = useMemo(
+    () => [...new Set(movements.map(r => r.concept).filter(Boolean))].sort(),
+    [movements],
+  );
 
   const filtered = useMemo(() => {
     return [...movements]
       .filter(r =>
         (filterSku === "all" || r.sku === filterSku) &&
         (filterType === "all" || r.type === filterType) &&
+        (filterConcept === "all" || r.concept === filterConcept) &&
         (filterMonth === "all" || r.movement_date.slice(0, 7) === filterMonth))
       .sort((a,b) => sortDir === "desc" ? (a.movement_date < b.movement_date ? 1 : -1) : (a.movement_date > b.movement_date ? 1 : -1));
-  }, [movements, filterSku, filterType, filterMonth, sortDir]);
+  }, [movements, filterSku, filterType, filterConcept, filterMonth, sortDir]);
 
   const inp = "rounded-lg border border-border bg-background px-3 py-1.5 text-sm w-full focus:outline-none focus:ring-2 focus:ring-primary/30";
 
@@ -496,6 +502,11 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
               <option value="In">In only</option>
               <option value="Out">Out only</option>
             </select>
+            <select value={filterConcept} onChange={e => setFilterConcept(e.target.value)}
+              className="rounded-lg border border-border bg-background px-2 py-1 text-xs focus:outline-none">
+              <option value="all">All concepts</option>
+              {conceptOptions.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
             <select value={filterMonth} onChange={e => setFilterMonth(e.target.value)}
               className="rounded-lg border border-border bg-background px-2 py-1 text-xs focus:outline-none">
               <option value="all">All months</option>
@@ -514,7 +525,7 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
               <th className="px-4 py-2.5 text-left">Type</th>
               <th className="px-4 py-2.5 text-left">SKU</th>
               <th className="px-4 py-2.5 text-right">Cases</th>
-              <th className="px-4 py-2.5 text-right">COGS/case</th>
+              <th className="px-4 py-2.5 text-right">COGS/pote</th>
               <th className="px-4 py-2.5 text-right">$ Value</th>
               <th className="px-4 py-2.5 text-left">Warehouse</th>
               <th className="px-4 py-2.5 text-left">Lot</th>
@@ -546,7 +557,7 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
                       </td>
                       <td className="px-4 py-1.5 text-right font-mono text-xs">
                         {cogs != null
-                          ? <span style={{color:"#1C2340"}}>${Math.round(Number(r.cases) * cogs).toLocaleString()}</span>
+                          ? <span style={{color:"#1C2340"}}>${Math.round(Number(r.cases) * cogs * 8).toLocaleString()}</span>
                           : <span className="text-muted-foreground">—</span>}
                       </td>
                     </>);
