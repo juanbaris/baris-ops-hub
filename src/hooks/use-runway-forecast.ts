@@ -203,7 +203,7 @@ export function useRunwayForecast(nWeeks = 20) {
           });
         setIpPending(pending);
       } catch (e: any) {
-        if (!cancel) setError(e?.message ?? "Error cargando Runway");
+        if (!cancel) setError(e?.message ?? "Error loading Runway");
       } finally {
         if (!cancel) setLoading(false);
       }
@@ -223,7 +223,7 @@ export function useRunwayForecast(nWeeks = 20) {
     const gapEnd = addDays(week1Start, -1);
 
     const periodDefs: { key: string; label: string; start: Date; end: Date; isGap: boolean }[] = [
-      { key: "gap", label: `${ymd(gapStart).slice(8,10)}/${ymd(gapStart).slice(5,7)} - ${ymd(gapEnd).slice(8,10)}/${ymd(gapEnd).slice(5,7)} (previo)`, start: gapStart, end: gapEnd, isGap: true },
+      { key: "gap", label: `${ymd(gapStart).slice(8,10)}/${ymd(gapStart).slice(5,7)} - ${ymd(gapEnd).slice(8,10)}/${ymd(gapEnd).slice(5,7)} (prior)`, start: gapStart, end: gapEnd, isGap: true },
     ];
     for (let w = 0; w < nWeeks; w++) {
       const s = addDays(week1Start, 7 * w);
