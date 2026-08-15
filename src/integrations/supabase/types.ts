@@ -908,6 +908,7 @@ export type Database = {
           notes: string | null
           sku: string
           updated_at: string | null
+          warehouse: string | null
         }
         Insert: {
           cases_initial?: number | null
@@ -921,6 +922,7 @@ export type Database = {
           notes?: string | null
           sku: string
           updated_at?: string | null
+          warehouse?: string | null
         }
         Update: {
           cases_initial?: number | null
@@ -934,6 +936,7 @@ export type Database = {
           notes?: string | null
           sku?: string
           updated_at?: string | null
+          warehouse?: string | null
         }
         Relationships: []
       }
@@ -1005,6 +1008,111 @@ export type Database = {
           display_name?: string | null
           email?: string | null
           id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      runway_cogs_estimado_payments: {
+        Row: {
+          heinlein_tolling: number
+          id: string
+          ingredient_purchases: number
+          notes: string | null
+          payment_month: string
+          updated_at: string
+        }
+        Insert: {
+          heinlein_tolling?: number
+          id?: string
+          ingredient_purchases?: number
+          notes?: string | null
+          payment_month: string
+          updated_at?: string
+        }
+        Update: {
+          heinlein_tolling?: number
+          id?: string
+          ingredient_purchases?: number
+          notes?: string | null
+          payment_month?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      runway_events: {
+        Row: {
+          amount: number
+          created_at: string
+          description: string
+          event_date: string
+          id: string
+        }
+        Insert: {
+          amount: number
+          created_at?: string
+          description: string
+          event_date: string
+          id?: string
+        }
+        Update: {
+          amount?: number
+          created_at?: string
+          description?: string
+          event_date?: string
+          id?: string
+        }
+        Relationships: []
+      }
+      runway_fixed_costs: {
+        Row: {
+          active: boolean
+          amount: number
+          id: string
+          label: string
+          sort_order: number
+          timing: string
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          amount: number
+          id?: string
+          label: string
+          sort_order?: number
+          timing: string
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          amount?: number
+          id?: string
+          label?: string
+          sort_order?: number
+          timing?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      runway_settings: {
+        Row: {
+          date_value: string | null
+          key: string
+          number_value: number | null
+          text_value: string | null
+          updated_at: string
+        }
+        Insert: {
+          date_value?: string | null
+          key: string
+          number_value?: number | null
+          text_value?: string | null
+          updated_at?: string
+        }
+        Update: {
+          date_value?: string | null
+          key?: string
+          number_value?: number | null
+          text_value?: string | null
           updated_at?: string
         }
         Relationships: []
