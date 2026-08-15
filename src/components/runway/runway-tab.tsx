@@ -66,7 +66,7 @@ export function RunwayTab() {
     const map: Record<string, { label: string; ingreso: number; gasto: number; cashEnd: number; order: number }> = {};
     for (const p of periods) {
       const key = `${p.start.getFullYear()}-${p.start.getMonth()}`;
-      const label = p.start.toLocaleDateString("es-AR", { month: "short", year: "2-digit" });
+      const label = p.start.toLocaleDateString("en-US", { month: "short", year: "2-digit" });
       const ingreso = p.ingresoDefinido + p.ingresoEstimado;
       const gasto = p.deduccionDefinido + p.deduccionEstimado + p.logisticaDefinido + p.logisticaEstimado
         + p.cogsDefinido + p.cogsEstimado + p.fijo + p.blando + p.eventos;
@@ -79,15 +79,23 @@ export function RunwayTab() {
   }, [periods]);
 
   useChart(monthlyCanvas, () => ({
-    type: "bar",
+    type: "line",
     data: {
       labels: monthly.map((m) => m.label),
       datasets: [
-        { label: "Ingresos", data: monthly.map((m) => m.ingreso), backgroundColor: "#2E7D4F", borderRadius: 4 },
-        { label: "Gastos", data: monthly.map((m) => m.gasto), backgroundColor: "#A3224A", borderRadius: 4 },
+        { label: "Inflows", data: monthly.map((m) => m.ingreso), borderColor: "#2E7D4F", backgroundColor: "#2E7D4F", tension: 0.3, pointRadius: 3, borderWidth: 2 },
+        { label: "Outflows", data: monthly.map((m) => Math.abs(m.gasto)), borderColor: "#A3224A", backgroundColor: "#A3224A", tension: 0.3, pointRadius: 3, borderWidth: 2 },
+        { label: "Net", data: monthly.map((m) => m.ingreso + m.gasto), borderColor: "#1C2340", backgroundColor: "#1C2340", tension: 0.3, pointRadius: 3, borderWidth: 2, borderDash: [5, 4] },
       ],
     },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: "bottom" } }, scales: { y: { ticks: { callback: (v: number) => "$" + v } } } },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: "bottom" },
+        tooltip: { callbacks: { label: (c: any) => `${c.dataset.label}: $${Math.round(c.parsed.y).toLocaleString("en-US")}` } },
+      },
+      scales: { y: { ticks: { callback: (v: number) => "$" + Math.round(v).toLocaleString("en-US") } } },
+    },
   }), [monthly]);
 
   useChart(cashCanvas, () => ({
@@ -95,23 +103,23 @@ export function RunwayTab() {
     data: {
       labels: periods.map((p) => p.label),
       datasets: [
-        { label: "Cash proyectado", data: periods.map((p) => p.cashEnd), borderColor: "#1C2340", backgroundColor: "rgba(28,35,64,0.08)", fill: true, tension: 0.3, pointRadius: 3 },
+        { label: "Projected cash", data: periods.map((p) => p.cashEnd), borderColor: "#1C2340", backgroundColor: "rgba(28,35,64,0.08)", fill: true, tension: 0.3, pointRadius: 3 },
       ],
     },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { ticks: { callback: (v: number) => "$" + v } } } },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { ticks: { callback: (v: number) => "$" + Math.round(v).toLocaleString("en-US") } } } },
   }), [periods]);
 
   if (loading) {
-    return <div className="rounded-2xl border border-border bg-card p-8 text-center text-sm text-muted-foreground">Cargando runway…</div>;
+    return <div className="rounded-2xl border border-border bg-card p-8 text-center text-sm text-muted-foreground">Loading runway…</div>;
   }
   if (error) {
     return <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">⚠ {error}</div>;
   }
 
   const colGroups = [
-    { label: "Ingresos", fill: "#DCEEE3" },
-    { label: "Deducción", fill: "#FBE1E7" },
-    { label: "Logística", fill: "#FDEBD3" },
+    { label: "Revenue", fill: "#DCEEE3" },
+    { label: "Deductions", fill: "#FBE1E7" },
+    { label: "Logistics", fill: "#FDEBD3" },
     { label: "COGS", fill: "#E2E7F5" },
   ];
 
@@ -119,9 +127,9 @@ export function RunwayTab() {
     <div className="space-y-5 pb-10">
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-bold" style={{ color: "#1C2340" }}>Runway Semanal</h1>
+          <h1 className="text-2xl font-bold" style={{ color: "#1C2340" }}>Weekly Runway</h1>
           <p className="text-sm text-muted-foreground">
-            Cash proyectado semana a semana · Definido = ya facturado/confirmado · Estimado = forecast del Pipeline
+            Week-by-week projected cash · Confirmed = already invoiced/confirmed · Estimated = Pipeline forecast
           </p>
         </div>
         <button onClick={() => setAssumptionsOpen(true)}
@@ -132,7 +140,7 @@ export function RunwayTab() {
 
       {cashMin < 0 && (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
-          ⚠️ El cash proyectado cae por debajo de $0 en algún momento del horizonte — revisar timing de COGS/Fijo.
+          ⚠️ Projected cash drops below $0 at some point in the horizon — review COGS/fixed cost timing.
         </div>
       )}
 
@@ -145,24 +153,24 @@ export function RunwayTab() {
 
       {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <KPI label="Total a Cobrar" value={fmt(totals.ingreso)} />
-        <KPI label="Total Deducción" value={fmt(totals.deduccion)} negative />
-        <KPI label="Total Logística" value={fmt(totals.logistica)} negative />
+        <KPI label="Total Receivables" value={fmt(totals.ingreso)} />
+        <KPI label="Total Deductions" value={fmt(totals.deduccion)} negative />
+        <KPI label="Total Logistics" value={fmt(totals.logistica)} negative />
         <KPI label="Total COGS" value={fmt(totals.cogs)} negative />
-        <KPI label="Total Fijo" value={fmt(totals.fijo)} negative />
-        <KPI label="Total Blando" value={fmt(totals.blando)} negative />
-        <KPI label="Cash Final proyectado" value={fmt(cashEndFinal)} />
-        <KPI label="Cash mínimo proyectado" value={fmt(cashMin)} negative={cashMin < 0} />
+        <KPI label="Total Fixed" value={fmt(totals.fijo)} negative />
+        <KPI label="Total Soft Costs" value={fmt(totals.blando)} negative />
+        <KPI label="Projected Ending Cash" value={fmt(cashEndFinal)} />
+        <KPI label="Minimum Projected Cash" value={fmt(cashMin)} negative={cashMin < 0} />
       </div>
 
       {/* Charts */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
         <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-          <h3 className="text-sm font-semibold mb-3" style={{ color: "#1C2340" }}>Ingresos vs Gastos por mes</h3>
+          <h3 className="text-sm font-semibold mb-3" style={{ color: "#1C2340" }}>Inflows vs Outflows vs Net — monthly</h3>
           <div style={{ height: 240 }}><canvas ref={monthlyCanvas} /></div>
         </div>
         <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-          <h3 className="text-sm font-semibold mb-3" style={{ color: "#1C2340" }}>Cash proyectado — semana a semana</h3>
+          <h3 className="text-sm font-semibold mb-3" style={{ color: "#1C2340" }}>Projected cash — week by week</h3>
           <div style={{ height: 240 }}><canvas ref={cashCanvas} /></div>
         </div>
       </div>
@@ -173,8 +181,8 @@ export function RunwayTab() {
           <thead>
             <tr>
               <th className="px-3 py-2 bg-white" colSpan={2} />
-              <th colSpan={4} className="text-center text-white font-bold text-sm py-1.5" style={{ backgroundColor: "#2E7D4F" }}>COBRANZAS</th>
-              <th colSpan={7} className="text-center text-white font-bold text-sm py-1.5" style={{ backgroundColor: "#A3224A" }}>GASTOS</th>
+              <th colSpan={4} className="text-center text-white font-bold text-sm py-1.5" style={{ backgroundColor: "#2E7D4F" }}>COLLECTIONS</th>
+              <th colSpan={7} className="text-center text-white font-bold text-sm py-1.5" style={{ backgroundColor: "#A3224A" }}>EXPENSES</th>
               <th className="px-3 py-2 bg-white" colSpan={2} />
             </tr>
             <tr>
@@ -183,25 +191,25 @@ export function RunwayTab() {
                 <th key={g.label} colSpan={2} className="text-center text-[10px] font-bold py-1" style={{ backgroundColor: g.fill, color: "#1C2340" }}>{g.label}</th>
               ))}
               <th colSpan={2} className="text-center text-[10px] font-bold py-1" style={{ backgroundColor: "#EDEAE3", color: "#1C2340" }}>Expenses</th>
-              <th className="text-center text-[10px] font-bold py-1" style={{ backgroundColor: "#FFF6D6", color: "#1C2340" }}>Eventos</th>
+              <th className="text-center text-[10px] font-bold py-1" style={{ backgroundColor: "#FFF6D6", color: "#1C2340" }}>Events</th>
               <th className="px-3 py-1 bg-white" colSpan={2} />
             </tr>
             <tr className="bg-muted/50 border-b border-border">
-              <th className="text-left px-3 py-2 text-[10px] uppercase text-muted-foreground">Semana</th>
-              <th className="text-right px-2 py-2 text-[10px] uppercase text-muted-foreground">Cash Inicial</th>
-              <th className="text-right px-2 py-2 text-[10px]">Definido</th>
-              <th className="text-right px-2 py-2 text-[10px]">Estimado</th>
-              <th className="text-right px-2 py-2 text-[10px]">Definido</th>
-              <th className="text-right px-2 py-2 text-[10px]">Estimado</th>
-              <th className="text-right px-2 py-2 text-[10px]">Definido</th>
-              <th className="text-right px-2 py-2 text-[10px]">Estimado</th>
-              <th className="text-right px-2 py-2 text-[10px]">Definido</th>
-              <th className="text-right px-2 py-2 text-[10px]">Estimado</th>
-              <th className="text-right px-2 py-2 text-[10px]">Fijo</th>
-              <th className="text-right px-2 py-2 text-[10px]">Blando</th>
-              <th className="text-right px-2 py-2 text-[10px]">Especiales</th>
-              <th className="text-right px-2 py-2 text-[10px] uppercase text-muted-foreground">Neto Semana</th>
-              <th className="text-right px-2 py-2 text-[10px] uppercase text-muted-foreground">Cash Final</th>
+              <th className="text-left px-3 py-2 text-[10px] uppercase text-muted-foreground">Week</th>
+              <th className="text-right px-2 py-2 text-[10px] uppercase text-muted-foreground">Opening Cash</th>
+              <th className="text-right px-2 py-2 text-[10px]">Confirmed</th>
+              <th className="text-right px-2 py-2 text-[10px]">Estimated</th>
+              <th className="text-right px-2 py-2 text-[10px]">Confirmed</th>
+              <th className="text-right px-2 py-2 text-[10px]">Estimated</th>
+              <th className="text-right px-2 py-2 text-[10px]">Confirmed</th>
+              <th className="text-right px-2 py-2 text-[10px]">Estimated</th>
+              <th className="text-right px-2 py-2 text-[10px]">Confirmed</th>
+              <th className="text-right px-2 py-2 text-[10px]">Estimated</th>
+              <th className="text-right px-2 py-2 text-[10px]">Fixed</th>
+              <th className="text-right px-2 py-2 text-[10px]">Soft</th>
+              <th className="text-right px-2 py-2 text-[10px]">Special</th>
+              <th className="text-right px-2 py-2 text-[10px] uppercase text-muted-foreground">Weekly Net</th>
+              <th className="text-right px-2 py-2 text-[10px] uppercase text-muted-foreground">Ending Cash</th>
             </tr>
           </thead>
           <tbody>
@@ -246,7 +254,7 @@ export function RunwayTab() {
         </table>
       </div>
       <p className="text-[10px] text-muted-foreground italic">
-        La fila roja ("previo") suma lo que pasó entre el balance de bancos (cash inicial) y el arranque de la primera semana — no está separada del cash, ya se lo suma.
+        The red row ("prior") covers what happened between the bank balance (opening cash) and the start of the first week — it is not separate from cash, it is already included.
       </p>
     </div>
   );
@@ -296,7 +304,7 @@ function RunwayAssumptionsModal({
     onSaved();
   }
   async function addFixedCost() {
-    await supabase.from("runway_fixed_costs").insert({ label: "Nueva línea", amount: 0, timing: "eom", sort_order: fixedCosts.length + 1, active: true });
+    await supabase.from("runway_fixed_costs").insert({ label: "New line", amount: 0, timing: "eom", sort_order: fixedCosts.length + 1, active: true });
     onSaved();
   }
   async function deleteFixedCost(id: string) {
@@ -305,7 +313,7 @@ function RunwayAssumptionsModal({
   }
 
   async function addEvent() {
-    await supabase.from("runway_events").insert({ description: "Nuevo evento", amount: 0, event_date: new Date().toISOString().slice(0, 10) });
+    await supabase.from("runway_events").insert({ description: "New event", amount: 0, event_date: new Date().toISOString().slice(0, 10) });
     onSaved();
   }
   async function updateEvent(id: string, patch: Partial<RunwayEvent>) {
@@ -341,9 +349,9 @@ function RunwayAssumptionsModal({
         <div className="flex gap-1 border-b border-border">
           {[
             { id: "settings", label: "General" },
-            { id: "fixed", label: "Costos Fijos" },
-            { id: "events", label: "Eventos" },
-            { id: "cogs", label: "COGS Estimado" },
+            { id: "fixed", label: "Fixed Costs" },
+            { id: "events", label: "Events" },
+            { id: "cogs", label: "Estimated COGS" },
           ].map((t) => (
             <button key={t.id} onClick={() => setTab(t.id as any)}
               className={`px-3 py-1.5 text-xs font-semibold border-b-2 ${tab === t.id ? "border-[#A3224A] text-[#A3224A]" : "border-transparent text-muted-foreground"}`}>
@@ -354,15 +362,15 @@ function RunwayAssumptionsModal({
 
         {tab === "settings" && (
           <div className="space-y-3">
-            <Field label="Cash inicial (balance de bancos, $)" value={cashStart} onChange={setCashStart} />
-            <Field label="Fecha del balance (cash inicial)" value={cashStartDate} onChange={setCashStartDate} type="date" />
-            <Field label="Semanas a invoice — Open/Accepted/Sent to 3PL" value={weeks3} onChange={setWeeks3} />
-            <Field label="Semanas a invoice — Shipment/BOL Confirmed" value={weeks2} onChange={setWeeks2} />
-            <Field label="Blando — promedio mensual (negativo, $)" value={blando} onChange={setBlando} />
-            <Field label="Logística — $/case fallback" value={logFallback} onChange={setLogFallback} />
+            <Field label="Opening cash (bank balance, $)" value={cashStart} onChange={setCashStart} />
+            <Field label="Balance date (opening cash)" value={cashStartDate} onChange={setCashStartDate} type="date" />
+            <Field label="Weeks to invoice — Open/Accepted/Sent to 3PL" value={weeks3} onChange={setWeeks3} />
+            <Field label="Weeks to invoice — Shipment/BOL Confirmed" value={weeks2} onChange={setWeeks2} />
+            <Field label="Soft costs — monthly average (negative, $)" value={blando} onChange={setBlando} />
+            <Field label="Logistics — $/case fallback" value={logFallback} onChange={setLogFallback} />
             <button onClick={saveSettings} disabled={saving}
               className="rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "#A3224A" }}>
-              {saving ? "Guardando…" : "Guardar"}
+              {saving ? "Saving…" : "Save"}
             </button>
           </div>
         )}
@@ -377,19 +385,19 @@ function RunwayAssumptionsModal({
                   className="w-28 rounded border border-border px-2 py-1 text-xs text-right font-mono" />
                 <select defaultValue={f.timing} onChange={(e) => updateFixedCost(f.id, { timing: e.target.value as "day1" | "eom" })}
                   className="rounded border border-border px-2 py-1 text-xs">
-                  <option value="day1">Día 1</option>
-                  <option value="eom">Fin de mes</option>
+                  <option value="day1">Day 1</option>
+                  <option value="eom">End of month</option>
                 </select>
                 <button onClick={() => deleteFixedCost(f.id)} className="text-muted-foreground hover:text-red-600 text-xs">✕</button>
               </div>
             ))}
-            <button onClick={addFixedCost} className="text-xs font-semibold text-[#A3224A] hover:underline">+ Agregar línea</button>
+            <button onClick={addFixedCost} className="text-xs font-semibold text-[#A3224A] hover:underline">+ Add line</button>
           </div>
         )}
 
         {tab === "events" && (
           <div className="space-y-2">
-            <p className="text-[10px] text-muted-foreground">Ej: nuevo listing fee, slotting puntual. Monto negativo para un gasto.</p>
+            <p className="text-[10px] text-muted-foreground">E.g. new listing fee, one-off slotting. Use a negative amount for an expense.</p>
             {events.map((ev) => (
               <div key={ev.id} className="flex items-center gap-2 rounded-lg border border-border p-2">
                 <input defaultValue={ev.description} onBlur={(e) => updateEvent(ev.id, { description: e.target.value })}
@@ -401,14 +409,14 @@ function RunwayAssumptionsModal({
                 <button onClick={() => deleteEvent(ev.id)} className="text-muted-foreground hover:text-red-600 text-xs">✕</button>
               </div>
             ))}
-            <button onClick={addEvent} className="text-xs font-semibold text-[#A3224A] hover:underline">+ Agregar evento</button>
+            <button onClick={addEvent} className="text-xs font-semibold text-[#A3224A] hover:underline">+ Add event</button>
           </div>
         )}
 
         {tab === "cogs" && (
           <div className="space-y-2">
             <p className="text-[10px] text-muted-foreground">
-              Sincronizar manualmente desde Operations → Procurement Planning → Payments. (La próxima iteración puede automatizar esto.)
+              Sync manually from Operations → Procurement Planning → Payments. (This can be automated in a future iteration.)
             </p>
             {cogsPayments.map((cp) => (
               <div key={cp.id} className="flex items-center gap-2 rounded-lg border border-border p-2">
@@ -421,7 +429,7 @@ function RunwayAssumptionsModal({
                 <button onClick={() => deleteCogsPayment(cp.id)} className="text-muted-foreground hover:text-red-600 text-xs">✕</button>
               </div>
             ))}
-            <button onClick={addCogsPayment} className="text-xs font-semibold text-[#A3224A] hover:underline">+ Agregar pago</button>
+            <button onClick={addCogsPayment} className="text-xs font-semibold text-[#A3224A] hover:underline">+ Add payment</button>
           </div>
         )}
       </div>
