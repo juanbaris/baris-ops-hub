@@ -305,13 +305,13 @@ function FPStockTab({ movements, orders, loading, baseline, lotMap }: { movement
                   const share = skuStock > 0 ? s.cases / skuStock : 0;
                   const rowComm = Math.round(comm * share);
                   const available = Math.round(s.cases) - rowComm;   // can be < 0
-                  const fc = forecastNextMonth[s.sku] ?? 0;
+                  const fc = forecastNextMonth[s.sku as SKU] ?? 0;
                   const woh = fc > 0 ? (available / (fc * share || fc)) * 4 : 0;
                   const st = stockStatus(available, woh);
                   return (
                     <tr key={`${s.sku}|${s.warehouse}`} className="border-t border-border/60 hover:bg-muted/20">
                       <td className="px-4 py-2 font-semibold" style={{color:"#1C2340"}}>{s.sku}</td>
-                      <td className="px-4 py-2 font-mono text-xs text-muted-foreground">{SKU_ITEMS[s.sku]}</td>
+                      <td className="px-4 py-2 font-mono text-xs text-muted-foreground">{SKU_ITEMS[s.sku as SKU]}</td>
                       {!isFixed && <td className="px-4 py-2 text-xs text-muted-foreground">{s.warehouse}</td>}
                       <td className="px-4 py-2 text-right font-mono font-semibold" style={{color:"#A3224A"}}>
                         {s.value ? `$${Math.round(s.value).toLocaleString()}` : <span className="text-muted-foreground text-xs">—</span>}
@@ -3701,7 +3701,7 @@ function OperationsPage() {
     <div>
       <PageHeader
         title="Operations"
-        description="Inventory, production, and procurement planning"
+        subtitle="Inventory, production, and procurement planning"
       />
 
       <div className="flex gap-1 overflow-x-auto border-b border-border mb-6 pb-0">
@@ -3723,8 +3723,8 @@ function OperationsPage() {
       </div>
 
       {tab === "stock"       && <FPStockTab movements={fpMovements} orders={orders} loading={loadingFP} baseline={baseline} lotMap={lotMap} />}
-      {tab === "summary"     && <FPSummaryTab movements={fpMovements} orders={orders} loading={loadingFP} />}
-      {tab === "lots"        && <LotMasterTab movements={fpMovements} loading={loadingFP} />}
+      {tab === "summary"     && <FPSummaryTab />}
+      {tab === "lots"        && <LotMasterTab />}
       {tab === "fp"          && <FPInputTab movements={fpMovements} loading={loadingFP} onAdded={reload} lotMap={lotMap} />}
       {tab === "ipsummary"   && <IPSummaryTab movements={ipMovements} />}
       {tab === "ip"          && <IPInputTab movements={ipMovements} loading={loadingIP} onAdded={reload} />}
