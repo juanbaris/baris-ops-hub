@@ -4,7 +4,6 @@ import { useInvoicedActuals } from "@/hooks/use-invoiced-actuals";
 import { supabase } from "@/integrations/supabase/client";
 import { useSalesForecast } from "@/hooks/use-sales-forecast";
 import { forecastFromState, type Scenario } from "@/lib/sales-forecast";
-import { RunwayTab } from "@/components/runway/runway-tab";
 
 // ─── Data (values in $K) ──────────────────────────────────────────────────────
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'] as const;
@@ -1751,32 +1750,213 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario }: { realMonths:
   );
 }
 
-// ─── Runway Tab — moved to src/components/runway/runway-tab.tsx (imported above) ───
+// ─── Runway Tab ───────────────────────────────────────────────────────────────
+function RunwayTab() {
+  const [minCash, setMinCash] = useState(50000);
+  const runwayCanvas = useRef<HTMLCanvasElement>(null);
 
-// ─── EBITDA Simulator ─────────────────────────────────────────────────────────
-function EBITDATab() {
-  const [cases, setCases] = useState(1500);
-  const [price, setPrice] = useState(36.96);
-  const [cogs, setCogs] = useState(22);
-  const [dedPct, setDedPct] = useState(18);
-  const [fixed, setFixed] = useState(55000);
+  // Weekly collections from our real data (Aug-Oct 2026)
+  const WEEKS = [
+    { week:'Jul 28–Aug 3',  collections:13839,  payments:19000, suppliers:0 },
+    { week:'Aug 4–Aug 10',  collections:8870,   payments:19000, suppliers:12500 },
+    { week:'Aug 11–Aug 17', collections:18220,  payments:19000, suppliers:0 },
+    { week:'Aug 18–Aug 24', collections:6898,   payments:19000, suppliers:8750 },
+    { week:'Aug 25–Aug 31', collections:22400,  payments:19000, suppliers:0 },
+    { week:'Sep 1–Sep 7',   collections:15600,  payments:19000, suppliers:14000 },
+    { week:'Sep 8–Sep 14',  collections:12000,  payments:19000, suppliers:0 },
+    { week:'Sep 15–Sep 21', collections:30000,  payments:19000, suppliers:0 },
+    { week:'Sep 22–Sep 28', collections:8000,   payments:19000, suppliers:8750 },
+    { week:'Sep 29–Oct 5',  collections:10000,  payments:19000, suppliers:0 },
+    { week:'Oct 6–Oct 12',  collections:18000,  payments:19000, suppliers:12500 },
+    { week:'Oct 13–Oct 19', collections:14000,  payments:19000, suppliers:0 },
+  ];
 
-  const grossRev = cases * price;
-  const ded = grossRev * dedPct / 100;
-  const netRev = grossRev - ded;
-  const totalCogs = cases * cogs;
-  const grossProfit = netRev - totalCogs;
-  const ebitda = grossProfit - fixed;
-  const gm = netRev > 0 ? (grossProfit / netRev) * 100 : 0;
-  const contribPerCase = price * (1 - dedPct/100) - cogs;
-  const breakeven = contribPerCase > 0 ? Math.ceil(fixed / contribPerCase) : null;
-  const cash = 184480;
-  const monthlyBurn = Math.abs(Math.min(ebitda, 0));
-  const runwayMonths = monthlyBurn > 0 ? cash / monthlyBurn : 99;
+  const cashStart = 184500; // Jul 27 actual
+  let balance = cashStart;
+  const weekData = WEEKS.map(w => {
+    const startBal = balance;
+    balance = balance + w.collections - w.payments - w.suppliers;
+    return { ...w, startBal, endBal: balance };
+  });
+
+  const labels = weekData.map(w => w.week);
+  const balances = weekData.map(w => w.endBal);
+  const collections = weekData.map(w => w.collections);
+  const payments = weekData.map(w => -(w.payments + w.suppliers));
+
+  useChart(runwayCanvas, () => ({
+    data: {
+      labels,
+      datasets: [
+        { type:'line', label:'Projected balance', data:balances, borderColor:'#3B82F6', backgroundColor:'rgba(59,130,246,0.1)', tension:0.3, fill:true, pointRadius:5, yAxisID:'y' },
+        { type:'bar', label:'Collections', data:collections, backgroundColor:'rgba(16,185,129,0.7)', yAxisID:'y2' },
+        { type:'bar', label:'Payments', data:payments, backgroundColor:'rgba(239,68,68,0.5)', yAxisID:'y2' },
+        { type:'line', label:'Minimum cash', data:labels.map(()=>minCash/1000), borderColor:'#DC2626', borderDash:[5,5], pointRadius:0, fill:false, yAxisID:'y' },
+      ]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{ position:'bottom', labels:{ boxWidth:12, font:{ size:11 } } } },
+      scales:{
+        y:{ position:'left', ticks:{ callback:(v:number)=>'$'+v+'K' } },
+        y2:{ position:'right', grid:{ drawOnChartArea:false }, ticks:{ callback:(v:number)=>'$'+Math.abs(v)+'K' } }
+      }
+    }
+  }), [minCash]);
+
+  const pendingCollect = 163023;
+  const paymentsNext30 = 19000 * 4 + 12500 + 8750;
+  const runwayWeeks = weekData.filter(w => w.endBal >= minCash).length;
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center gap-4">
+        <label className="text-sm font-semibold text-muted-foreground">Minimum cash $</label>
+        <input type="number" value={minCash} step={5000}
+          onChange={e => setMinCash(Number(e.target.value))}
+          className="w-32 rounded-lg border border-border px-3 py-1.5 text-sm font-mono font-bold focus:outline-none focus:ring-2 focus:ring-primary/30" />
+        <button onClick={() => setMinCash(50000)} className="rounded-lg border border-border px-3 py-1.5 text-xs hover:bg-muted">↺ Reset</button>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <KPI icon="🏦" label="Cash Today" value={`$${(cashStart/1000).toFixed(0)}k`} sub="estimated Jul 27" />
+        <KPI icon="📥" label="Collections Next 30d" value={`$${Math.round(pendingCollect/1000)}k`} sub="invoices to collect" subColor="text-emerald-600" />
+        <KPI icon="📤" label="Payments Next 30d" value={`$${Math.round(paymentsNext30/1000)}k`} sub="fixed + suppliers" subColor="text-orange-500" />
+        <KPI icon="⏱️" label="Runway" value={runwayWeeks >= WEEKS.length ? "12+ wks" : `${runwayWeeks} wks`}
+          sub={runwayWeeks >= WEEKS.length ? "cash above minimum full period" : `until dropping below $${(minCash/1000).toFixed(0)}k`}
+          subColor={runwayWeeks >= WEEKS.length ? "text-emerald-600" : "text-orange-500"} />
+      </div>
+
+      <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold" style={{color:"#1C2340"}}>Projected balance week by week</h3>
+          <span className="text-[10px] text-muted-foreground">12 weeks · red line = minimum cash</span>
+        </div>
+        <div style={{height:300}}><canvas ref={runwayCanvas} /></div>
+      </div>
+
+      <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+        <div className="px-5 py-2.5 border-b border-border bg-muted/30">
+          <h3 className="text-sm font-semibold" style={{color:"#1C2340"}}>Weekly detail</h3>
+        </div>
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
+              <th className="px-4 py-2 text-left">Week</th>
+              <th className="px-4 py-2 text-right">Opening balance</th>
+              <th className="px-4 py-2 text-right text-emerald-600">Collections</th>
+              <th className="px-4 py-2 text-right text-orange-500">Fixed payments</th>
+              <th className="px-4 py-2 text-right text-red-500">Suppliers</th>
+              <th className="px-4 py-2 text-right">Closing balance</th>
+              <th className="px-4 py-2 text-center">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {weekData.map((w, i) => {
+              const ok = w.endBal >= minCash;
+              return (
+                <tr key={i} className={`border-t border-border/60 hover:bg-muted/20 ${!ok ? "bg-red-50/30" : ""}`}>
+                  <td className="px-4 py-1.5 font-medium">{w.week}</td>
+                  <td className="px-4 py-1.5 text-right font-mono">${w.startBal.toLocaleString()}</td>
+                  <td className="px-4 py-1.5 text-right font-mono text-emerald-600">+${w.collections.toLocaleString()}</td>
+                  <td className="px-4 py-1.5 text-right font-mono text-orange-500">-${w.payments.toLocaleString()}</td>
+                  <td className="px-4 py-1.5 text-right font-mono text-red-500">{w.suppliers > 0 ? `-$${w.suppliers.toLocaleString()}` : "—"}</td>
+                  <td className="px-4 py-1.5 text-right font-mono font-semibold"
+                    style={{color: ok ? "#10B981" : "#EF4444"}}>
+                    ${w.endBal.toLocaleString()}
+                  </td>
+                  <td className="px-4 py-1.5 text-center">
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${ok ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>
+                      {ok ? "✓ OK" : "⚠️ Below min"}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ─── EBITDA / Full-Year P&L Simulator ─────────────────────────────────────────
+function EBITDATab({ actuals }: { actuals: Record<string, any> }) {
+  const assumptions = useFinanceAssumptions();
+
+  // Adjustable drivers (defaults seeded from the real assumptions).
+  const [casesPerMonth, setCasesPerMonth] = useState(6000);
+  const [price, setPrice] = useState(37);
+  const [cogs, setCogs] = useState(() => assumptions.get('cogs_per_unit', 22.27));
+  const [dedPct, setDedPct] = useState(() => assumptions.get('deduction_pct_overall', 19.78));
+  const [logPct, setLogPct] = useState(() => assumptions.get('logistics_pct_of_gross', 9.8));
+  const [applyToRealToo, setApplyToRealToo] = useState(false);
+
+  // Real months (Jan–Jun) come straight from the P&L; forecast months use the sliders.
+  const realNI = (i: number): number|null => {
+    const d = actuals[PERIODS[i]]?.pnl_detail; if (!d) return null;
+    const inc = ['sales_product','shipping_income','consumer_returns','distributor_fees','dsd_programs','kehe_allowance','payment_terms','promos','unfi_allowance','returns_refunds'].reduce((s,k)=>s+Number(d[k] ?? 0),0);
+    const cg = ['product_costs','freight_in','freight_out_actual','merchant_fees','warehouse_fulfillment'].reduce((s,k)=>s+Number(d[k] ?? 0),0);
+    const ex = ['broker_commissions','slotting_fees','demos_merchandising','digital_social','events_tradeshows','printing_promotional','product_samples','bank_charges','dues_subscriptions','rent','utilities','insurance','meals_entertainment','office_supplies','contractors','payroll_processing','payroll_taxes','salaries_operations','accounting_finance','business_consultation','legal_fees','quality_rd','taxes_licenses','car_rental_uber','flights','hotel','uncategorized','vehicle_expenses'].reduce((s,k)=>s+Number(d[k] ?? 0),0);
+    return (inc + cg + ex + Number(d.other_income ?? 0)) / 1000;
+  };
+  const realLine = (i: number, keys: string[]): number => {
+    const d = actuals[PERIODS[i]]?.pnl_detail; if (!d) return 0;
+    return keys.reduce((s,k)=>s+Number(d[k] ?? 0),0)/1000;
+  };
+
+  // Simulated month ($K) from sliders.
+  function simMonth(monthNum: number) {
+    const gross = casesPerMonth * price / 1000;
+    const ded = -gross * dedPct/100;
+    const net = gross + ded;
+    const cogsTotal = -(casesPerMonth * cogs)/1000 - gross * logPct/100;
+    const gp = net + cogsTotal;
+    // scaling SG&A (from Best Estimate) + fixed SG&A — same rule as the forecast model
+    const fc = FIXED_COSTS_BEST_ESTIMATE[monthNum] ?? {};
+    const scalingSGA = (fc.broker_commissions ?? -10)+(fc.slotting_fees ?? 0)+(fc.demos_merchandising ?? 0)+(fc.digital_social ?? -5)+(fc.events_tradeshows ?? 0)+(fc.product_samples ?? -1.16)+(fc.dues_subscriptions ?? -1.37)+(fc.quality_rd ?? -0.42);
+    const ebitda = gp + scalingSGA + FIXED_SGA_CONSTANT_K;
+    return { gross, ded, net, cogsTotal, gp, sga: scalingSGA + FIXED_SGA_CONSTANT_K, ebitda };
+  }
+
+  const realMonths = PERIODS.filter(p => actuals[p]?.pnl_detail).length;
+  const isReal = (i: number) => i < realMonths && !applyToRealToo;
+
+  // Build 12-month series
+  const rows12 = MONTHS.map((_, i) => {
+    if (isReal(i)) {
+      const gross = realLine(i, ['sales_product','shipping_income']);
+      const ded = realLine(i, ['consumer_returns','distributor_fees','dsd_programs','kehe_allowance','payment_terms','promos','unfi_allowance','returns_refunds']);
+      const net = gross + ded;
+      const cogsTotal = realLine(i, ['product_costs','freight_in','freight_out_actual','merchant_fees','warehouse_fulfillment']);
+      const gp = net + cogsTotal;
+      const ni = realNI(i) ?? 0;
+      return { gross, ded, net, cogsTotal, gp, sga: ni - gp, ebitda: ni, real: true };
+    }
+    const s = simMonth(i+1);
+    return { ...s, real: false };
+  });
+
+  const T = (sel: (r: typeof rows12[number]) => number) => rows12.reduce((s,r)=>s+sel(r),0);
+  const annualGross = T(r=>r.gross), annualNet = T(r=>r.net), annualGP = T(r=>r.gp), annualEbitda = T(r=>r.ebitda);
+  const gmPct = annualNet ? annualGP/annualNet*100 : 0;
+
+  // Annual breakeven: cases/month (applied to forecast months) that make annual EBITDA = 0,
+  // holding real months fixed. Solve by scanning contribution.
+  const fcMonths = MONTHS.map((_,i)=>i).filter(i=>!isReal(i));
+  const realEbitdaSum = MONTHS.map((_,i)=>i).filter(i=>isReal(i)).reduce((s,i)=>s+(rows12[i].ebitda),0);
+  const contribPerCaseK = (price*(1-dedPct/100) - cogs - price*logPct/100)/1000; // $K contribution per case
+  const fixedPerMonthK = -(( -10) + FIXED_SGA_CONSTANT_K ) * -1; // approx scaling+fixed; compute exactly below
+  // exact fixed per forecast month (avg of scaling + constant)
+  const fixedFcK = fcMonths.reduce((s,i)=>{ const fc=FIXED_COSTS_BEST_ESTIMATE[i+1]??{}; const sc=(fc.broker_commissions??-10)+(fc.slotting_fees??0)+(fc.demos_merchandising??0)+(fc.digital_social??-5)+(fc.events_tradeshows??0)+(fc.product_samples??-1.16)+(fc.dues_subscriptions??-1.37)+(fc.quality_rd??-0.42); return s + -(sc+FIXED_SGA_CONSTANT_K); },0);
+  // annual EBITDA = realEbitdaSum + Σ_fc (contribPerCaseK*cases − fixedPerMonth) = 0
+  const totalFixedFc = fixedFcK; // $K over all forecast months (positive number)
+  const beCasesPerMonth = (contribPerCaseK > 0 && fcMonths.length>0)
+    ? Math.ceil(((totalFixedFc - realEbitdaSum) / contribPerCaseK) / fcMonths.length)
+    : null;
 
   const Slider = ({ label, value, min, max, step, onChange, display }: {
-    label: string; value: number; min: number; max: number; step: number;
-    onChange: (v: number) => void; display: string;
+    label: string; value: number; min: number; max: number; step: number; onChange: (v:number)=>void; display: string;
   }) => (
     <div className="mb-4">
       <div className="flex justify-between mb-1">
@@ -1785,79 +1965,117 @@ function EBITDATab() {
       </div>
       <input type="range" min={min} max={max} step={step} value={value}
         onChange={e => onChange(Number(e.target.value))}
-        className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
-        style={{accentColor:"#A3224A"}} />
+        className="w-full h-1.5 rounded-full appearance-none cursor-pointer" style={{accentColor:"#A3224A"}} />
     </div>
   );
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-      <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-        <h3 className="text-sm font-bold mb-4" style={{color:"#1C2340"}}>EBITDA Simulator</h3>
-        <Slider label="Cases / month" value={cases} min={500} max={5000} step={50} onChange={setCases} display={cases.toLocaleString()} />
-        <Slider label="Avg price / case ($)" value={price} min={30} max={45} step={0.5} onChange={setPrice} display={`$${price.toFixed(2)}`} />
-        <Slider label="COGS / case ($)" value={cogs} min={10} max={35} step={0.5} onChange={setCogs} display={`$${cogs.toFixed(2)}`} />
-        <Slider label="Deductions %" value={dedPct} min={5} max={35} step={0.5} onChange={setDedPct} display={`${dedPct}%`} />
-        <Slider label="Fixed costs / month ($)" value={fixed} min={20000} max={120000} step={1000} onChange={setFixed} display={`$${(fixed/1000).toFixed(0)}k`} />
-        <div className="flex flex-wrap gap-2 mt-4">
-          {[
-            { label:"Current Jul", cases:1500, price:36.96, cogs:22, ded:18, fixed:55000 },
-            { label:"Q4 Target",   cases:2200, price:36.96, cogs:21, ded:17, fixed:55000 },
-            { label:"OOE COGS",    cases:1500, price:36.96, cogs:18, ded:18, fixed:55000 },
-          ].map(s => (
-            <button key={s.label} onClick={() => { setCases(s.cases); setPrice(s.price); setCogs(s.cogs); setDedPct(s.ded); setFixed(s.fixed); }}
-              className="rounded-full px-3 py-1 text-xs font-semibold border border-border hover:bg-muted">
-              {s.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="space-y-4">
-        <div className={`rounded-2xl border p-5 ${ebitda >= 0 ? "border-emerald-200 bg-emerald-50" : "border-red-200 bg-red-50"}`}>
-          <p className="text-xs font-semibold uppercase tracking-wide mb-1 text-muted-foreground">Monthly EBITDA</p>
-          <div className={`text-3xl font-bold font-mono ${ebitda >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-            {ebitda >= 0 ? "$" : "-$"}{Math.abs(Math.round(ebitda)).toLocaleString()}
-          </div>
-          <p className="text-xs mt-1 text-muted-foreground">GM: {gm.toFixed(1)}% · Contrib/case: ${contribPerCase.toFixed(2)}</p>
-        </div>
-
-        <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-          {[
-            { label:"Gross Revenue", v:grossRev, color:"#3B82F6" },
-            { label:`Deductions (${dedPct}%)`, v:-ded, color:"#F59E0B" },
-            { label:"Net Revenue", v:netRev, color:"#1C2340" },
-            { label:`COGS ($${cogs}/case)`, v:-totalCogs, color:"#EF4444" },
-            { label:"Gross Profit", v:grossProfit, color:grossProfit>=0?"#10B981":"#EF4444" },
-            { label:"Fixed Costs", v:-fixed, color:"#6B7280" },
-            { label:"EBITDA", v:ebitda, color:ebitda>=0?"#10B981":"#EF4444" },
-          ].map(row => (
-            <div key={row.label} className="flex items-center justify-between py-1 border-b border-border/40 last:border-0">
-              <span className="text-xs text-muted-foreground">{row.label}</span>
-              <span className="text-xs font-mono font-semibold" style={{color:row.color}}>
-                {row.v >= 0 ? "$" : "-$"}{Math.abs(Math.round(row.v)).toLocaleString()}
-              </span>
+    <div className="space-y-5">
+      {/* Controls */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+          <h3 className="text-sm font-bold mb-4" style={{color:"#1C2340"}}>Simulator drivers <span className="text-[10px] font-normal text-muted-foreground">(applied to forecast months)</span></h3>
+          <div className="mb-4">
+            <div className="flex justify-between mb-1">
+              <span className="text-xs font-medium text-muted-foreground">Cases / month</span>
+              <input type="number" value={casesPerMonth} min={0} step={100}
+                onChange={e=>setCasesPerMonth(Math.max(0, Number(e.target.value)))}
+                className="w-28 rounded border border-border px-2 py-0.5 text-xs text-right font-mono font-semibold focus:outline-none focus:ring-1 focus:ring-rose-400" style={{color:"#1C2340"}} />
             </div>
-          ))}
+            <input type="range" min={0} max={100000} step={500} value={Math.min(casesPerMonth,100000)}
+              onChange={e=>setCasesPerMonth(Number(e.target.value))}
+              className="w-full h-1.5 rounded-full appearance-none cursor-pointer" style={{accentColor:"#A3224A"}} />
+            <p className="text-[10px] text-muted-foreground mt-0.5">Slider to 100k; type any number above for millions.</p>
+          </div>
+          <Slider label="Avg price / case ($)" value={price} min={20} max={60} step={0.5} onChange={setPrice} display={`$${price.toFixed(2)}`} />
+          <Slider label="COGS / case ($)" value={cogs} min={5} max={40} step={0.25} onChange={setCogs} display={`$${cogs.toFixed(2)}`} />
+          <Slider label="Deductions %" value={dedPct} min={0} max={40} step={0.5} onChange={setDedPct} display={`${dedPct.toFixed(1)}%`} />
+          <Slider label="Logistics % of gross" value={logPct} min={0} max={25} step={0.5} onChange={setLogPct} display={`${logPct.toFixed(1)}%`} />
+          <label className="flex items-center gap-2 text-xs text-muted-foreground mt-2 cursor-pointer">
+            <input type="checkbox" checked={applyToRealToo} onChange={e=>setApplyToRealToo(e.target.checked)} />
+            Apply drivers to all 12 months (ignore real Jan–Jun)
+          </label>
+          <div className="flex flex-wrap gap-2 mt-4">
+            {[
+              { label:"Reset to real", cases:6000, price:37, cogs:assumptions.get('cogs_per_unit',22.27), ded:assumptions.get('deduction_pct_overall',19.78), log:assumptions.get('logistics_pct_of_gross',9.8) },
+              { label:"Breakeven cases", cases: beCasesPerMonth ?? 6000, price:37, cogs, ded:dedPct, log:logPct },
+              { label:"Scale-up 20k", cases:20000, price:37, cogs:20, ded:18, log:8 },
+            ].map(s => (
+              <button key={s.label} onClick={()=>{ setCasesPerMonth(s.cases); setPrice(s.price); setCogs(s.cogs); setDedPct(s.ded); setLogPct(s.log); }}
+                className="rounded-full px-3 py-1 text-xs font-semibold border border-border hover:bg-muted">{s.label}</button>
+            ))}
+          </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <div className="rounded-xl border border-border bg-card p-4 text-center shadow-sm">
-            <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Breakeven</p>
-            <p className="text-xl font-bold font-mono" style={{color:"#1C2340"}}>{breakeven ? breakeven.toLocaleString() : "∞"}</p>
-            <p className="text-[10px] text-muted-foreground">cases/month</p>
-            {breakeven && cases < breakeven && <p className="text-[10px] text-red-500 font-semibold mt-1">Need +{(breakeven-cases).toLocaleString()} cases</p>}
-            {breakeven && cases >= breakeven && <p className="text-[10px] text-emerald-600 font-semibold mt-1">✓ Above breakeven</p>}
+        {/* Annual summary */}
+        <div className="space-y-4">
+          <div className={`rounded-2xl border p-5 ${annualEbitda >= 0 ? "border-emerald-200 bg-emerald-50" : "border-red-200 bg-red-50"}`}>
+            <p className="text-xs font-semibold uppercase tracking-wide mb-1 text-muted-foreground">Annual EBITDA (FY 2026)</p>
+            <div className={`text-3xl font-bold font-mono ${annualEbitda >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+              {annualEbitda >= 0 ? "$" : "-$"}{Math.abs(Math.round(annualEbitda)).toLocaleString()}K
+            </div>
+            <p className="text-xs mt-1 text-muted-foreground">GM: {gmPct.toFixed(1)}% · Gross ${Math.round(annualGross).toLocaleString()}K · Net ${Math.round(annualNet).toLocaleString()}K</p>
           </div>
-          <div className="rounded-xl border border-border bg-card p-4 text-center shadow-sm">
-            <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Cash Runway</p>
-            <p className={`text-xl font-bold font-mono ${runwayMonths < 6 ? "text-red-600" : runwayMonths < 12 ? "text-orange-500" : "text-emerald-600"}`}>
-              {runwayMonths > 36 ? "36+" : runwayMonths.toFixed(1)}
-            </p>
-            <p className="text-[10px] text-muted-foreground">months · cash: ${(cash/1000).toFixed(0)}k</p>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="rounded-xl border border-border bg-card p-4 text-center shadow-sm">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Annual Breakeven</p>
+              <p className="text-xl font-bold font-mono" style={{color:"#1C2340"}}>{beCasesPerMonth ? beCasesPerMonth.toLocaleString() : "∞"}</p>
+              <p className="text-[10px] text-muted-foreground">cases/month (forecast) for FY EBITDA = 0</p>
+            </div>
+            <div className="rounded-xl border border-border bg-card p-4 text-center shadow-sm">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Contribution / case</p>
+              <p className={`text-xl font-bold font-mono ${contribPerCaseK>=0?"text-emerald-600":"text-red-600"}`}>${(contribPerCaseK*1000).toFixed(2)}</p>
+              <p className="text-[10px] text-muted-foreground">price − ded − cogs − logistics</p>
+            </div>
           </div>
         </div>
       </div>
+
+      {/* Full-year P&L */}
+      <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
+        <table className="w-full text-xs min-w-max">
+          <thead>
+            <tr className="border-b border-border bg-muted/50">
+              <th className="text-left px-4 py-2.5 text-[10px] uppercase tracking-wide text-muted-foreground w-44">Line ($K)</th>
+              {MONTHS.map((mo,i) => (
+                <th key={mo} className="text-right px-2 py-2.5 text-[10px] uppercase w-12" style={{color: isReal(i) ? "#1C2340" : "#A3224A"}}>
+                  {mo}<div className="text-[8px]">{isReal(i) ? "A" : "sim"}</div>
+                </th>
+              ))}
+              <th className="text-right px-2 py-2.5 text-[10px] uppercase text-muted-foreground w-16">FY</th>
+            </tr>
+          </thead>
+          <tbody>
+            {([
+              { name:"Gross Sales", sel:(r:any)=>r.gross, total:true },
+              { name:"Deductions", sel:(r:any)=>r.ded },
+              { name:"Net Sales", sel:(r:any)=>r.net, total:true },
+              { name:"COGS + Logistics", sel:(r:any)=>r.cogsTotal },
+              { name:"Gross Profit", sel:(r:any)=>r.gp, total:true },
+              { name:"SG&A", sel:(r:any)=>r.sga },
+              { name:"EBITDA", sel:(r:any)=>r.ebitda, total:true },
+            ]).map((line,li) => {
+              const fy = T(line.sel);
+              return (
+                <tr key={li} className={`border-t border-border/40 hover:bg-muted/20 ${line.total ? "font-bold bg-muted/10" : ""}`}>
+                  <td className="px-4 py-1.5" style={{color:"#1C2340"}}>{line.name}</td>
+                  {rows12.map((r,i) => {
+                    const v = line.sel(r);
+                    return (
+                      <td key={i} className="text-right px-2 py-1.5 font-mono tabular-nums"
+                        style={{ color: v===0 ? "#9CA3AF" : isReal(i) ? (v<0?"#EF4444":"#1C2340") : (v<0?"#F3B8C4":"#A3224A"), fontWeight: isReal(i)?700:400 }}>
+                        {v===0 ? "—" : fmt(v,0)}
+                      </td>
+                    );
+                  })}
+                  <td className="text-right px-2 py-1.5 font-mono font-bold tabular-nums" style={{color: fy<0?"#EF4444":"#10B981"}}>{fmt(fy,0)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-[10px] text-muted-foreground">Real months (Jan–Jun, bold) come from the closed P&L and don't change. Sim months (pink) recompute live from the drivers above. Fixed SG&A stays fixed; deductions, COGS and logistics scale with volume/price — same rules as the forecast.</p>
     </div>
   );
 }
@@ -2323,7 +2541,7 @@ RULES:
       {tab === "cashflow"  && <CashFlowTab actuals={actuals} actualOnly={actualOnly} scenario={projScenario} />}
       {tab === "balance"   && <BalanceTab realMonths={realMonths} actuals={actuals} actualOnly={actualOnly} scenario={projScenario} />}
       {tab === "runway"    && <RunwayTab />}
-      {tab === "ebitda"    && <EBITDATab />}
+      {tab === "ebitda"    && <EBITDATab actuals={actuals} />}
     </div>
   );
 }
