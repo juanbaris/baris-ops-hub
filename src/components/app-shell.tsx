@@ -14,76 +14,33 @@ const NAV = [
 function NavAISearch() {
   const [query, setQuery] = useState("");
   const [answer, setAnswer] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
+  const [asked, setAsked] = useState("");
 
   async function ask() {
-    if (!query.trim()) return;
+    const q = query.trim();
+    if (!q || loading) return;
     setLoading(true);
     setAnswer(null);
+    setError(null);
+    setAsked(q);
     setOpen(true);
-
-    const [{ data: mv }, { data: ords }] = await Promise.all([
-      supabase.from("fp_movements").select("sku,cases,type"),
-      supabase.from("customer_orders").select("*").order("po_date", { ascending: false }).limit(200),
-    ]);
-
-    const stock: Record<string, number> = {};
-    for (const m of mv ?? []) {
-      stock[m.sku] = (stock[m.sku] ?? 0) + (m.type === "In" ? Number(m.cases) : -Number(m.cases));
-    }
-    const orders = ords ?? [];
-
-    const stockSummary = Object.entries(stock)
-      .map(([sku, cases]) => `${sku}: ${Math.round(cases)} cases`)
-      .join(", ");
-
-    const openOrders = orders.filter((o) => o.status !== "Invoiced");
-    const invoicedThisMonth = orders.filter((o) => {
-      if (o.status !== "Invoiced" || !o.invoice_date) return false;
-      const d = new Date(o.invoice_date);
-      const now = new Date();
-      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-    });
-    const revenueThisMonth = invoicedThisMonth.reduce((s, o) => s + (Number(o.gross_sales) || 0), 0);
-
-    const ordersContext = orders.slice(0, 50).map((o) =>
-      `PO ${o.po_number}: ${o.distributor} ${o.customer} ${o.status} gross_sales=$${o.gross_sales || 0} po_date=${o.po_date}`
-    ).join("\n");
-
-    const context = `
-BARIS Ops Hub — Live data as of today:
-
-STOCK (Lineage Newark, cases on hand):
-${stockSummary}
-
-OPEN ORDERS (${openOrders.length} total):
-${openOrders.slice(0, 20).map((o) => `PO ${o.po_number}: ${o.distributor} ${o.customer} status=${o.status} gross_sales=$${o.gross_sales || 0}`).join("\n")}
-
-REVENUE THIS MONTH (invoiced): $${Math.round(revenueThisMonth).toLocaleString()}
-
-RECENT ORDERS (last 50):
-${ordersContext}
-
-FORECAST (Normal scenario, cases):
-Aug 2026: 3869, Sep: 8810, Oct: 4524, Nov: 1548, Dec: 7917
-Jan 2027: 1250, Feb: 8334, Mar: 8274, Apr: 9762, May: 4286, Jun: 8750, Jul: 4048
-`;
-
     try {
-      const response = await fetch("/api/process-po", {
+      const response = await fetch("/api/ai-search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "search", query, context }),
+        body: JSON.stringify({ query: q }),
       });
-      if (response.ok) {
-        const data = await response.json();
-        setAnswer(data.answer || "No answer found.");
-      } else {
-        setAnswer("Could not get an answer. Try again.");
-      }
+      const data = (await response.json().catch(() => ({}))) as {
+        answer?: string;
+        error?: string;
+      };
+      if (response.ok && data.answer) setAnswer(data.answer);
+      else setError(data.error || "Could not get an answer. Try again.");
     } catch {
-      setAnswer("Error connecting to AI.");
+      setError("Error connecting to AI.");
     }
     setLoading(false);
   }
@@ -94,23 +51,28 @@ Jan 2027: 1250, Feb: 8334, Mar: 8274, Apr: 9762, May: 4286, Jun: 8750, Jul: 4048
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && ask()}
-        onFocus={() => answer && setOpen(true)}
+        onFocus={() => (answer || error) && setOpen(true)}
         placeholder="✨ Ask AI about your data…"
         className="w-full rounded-full border border-sidebar-border/40 bg-sidebar-accent/40 px-4 py-1.5 text-sm text-sidebar-foreground placeholder:text-sidebar-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/40"
       />
       {loading && (
         <span className="absolute right-3 top-1.5 animate-spin text-sm text-sidebar-foreground/70">⟳</span>
       )}
-      {open && (answer || loading) && (
-        <div className="absolute right-0 top-full z-50 mt-2 w-[420px] rounded-xl border border-border bg-card p-4 text-foreground shadow-lg">
+      {open && (answer || error || loading) && (
+        <div className="absolute right-0 top-full z-50 mt-2 max-h-[70vh] w-[460px] overflow-auto rounded-xl border border-border bg-card p-4 text-foreground shadow-lg">
+          <p className="mb-2 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+            {asked}
+          </p>
           {loading ? (
-            <p className="text-sm text-muted-foreground">Thinking…</p>
+            <p className="text-sm text-muted-foreground">Reading your live data…</p>
+          ) : error ? (
+            <p className="text-sm text-destructive">{error}</p>
           ) : (
             <>
               <p className="whitespace-pre-wrap text-sm leading-relaxed">{answer}</p>
               <button
-                onClick={() => { setOpen(false); setAnswer(null); setQuery(""); }}
-                className="mt-2 text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => { setOpen(false); setAnswer(null); setError(null); setQuery(""); }}
+                className="mt-3 text-xs text-muted-foreground hover:text-foreground"
               >
                 Clear ✕
               </button>
