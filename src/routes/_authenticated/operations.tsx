@@ -387,7 +387,7 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
     movement_date: ymd(), type: "In" as MoveType, sku: "XD" as SKU,
     cases: "", warehouse: "Lineage Newark" as Warehouse,
     lot_number: "", concept: "Production" as FPConcept,
-    cogs_per_case: "", po_number_ref: "", notes: "",
+    cogs_per_case: "", expiry: "", po_number_ref: "", notes: "",
   });
   const [saving, setSaving] = useState(false);
   const [editingFP, setEditingFP] = useState<FPRow | null>(null);
@@ -421,9 +421,33 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
       : await supabase.from("fp_movements").insert(payload);
     setSaving(false);
     if (res.error) { toast.error(res.error.message); return; }
+
+    // Optionally create/update the lot in Lot Master (so a new lot becomes editable, or its expiry/cogs get set).
+    const lotNo = payload.lot_number;
+    if (lotNo && !lotNo.startsWith("LOT-") && (form.expiry || form.cogs_per_case)) {
+      try {
+        const { data: existing } = await supabase.from("lot_master").select("id")
+          .eq("lot_number", lotNo).eq("warehouse", form.warehouse).maybeSingle();
+        if (existing) {
+          const patch: Record<string, any> = { updated_at: new Date().toISOString() };
+          if (form.expiry) patch.expiry_date = form.expiry;
+          if (form.cogs_per_case) { patch.cogs_per_case = Number(form.cogs_per_case); patch.cogs_status = "confirmed"; }
+          await supabase.from("lot_master").update(patch).eq("id", (existing as any).id);
+        } else {
+          await supabase.from("lot_master").insert({
+            lot_number: lotNo, warehouse: form.warehouse, sku: form.sku,
+            expiry_date: form.expiry || null, cases_initial: 0,
+            cogs_per_case: form.cogs_per_case ? Number(form.cogs_per_case) : null,
+            cogs_status: form.cogs_per_case ? "confirmed" : "missing",
+            notes: "Created from FP movement",
+          } as any);
+        }
+      } catch (e) { /* lot upsert is best-effort; movement already saved */ }
+    }
+
     toast.success(editingFP ? "Movement updated" : `FP movement added: ${form.type} ${form.cases} cases ${form.sku}`);
     setEditingFP(null);
-    setForm(f => ({ ...f, cases: "", lot_number: "", cogs_per_case: "", po_number_ref: "", notes: "" }));
+    setForm(f => ({ ...f, cases: "", lot_number: "", cogs_per_case: "", expiry: "", po_number_ref: "", notes: "" }));
     onAdded();
   }
 
@@ -439,6 +463,7 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
       lot_number: r.lot_number ?? "",
       concept: r.concept as FPConcept,
       cogs_per_case: rr.cogs_per_case != null ? String(rr.cogs_per_case) : "",
+      expiry: "",
       po_number_ref: rr.po_number_ref ?? "",
       notes: r.notes ?? "",
     });
@@ -517,11 +542,15 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
             <select className={`${inp} mt-1`} value={form.concept} onChange={e => set("concept", e.target.value)}>
               {FP_CONCEPTS.map(c => <option key={c} value={c}>{c}</option>)}
             </select></div>
-          <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">COGS/case ($)</label>
+          <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">COGS/unit ($)</label>
             <input type="number" className={`${inp} mt-1 font-mono`} value={form.cogs_per_case}
               onChange={e => set("cogs_per_case", e.target.value)} placeholder="Optional" step="0.01" /></div>
         </div>
-        <div className="grid grid-cols-2 gap-3 mb-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
+          <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Expiry date</label>
+            <input type="date" className={`${inp} mt-1`} value={form.expiry}
+              onChange={e => set("expiry", e.target.value)} />
+            <p className="text-[9px] text-muted-foreground mt-0.5">Optional · crea/actualiza el lote en Lot Master</p></div>
           <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">PO Ref</label>
             <input className={`${inp} mt-1 font-mono`} value={form.po_number_ref} onChange={e => set("po_number_ref", e.target.value)} placeholder="Optional" /></div>
           <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Notes</label>
