@@ -114,7 +114,7 @@ const STATUS_PILL: Record<string, string> = {
   OK: "bg-emerald-100 text-emerald-700",
 };
 
-function FPStockTab({ movements, orders, loading, baseline, lotMap }: { movements: FPRow[]; orders: any[]; loading: boolean; baseline: BaselineRow[]; lotMap: Record<string, LotCard> }) {
+export function FPStockTab({ movements, orders, loading, baseline, lotMap }: { movements: FPRow[]; orders: any[]; loading: boolean; baseline: BaselineRow[]; lotMap: Record<string, LotCard> }) {
   const { bySkuMonthKey } = useSalesForecast();
   const [showValue, setShowValue] = useState(false);
   const [lots, setLots] = useState<any[]>([]);
@@ -1102,7 +1102,7 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
   );
 }
 // ─── I&P Summary Tab ──────────────────────────────────────────────────────────
-function IPSummaryTab({ movements }: { movements: IPRow[] }) {
+export function IPSummaryTab({ movements }: { movements: IPRow[] }) {
   const [filterMaterial, setFilterMaterial] = useState("all");
 
   const materials = useMemo(
