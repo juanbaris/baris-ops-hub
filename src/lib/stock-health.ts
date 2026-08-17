@@ -1,65 +1,130 @@
-import React from "react";
-import { buildGrids, shortDc, SH_PRODUCTS, type SHRec, type Grid } from "@/lib/stock-health";
+// Shared Stock Health heatmap logic — used by Fulfillment tab, Home, and the Weekly PPT.
+export const SH_KEY = "baris.fulfillment.stockhealth.v1";
 
-function Legend({ neverLabel }: { neverLabel: string }) {
-  return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: 14, alignItems: "center", marginBottom: 12, fontSize: 12 }} className="text-muted-foreground">
-      {[["#d03b3b", "0-2 crítico"], ["#ec835a", "2-4 alerta"], ["#fab219", "4-6 vigilar"], ["#0ca30c", "6+ saludable"]].map(([bg, label]) => (
-        <span key={label} style={{ display: "flex", alignItems: "center", gap: 5 }}>
-          <span style={{ width: 10, height: 10, borderRadius: 2, background: bg }} />{label}
-        </span>
-      ))}
-      <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
-        <span style={{ width: 10, height: 10, borderRadius: 2, background: "var(--surface-1, #f3f3f3)", border: "0.5px solid var(--border, #ddd)" }} />{neverLabel}
-      </span>
-    </div>
-  );
+export const SH_PRODUCTS = [
+  "Dark & White Rasp 5oz", "Extra Dark Rasp 5oz", "Hazelnut Rasp 5oz",
+  "Matcha Rasp 5oz", "Milk & White Rasp 5oz", "Pistachio Rasp 5oz",
+];
+export const UNFI_DCS = [
+  "Chesterfield NH DC","Dayville CT DC","Greenwood IN DC","Hudson Valley NY DC",
+  "Iowa City IA DC","Joliet, IL DC","Manchester PA DC","Moreno Valley CA DC",
+  "Prescott WI DC","Ridgefield WA DC","Rocklin CA DC","Sarasota North FL DC",
+];
+// Fixed authorized SKUs per UNFI DC (short names → full via " Rasp 5oz"). Matcha never authorized.
+const UNFI_AUTH_SHORT: Record<string, string[]> = {
+  "Chesterfield NH DC": ["Dark & White","Extra Dark","Milk & White"],
+  "Dayville CT DC": ["Dark & White","Extra Dark","Milk & White"],
+  "Greenwood IN DC": ["Dark & White","Extra Dark","Milk & White","Pistachio"],
+  "Hudson Valley NY DC": ["Dark & White","Milk & White","Pistachio"],
+  "Iowa City IA DC": ["Extra Dark","Hazelnut","Pistachio"],
+  "Joliet, IL DC": ["Extra Dark","Hazelnut","Pistachio"],
+  "Manchester PA DC": ["Dark & White","Hazelnut","Milk & White","Pistachio"],
+  "Moreno Valley CA DC": ["Dark & White","Extra Dark"],
+  "Prescott WI DC": ["Dark & White","Hazelnut","Milk & White","Pistachio"],
+  "Ridgefield WA DC": ["Pistachio"],
+  "Rocklin CA DC": ["Dark & White","Extra Dark","Milk & White","Pistachio"],
+  "Sarasota North FL DC": ["Dark & White","Milk & White"],
+};
+export const UNFI_AUTH: Record<string, Set<string>> = Object.fromEntries(
+  Object.entries(UNFI_AUTH_SHORT).map(([dc, arr]) => [dc, new Set(arr.map(s => `${s} Rasp 5oz`))])
+);
+
+export type SHRec = { product: string; dc: string; qty: number; woh: number };
+export type Cell = { text: string | null; bg: string | null; fg: string | null }; // text null = dash / never
+export type Grid = { dcs: string[]; rows: { product: string; cells: Cell[] }[] };
+
+export const DASH: Cell = { text: null, bg: null, fg: null };
+export const isUnfi = (dc: string) => dc.trim().endsWith("DC");
+export const shortDc = (n: string) => (n.length > 14 ? n.slice(0, 13) + "…" : n);
+export function wohColor(wk: number): { bg: string; fg: string } {
+  if (wk <= 2) return { bg: "#d03b3b", fg: "#ffffff" };
+  if (wk <= 4) return { bg: "#ec835a", fg: "#4a1b0c" };
+  if (wk <= 6) return { bg: "#fab219", fg: "#412402" };
+  return { bg: "#0ca30c", fg: "#ffffff" };
 }
 
-function HeatTable({ grid, minWidth }: { grid: Grid; minWidth: number }) {
-  const firstCol: React.CSSProperties = { position: "sticky", left: 0, background: "var(--surface-2, #fafafa)", padding: "8px 10px", borderBottom: "0.5px solid var(--border, #e5e5e5)", fontWeight: 500, whiteSpace: "nowrap", textAlign: "left" };
-  const thBase: React.CSSProperties = { position: "sticky", top: 0, textAlign: "center", padding: "8px 6px", borderBottom: "0.5px solid var(--border, #e5e5e5)", minWidth: 78, fontWeight: 500, whiteSpace: "nowrap", background: "var(--surface-2, #fafafa)" };
-  if (!grid.dcs.length) return <p className="text-sm text-muted-foreground py-4">Sin DCs para mostrar.</p>;
-  return (
-    <div style={{ overflowX: "auto", border: "0.5px solid var(--border, #e5e5e5)", borderRadius: 12 }}>
-      <table style={{ borderCollapse: "collapse", fontSize: 12, minWidth }}>
-        <thead>
-          <tr>
-            <th style={{ ...firstCol, top: 0, zIndex: 3, minWidth: 170 }} className="text-foreground">Producto</th>
-            {grid.dcs.map(dc => <th key={dc} title={dc} style={{ ...thBase, zIndex: 2 }} className="text-muted-foreground">{shortDc(dc)}</th>)}
-          </tr>
-        </thead>
-        <tbody>
-          {grid.rows.map(row => (
-            <tr key={row.product}>
-              <td style={{ ...firstCol, zIndex: 1 }}>{row.product}</td>
-              {row.cells.map((c, i) => c.text === null ? (
-                <td key={i} style={{ textAlign: "center", padding: "8px 6px", borderBottom: "0.5px solid var(--border, #e5e5e5)", background: "var(--surface-1, #f5f5f5)" }} className="text-muted-foreground">–</td>
-              ) : (
-                <td key={i} style={{ textAlign: "center", padding: "8px 6px", borderBottom: "0.5px solid var(--border, #e5e5e5)", background: c.bg!, color: c.fg!, fontWeight: 500 }}>{c.text}</td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
+function parseCsvText(text: string): string[][] {
+  const out: string[][] = [];
+  for (const raw of text.split(/\r?\n/)) {
+    if (!raw.length) continue;
+    const cells: string[] = []; let cur = ""; let q = false;
+    for (let i = 0; i < raw.length; i++) {
+      const ch = raw[i];
+      if (q) { if (ch === '"') { if (raw[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch; }
+      else { if (ch === '"') q = true; else if (ch === ",") { cells.push(cur); cur = ""; } else cur += ch; }
+    }
+    cells.push(cur);
+    out.push(cells);
+  }
+  return out;
 }
 
-export function StockHealthHeatmaps({ records }: { records: SHRec[] }) {
-  const { kehe, unfi } = buildGrids(records);
-  return (
-    <div className="space-y-6">
-      <div>
-        <p className="text-sm font-bold mb-1" style={{ color: "#1C2340" }}>KeHE — Weeks On Hand por DC</p>
-        <Legend neverLabel="sin stock" />
-        <HeatTable grid={kehe} minWidth={960} />
-      </div>
-      <div>
-        <p className="text-sm font-bold mb-1" style={{ color: "#1C2340" }}>UNFI — cobertura por DC (SKUs autorizados)</p>
-        <Legend neverLabel="nunca pedido" />
-        <HeatTable grid={unfi} minWidth={1080} />
-      </div>
-    </div>
-  );
+export function parseStockHealth(text: string): SHRec[] {
+  const rows = parseCsvText(text);
+  if (!rows.length) return [];
+  const header = rows[0].map(h => h.replace(/^\uFEFF/, "").trim().toLowerCase());
+  const iP = header.indexOf("product");
+  const iDc = header.indexOf("dc");
+  const iQty = header.findIndex(h => h.startsWith("qty on hand"));
+  const iWoh = header.findIndex(h => h.startsWith("weeks on hand"));
+  if (iP < 0 || iDc < 0 || iQty < 0) return [];
+  const recs: SHRec[] = [];
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    if (!row[iP]) continue;
+    recs.push({
+      product: row[iP].trim(), dc: (row[iDc] || "").trim(),
+      qty: parseFloat(row[iQty]) || 0, woh: iWoh >= 0 ? (parseFloat(row[iWoh]) || 0) : 0,
+    });
+  }
+  return recs;
+}
+
+export function loadStockHealth(): { records: SHRec[]; updatedAt: string | null } {
+  try {
+    const raw = typeof window !== "undefined" ? window.localStorage.getItem(SH_KEY) : null;
+    if (raw) { const p = JSON.parse(raw); return { records: p.records ?? [], updatedAt: p.updatedAt ?? null }; }
+  } catch {}
+  return { records: [], updatedAt: null };
+}
+
+export function buildGrids(records: SHRec[]): { kehe: Grid; unfi: Grid } {
+  const lookup: Record<string, SHRec> = {};
+  for (const r of records) lookup[`${r.product}||${r.dc}`] = r;
+
+  // KeHE DCs = "City, ST" format, drop fully-inactive, sorted
+  const keheSet = new Set<string>();
+  for (const r of records) if (!isUnfi(r.dc)) keheSet.add(r.dc);
+  const keheDcs = [...keheSet]
+    .filter(dc => SH_PRODUCTS.some(p => (lookup[`${p}||${dc}`]?.qty ?? 0) > 0))
+    .sort((a, b) => a.localeCompare(b));
+
+  const kehe: Grid = {
+    dcs: keheDcs,
+    rows: SH_PRODUCTS.map(p => ({
+      product: p,
+      cells: keheDcs.map(dc => {
+        const rec = lookup[`${p}||${dc}`];
+        const qty = rec?.qty ?? 0;
+        if (!qty || qty <= 0) return DASH;
+        const c = wohColor(rec!.woh);
+        return { text: String(Math.round(qty)), bg: c.bg, fg: c.fg };
+      }),
+    })),
+  };
+
+  const unfi: Grid = {
+    dcs: UNFI_DCS,
+    rows: SH_PRODUCTS.map(p => ({
+      product: p,
+      cells: UNFI_DCS.map(dc => {
+        if (!UNFI_AUTH[dc]?.has(p)) return DASH;                        // never ordered
+        const qty = lookup[`${p}||${dc}`]?.qty ?? 0;
+        if (!qty || qty <= 0) return { text: "0", bg: "#d03b3b", fg: "#ffffff" }; // real stockout
+        return { text: String(Math.round(qty)), bg: "#0ca30c", fg: "#ffffff" };   // healthy
+      }),
+    })),
+  };
+
+  return { kehe, unfi };
 }
