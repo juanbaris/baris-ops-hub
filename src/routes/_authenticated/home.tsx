@@ -679,14 +679,6 @@ function HomePage() {
           sub="All non-invoiced POs" />
       </div>
 
-      {/* Stock Health heatmaps (from Fulfillment → Stock Health upload) */}
-      {shRecords.length > 0 && (
-        <div className="rounded-2xl border border-border bg-card shadow-sm p-6">
-          <h2 className="text-base font-bold mb-4" style={{ color: "#1C2340" }}>Stock Health por DC (KeHE + UNFI)</h2>
-          <StockHealthHeatmaps records={shRecords} />
-        </div>
-      )}
-
       {/* Weekly Meeting section */}
       <div className="rounded-2xl overflow-hidden border border-border shadow-sm">
         <div className="flex items-center justify-between px-6 py-4" style={{ backgroundColor: "#1C2340" }}>
@@ -767,6 +759,15 @@ function HomePage() {
           </div>
 
         </div>
+
+        {shRecords.length > 0 && (
+          <div className="border-t border-border bg-card px-6 py-5">
+            <h3 className="text-sm font-semibold mb-3" style={{ color: "#1C2340" }}>Stock Health por DC (KeHE + UNFI)</h3>
+            <div style={{ zoom: 0.8 }}>
+              <StockHealthHeatmaps records={shRecords} />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Stock summary (simple) */}
