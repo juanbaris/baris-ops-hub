@@ -1,4 +1,5 @@
 import PptxGenJS from "pptxgenjs";
+import { buildGrids, SH_PRODUCTS, type SHRec } from "@/lib/stock-health";
 
 export type MonthPoint = { label: string; actual: number; budget: number; open?: number };
 export type QuarterPoint = { label: string; actual: number; budget: number };
@@ -23,6 +24,7 @@ export async function generateWeeklyDeck(opts: {
   ytdByDist: DistSegment[];
   year: number;
   asOf: string;
+  stockHealth?: SHRec[];
 }) {
   const pptx = new PptxGenJS();
   pptx.layout = "LAYOUT_16x9";
@@ -99,6 +101,40 @@ export async function generateWeeklyDeck(opts: {
     x: barX + barW + 0.15, y: barY, w: 1.6, h: barH, valign: "middle",
     fontSize: 20, bold: true, color: BURGUNDY, fontFace: "Arial",
   });
+
+  // Slides 4-5 — Stock Health heatmaps (KeHE + UNFI), if a CSV has been uploaded
+  if (opts.stockHealth && opts.stockHealth.length) {
+    const { kehe, unfi } = buildGrids(opts.stockHealth);
+    const shortP = (p: string) => p.replace(" Rasp 5oz", "");
+    const shortH = (n: string) => (n.length > 12 ? n.slice(0, 11) + "…" : n);
+
+    const addHeatSlide = (grid: typeof kehe, title: string, sub: string) => {
+      if (!grid.dcs.length) return;
+      const s = pptx.addSlide();
+      titleBar(s, title, sub);
+      const headerRow = [
+        { text: "Producto", options: { bold: true, color: "FFFFFF", fill: { color: NAVY }, fontSize: 8, align: "left" as const, valign: "middle" as const } },
+        ...grid.dcs.map(dc => ({ text: shortH(dc), options: { bold: true, color: "FFFFFF", fill: { color: NAVY }, fontSize: 7, align: "center" as const, valign: "middle" as const } })),
+      ];
+      const bodyRows = grid.rows.map(row => ([
+        { text: shortP(row.product), options: { bold: true, color: NAVY, fill: { color: "F2ECE2" }, fontSize: 8, align: "left" as const, valign: "middle" as const } },
+        ...row.cells.map(c => c.text === null
+          ? { text: "–", options: { color: "9CA3AF", fill: { color: "F0F0F0" }, fontSize: 8, align: "center" as const, valign: "middle" as const } }
+          : { text: c.text, options: { bold: true, color: (c.fg || "#000").replace("#", ""), fill: { color: (c.bg || "#fff").replace("#", "") }, fontSize: 8, align: "center" as const, valign: "middle" as const } }),
+      ]));
+      const nCols = grid.dcs.length + 1;
+      const firstW = 1.4;
+      const colW = Math.min(0.62, (9.0 - firstW) / grid.dcs.length);
+      s.addTable([headerRow, ...bodyRows], {
+        x: 0.5, y: 1.4, w: firstW + colW * grid.dcs.length,
+        colW: [firstW, ...Array(grid.dcs.length).fill(colW)],
+        rowH: 0.35, border: { type: "solid", color: "FFFFFF", pt: 1 }, fontFace: "Arial",
+      });
+    };
+
+    addHeatSlide(kehe, "Stock Health — KeHE", "Weeks On Hand por DC · verde 6+ / amarillo 4-6 / naranja 2-4 / rojo 0-2");
+    addHeatSlide(unfi, "Stock Health — UNFI", "Cobertura por DC (SKUs autorizados) · verde con stock / rojo quiebre / gris nunca pedido");
+  }
 
   await pptx.writeFile({ fileName: `BARIS-Weekly-Meeting-${opts.asOf}.pptx` });
 }
