@@ -3,11 +3,14 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader } from "@/components/app-shell";
-import { buildLotMap } from "@/lib/fp-shared";
+import { buildLotMap, resolveCogs } from "@/lib/fp-shared";
 import { FPStockTab, IPSummaryTab } from "@/routes/_authenticated/operations";
 import { PNLTab } from "@/routes/_authenticated/finance";
 import { FPSummaryTab } from "@/components/fp/fp-summary-tab";
-import { generateAccountingDeck } from "@/lib/accounting-deck";
+import { downloadExcel } from "@/lib/excel-report";
+
+const SKUS = ["XD", "PW", "HM", "WM", "WD", "Matcha"];
+const LOT_BASELINE = "2026-08-14";
 
 const PERIODS = Array.from({ length: 12 }, (_, i) => `2026-${String(i + 1).padStart(2, "0")}`);
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -30,6 +33,7 @@ function AccountingPage() {
   const [orders, setOrders] = useState<any[]>([]);
   const [baseline, setBaseline] = useState<any[]>([]);
   const [lotMap, setLotMap] = useState<Record<string, any>>({});
+  const [lotRows, setLotRows] = useState<any[]>([]);
   const [ipMovements, setIpMovements] = useState<any[]>([]);
   const [actuals, setActuals] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
@@ -49,6 +53,7 @@ function AccountingPage() {
       setOrders(ord.data ?? []);
       setBaseline(bl.data ?? []);
       setLotMap(buildLotMap(lots.data ?? []));
+      setLotRows(lots.data ?? []);
       setIpMovements(ip.data ?? []);
       const am: Record<string, any> = {};
       (act.data ?? []).forEach((r: any) => { am[r.period] = r; });
@@ -76,18 +81,108 @@ function AccountingPage() {
     return `${MONTHS[parseInt(mm) - 1]} ${y.slice(2)}`;
   };
 
-  async function exportDeck() {
+  // ── FP Accumulated inventory (all warehouses combined) — units + value, per month ──
+  const fpAccum = useMemo(() => {
+    const mList = [...new Set(fpMovements.map((m: any) => m.movement_date.slice(0, 7)))].sort();
+    const CUR = LOT_BASELINE.slice(0, 7);
+    if (!mList.includes(CUR)) { mList.push(CUR); mList.sort(); }
+    const sorted = [...fpMovements].sort((a: any, b: any) => a.movement_date.localeCompare(b.movement_date));
+    const snapU: Record<string, Record<string, number>> = {};
+    const snapV: Record<string, Record<string, number>> = {};
+    const take = (mo: string, u: Record<string, number>, v: Record<string, number>) => {
+      snapU[mo] = Object.fromEntries(SKUS.map(s => [s, u[s] ?? 0]));
+      snapV[mo] = Object.fromEntries(SKUS.map(s => [s, v[s] ?? 0]));
+    };
+    // history (< CUR)
+    const balU: Record<string, number> = {}, balV: Record<string, number> = {};
+    const hist = mList.filter(m => m < CUR);
+    let hi = 0;
+    for (const mv of sorted) {
+      const mo = mv.movement_date.slice(0, 7);
+      while (hi < hist.length && hist[hi] < mo) { take(hist[hi], balU, balV); hi++; }
+      if (mo >= CUR) continue;
+      const signed = mv.type === "In" ? Number(mv.cases) : -Number(mv.cases);
+      balU[mv.sku] = (balU[mv.sku] ?? 0) + signed;
+      const { cogs } = resolveCogs(mv, lotMap);
+      if (cogs != null) balV[mv.sku] = (balV[mv.sku] ?? 0) + signed * cogs * 8;
+    }
+    while (hi < hist.length) { take(hist[hi], balU, balV); hi++; }
+    // baseline month onward: Lot Master anchor + post-baseline movements
+    const curU: Record<string, number> = {}, curV: Record<string, number> = {};
+    for (const r of lotRows) {
+      const cs = Number(r.cases_initial) || 0;
+      curU[r.sku] = (curU[r.sku] ?? 0) + cs;
+      curV[r.sku] = (curV[r.sku] ?? 0) + cs * (Number(r.cogs_per_case) || 0) * 8;
+    }
+    for (const mo of mList.filter(m => m >= CUR)) {
+      for (const mv of sorted) {
+        if (mv.movement_date.slice(0, 7) !== mo || mv.movement_date <= LOT_BASELINE) continue;
+        const signed = mv.type === "In" ? Number(mv.cases) : -Number(mv.cases);
+        curU[mv.sku] = (curU[mv.sku] ?? 0) + signed;
+        const { cogs } = resolveCogs(mv, lotMap);
+        if (cogs != null) curV[mv.sku] = (curV[mv.sku] ?? 0) + signed * cogs * 8;
+      }
+      take(mo, curU, curV);
+    }
+    const months = mList.slice(-3);
+    return { months, snapU, snapV };
+  }, [fpMovements, lotRows, lotMap]);
+
+  // ── I&P inventory history — closing stock by month (units + value) ──
+  const ipHist = useMemo(() => {
+    const mList = [...new Set(ipMovements.map((m: any) => m.movement_date.slice(0, 7)))].sort();
+    const materials = [...new Set(ipMovements.map((m: any) => m.material))].sort();
+    const sorted = [...ipMovements].sort((a: any, b: any) => a.movement_date.localeCompare(b.movement_date));
+    const balU: Record<string, number> = {}, balV: Record<string, number> = {};
+    const snapU: Record<string, Record<string, number>> = {};
+    const snapV: Record<string, Record<string, number>> = {};
+    const take = (mo: string) => {
+      snapU[mo] = Object.fromEntries(materials.map(mt => [mt, balU[mt] ?? 0]));
+      snapV[mo] = Object.fromEntries(materials.map(mt => [mt, balV[mt] ?? 0]));
+    };
+    let mi = 0;
+    for (const mv of sorted) {
+      const mo = mv.movement_date.slice(0, 7);
+      while (mi < mList.length && mList[mi] < mo) { take(mList[mi]); mi++; }
+      const signed = mv.type === "In" ? Number(mv.quantity) : -Number(mv.quantity);
+      balU[mv.material] = (balU[mv.material] ?? 0) + signed;
+      const cogs = (mv as any).cogs_per_unit;
+      if (cogs) balV[mv.material] = (balV[mv.material] ?? 0) + signed * Number(cogs);
+    }
+    while (mi < mList.length) { take(mList[mi]); mi++; }
+    return { months: mList.slice(-3), materials, snapU, snapV };
+  }, [ipMovements]);
+
+  function exportExcel() {
     try {
       setExporting(true);
-      await generateAccountingDeck({
-        asOf: new Date().toISOString().slice(0, 10),
-        salesByMonth: salesByMonth.map(r => ({ label: monthLabel(r.month), gross: r.gross })),
-        lots: (await supabase.from("lot_master").select("*")).data ?? [],
-        fpMovements, ipMovements, actuals, realMonths, periods: PERIODS, months: MONTHS,
-      });
-      toast.success("PowerPoint generated");
+      // Sheet 1 — FP accumulated inventory (units + value), combined all warehouses
+      const fpHeader = ["SKU", ...fpAccum.months.flatMap(m => [`${monthLabel(m)} · units`, `${monthLabel(m)} · value $`])];
+      const fpBody = SKUS.map(sku => [
+        sku,
+        ...fpAccum.months.flatMap(m => [Math.round(fpAccum.snapU[m]?.[sku] ?? 0), Math.round(fpAccum.snapV[m]?.[sku] ?? 0)]),
+      ]);
+      const fpTotal = ["TOTAL", ...fpAccum.months.flatMap(m => [
+        Math.round(SKUS.reduce((s, sku) => s + (fpAccum.snapU[m]?.[sku] ?? 0), 0)),
+        Math.round(SKUS.reduce((s, sku) => s + (fpAccum.snapV[m]?.[sku] ?? 0), 0)),
+      ])];
+      // Sheet 2 — Sales gross invoiced
+      const salesRows = [["Month", "Gross sales $"], ...salesByMonth.map(r => [monthLabel(r.month), Math.round(r.gross)]), ["TOTAL (3 mo)", Math.round(salesTotal)]];
+      // Sheet 3 — I&P closing stock by month (units + value)
+      const ipHeader = ["Material", ...ipHist.months.flatMap(m => [`${monthLabel(m)} · units`, `${monthLabel(m)} · value $`])];
+      const ipBody = ipHist.materials.map(mt => [
+        mt,
+        ...ipHist.months.flatMap(m => [Math.round(ipHist.snapU[m]?.[mt] ?? 0), Math.round(ipHist.snapV[m]?.[mt] ?? 0)]),
+      ]);
+
+      downloadExcel(`BARIS-Accounting-${new Date().toISOString().slice(0, 10)}`, [
+        { name: "FP Accumulated Inv", rows: [["FP Accumulated inventory — all warehouses (combined)"], fpHeader, ...fpBody, fpTotal] },
+        { name: "Sales Gross Invoiced", rows: [["Sales — gross invoiced (last 3 months)"], ...salesRows] },
+        { name: "IP Inventory History", rows: [["Inventory history — closing stock by month"], ipHeader, ...ipBody] },
+      ]);
+      toast.success("Excel report generated");
     } catch (e) {
-      toast.error(`Could not generate deck: ${(e as Error).message}`);
+      toast.error(`Could not generate report: ${(e as Error).message}`);
     } finally {
       setExporting(false);
     }
@@ -97,10 +192,11 @@ function AccountingPage() {
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
         <PageHeader title="Accounting" subtitle="Consolidated view · P&L, inventory, sales & I&P in one place." />
-        <button onClick={exportDeck} disabled={exporting || loading}
+        <button onClick={exportExcel} disabled={exporting || loading}
           className="rounded-lg px-4 py-2 text-sm font-semibold text-white shadow-sm disabled:opacity-60 shrink-0"
-          style={{ backgroundColor: "#A3224A" }}>
-          {exporting ? "Generating…" : "⬇ Download PowerPoint"}
+          style={{ backgroundColor: "#1D6F42" }}
+          title="FP accumulated inventory + Sales + I&P history · last 3 months">
+          {exporting ? "Generating…" : "⬇ Download Excel report"}
         </button>
       </div>
 
