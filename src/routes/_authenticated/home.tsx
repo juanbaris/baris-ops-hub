@@ -3,6 +3,8 @@ import { useEffect, useState, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import { generateWeeklyDeck } from "@/lib/weekly-deck";
+import { loadStockHealth, type SHRec } from "@/lib/stock-health";
+import { StockHealthHeatmaps } from "@/components/stock-health-heatmaps";
 import { toast } from "sonner";
 import { useSalesForecast } from "@/hooks/use-sales-forecast";
 import { calcForecast } from "@/lib/sales-forecast";
@@ -340,6 +342,8 @@ function HomePage() {
   const [revUnit, setRevUnit] = useState<"usd" | "cases" | "units">("usd");
   const [period, setPeriod] = useState<"month" | "lastmonth" | "quarter" | "year" | "ytd">("month");
   const [exporting, setExporting] = useState(false);
+  const [shRecords, setShRecords] = useState<SHRec[]>([]);
+  useEffect(() => { setShRecords(loadStockHealth().records); }, []);
   const [userName, setUserName] = useState("");
 
   // Fetch logged-in user's display name from profiles
@@ -675,6 +679,14 @@ function HomePage() {
           sub="All non-invoiced POs" />
       </div>
 
+      {/* Stock Health heatmaps (from Fulfillment → Stock Health upload) */}
+      {shRecords.length > 0 && (
+        <div className="rounded-2xl border border-border bg-card shadow-sm p-6">
+          <h2 className="text-base font-bold mb-4" style={{ color: "#1C2340" }}>Stock Health por DC (KeHE + UNFI)</h2>
+          <StockHealthHeatmaps records={shRecords} />
+        </div>
+      )}
+
       {/* Weekly Meeting section */}
       <div className="rounded-2xl overflow-hidden border border-border shadow-sm">
         <div className="flex items-center justify-between px-6 py-4" style={{ backgroundColor: "#1C2340" }}>
@@ -692,6 +704,7 @@ function HomePage() {
                   ytdByDist,
                   year: today.getFullYear(),
                   asOf: today.toISOString().slice(0, 10),
+                  stockHealth: shRecords,
                 });
                 toast.success("PowerPoint generated");
               } catch (e) {
