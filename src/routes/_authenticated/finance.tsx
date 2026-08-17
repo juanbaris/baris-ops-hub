@@ -555,7 +555,7 @@ function buildChildMap(rows: PLRow[]): Record<string,string[]> {
 }
 
 // ─── P&L Table ────────────────────────────────────────────────────────────────
-function PNLTab({ realMonths, actuals, actualOnly }: { realMonths: number; actuals: Record<string, any>; actualOnly: boolean }) {
+export function PNLTab({ realMonths, actuals, actualOnly }: { realMonths: number; actuals: Record<string, any>; actualOnly: boolean }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(
     new Set(["g-disc","g-facility","g-payroll","g-profsvcs","g-travel"])
   );
