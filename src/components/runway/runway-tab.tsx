@@ -254,7 +254,7 @@ export function RunwayTab() {
         </table>
       </div>
       <p className="text-[10px] text-muted-foreground italic">
-        The red row ("prior") covers what happened between the bank balance (opening cash) and the start of the first week — it is not separate from cash, it is already included.
+        La fila en rojo cubre lo que falta entre el cash inicial (fecha de tu balance) y el arranque de la primera semana completa. Todo lo anterior a esa fecha se asume ya cobrado/pagado y no se cuenta.
       </p>
     </div>
   );
