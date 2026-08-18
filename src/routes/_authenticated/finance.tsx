@@ -4,6 +4,7 @@ import { useInvoicedActuals } from "@/hooks/use-invoiced-actuals";
 import { supabase } from "@/integrations/supabase/client";
 import { useSalesForecast } from "@/hooks/use-sales-forecast";
 import { forecastFromState, type Scenario } from "@/lib/sales-forecast";
+import { RunwayTab } from "@/components/runway/runway-tab";
 
 // ─── Data (values in $K) ──────────────────────────────────────────────────────
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'] as const;
@@ -1750,135 +1751,8 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario }: { realMonths:
   );
 }
 
-// ─── Runway Tab ───────────────────────────────────────────────────────────────
-function RunwayTab() {
-  const [minCash, setMinCash] = useState(50000);
-  const runwayCanvas = useRef<HTMLCanvasElement>(null);
+// ─── Runway Tab — moved to src/components/runway/runway-tab.tsx (imported above) ───
 
-  // Weekly collections from our real data (Aug-Oct 2026)
-  const WEEKS = [
-    { week:'Jul 28–Aug 3',  collections:13839,  payments:19000, suppliers:0 },
-    { week:'Aug 4–Aug 10',  collections:8870,   payments:19000, suppliers:12500 },
-    { week:'Aug 11–Aug 17', collections:18220,  payments:19000, suppliers:0 },
-    { week:'Aug 18–Aug 24', collections:6898,   payments:19000, suppliers:8750 },
-    { week:'Aug 25–Aug 31', collections:22400,  payments:19000, suppliers:0 },
-    { week:'Sep 1–Sep 7',   collections:15600,  payments:19000, suppliers:14000 },
-    { week:'Sep 8–Sep 14',  collections:12000,  payments:19000, suppliers:0 },
-    { week:'Sep 15–Sep 21', collections:30000,  payments:19000, suppliers:0 },
-    { week:'Sep 22–Sep 28', collections:8000,   payments:19000, suppliers:8750 },
-    { week:'Sep 29–Oct 5',  collections:10000,  payments:19000, suppliers:0 },
-    { week:'Oct 6–Oct 12',  collections:18000,  payments:19000, suppliers:12500 },
-    { week:'Oct 13–Oct 19', collections:14000,  payments:19000, suppliers:0 },
-  ];
-
-  const cashStart = 184500; // Jul 27 actual
-  let balance = cashStart;
-  const weekData = WEEKS.map(w => {
-    const startBal = balance;
-    balance = balance + w.collections - w.payments - w.suppliers;
-    return { ...w, startBal, endBal: balance };
-  });
-
-  const labels = weekData.map(w => w.week);
-  const balances = weekData.map(w => w.endBal);
-  const collections = weekData.map(w => w.collections);
-  const payments = weekData.map(w => -(w.payments + w.suppliers));
-
-  useChart(runwayCanvas, () => ({
-    data: {
-      labels,
-      datasets: [
-        { type:'line', label:'Projected balance', data:balances, borderColor:'#3B82F6', backgroundColor:'rgba(59,130,246,0.1)', tension:0.3, fill:true, pointRadius:5, yAxisID:'y' },
-        { type:'bar', label:'Collections', data:collections, backgroundColor:'rgba(16,185,129,0.7)', yAxisID:'y2' },
-        { type:'bar', label:'Payments', data:payments, backgroundColor:'rgba(239,68,68,0.5)', yAxisID:'y2' },
-        { type:'line', label:'Minimum cash', data:labels.map(()=>minCash/1000), borderColor:'#DC2626', borderDash:[5,5], pointRadius:0, fill:false, yAxisID:'y' },
-      ]
-    },
-    options: {
-      responsive:true, maintainAspectRatio:false,
-      plugins:{ legend:{ position:'bottom', labels:{ boxWidth:12, font:{ size:11 } } } },
-      scales:{
-        y:{ position:'left', ticks:{ callback:(v:number)=>'$'+v+'K' } },
-        y2:{ position:'right', grid:{ drawOnChartArea:false }, ticks:{ callback:(v:number)=>'$'+Math.abs(v)+'K' } }
-      }
-    }
-  }), [minCash]);
-
-  const pendingCollect = 163023;
-  const paymentsNext30 = 19000 * 4 + 12500 + 8750;
-  const runwayWeeks = weekData.filter(w => w.endBal >= minCash).length;
-
-  return (
-    <div className="space-y-5">
-      <div className="flex items-center gap-4">
-        <label className="text-sm font-semibold text-muted-foreground">Minimum cash $</label>
-        <input type="number" value={minCash} step={5000}
-          onChange={e => setMinCash(Number(e.target.value))}
-          className="w-32 rounded-lg border border-border px-3 py-1.5 text-sm font-mono font-bold focus:outline-none focus:ring-2 focus:ring-primary/30" />
-        <button onClick={() => setMinCash(50000)} className="rounded-lg border border-border px-3 py-1.5 text-xs hover:bg-muted">↺ Reset</button>
-      </div>
-
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <KPI icon="🏦" label="Cash Today" value={`$${(cashStart/1000).toFixed(0)}k`} sub="estimated Jul 27" />
-        <KPI icon="📥" label="Collections Next 30d" value={`$${Math.round(pendingCollect/1000)}k`} sub="invoices to collect" subColor="text-emerald-600" />
-        <KPI icon="📤" label="Payments Next 30d" value={`$${Math.round(paymentsNext30/1000)}k`} sub="fixed + suppliers" subColor="text-orange-500" />
-        <KPI icon="⏱️" label="Runway" value={runwayWeeks >= WEEKS.length ? "12+ wks" : `${runwayWeeks} wks`}
-          sub={runwayWeeks >= WEEKS.length ? "cash above minimum full period" : `until dropping below $${(minCash/1000).toFixed(0)}k`}
-          subColor={runwayWeeks >= WEEKS.length ? "text-emerald-600" : "text-orange-500"} />
-      </div>
-
-      <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold" style={{color:"#1C2340"}}>Projected balance week by week</h3>
-          <span className="text-[10px] text-muted-foreground">12 weeks · red line = minimum cash</span>
-        </div>
-        <div style={{height:300}}><canvas ref={runwayCanvas} /></div>
-      </div>
-
-      <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
-        <div className="px-5 py-2.5 border-b border-border bg-muted/30">
-          <h3 className="text-sm font-semibold" style={{color:"#1C2340"}}>Weekly detail</h3>
-        </div>
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
-              <th className="px-4 py-2 text-left">Week</th>
-              <th className="px-4 py-2 text-right">Opening balance</th>
-              <th className="px-4 py-2 text-right text-emerald-600">Collections</th>
-              <th className="px-4 py-2 text-right text-orange-500">Fixed payments</th>
-              <th className="px-4 py-2 text-right text-red-500">Suppliers</th>
-              <th className="px-4 py-2 text-right">Closing balance</th>
-              <th className="px-4 py-2 text-center">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {weekData.map((w, i) => {
-              const ok = w.endBal >= minCash;
-              return (
-                <tr key={i} className={`border-t border-border/60 hover:bg-muted/20 ${!ok ? "bg-red-50/30" : ""}`}>
-                  <td className="px-4 py-1.5 font-medium">{w.week}</td>
-                  <td className="px-4 py-1.5 text-right font-mono">${w.startBal.toLocaleString()}</td>
-                  <td className="px-4 py-1.5 text-right font-mono text-emerald-600">+${w.collections.toLocaleString()}</td>
-                  <td className="px-4 py-1.5 text-right font-mono text-orange-500">-${w.payments.toLocaleString()}</td>
-                  <td className="px-4 py-1.5 text-right font-mono text-red-500">{w.suppliers > 0 ? `-$${w.suppliers.toLocaleString()}` : "—"}</td>
-                  <td className="px-4 py-1.5 text-right font-mono font-semibold"
-                    style={{color: ok ? "#10B981" : "#EF4444"}}>
-                    ${w.endBal.toLocaleString()}
-                  </td>
-                  <td className="px-4 py-1.5 text-center">
-                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${ok ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>
-                      {ok ? "✓ OK" : "⚠️ Below min"}
-                    </span>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
 
 // ─── EBITDA / Full-Year P&L Simulator ─────────────────────────────────────────
 function EBITDATab({ actuals }: { actuals: Record<string, any> }) {
