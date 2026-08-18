@@ -216,14 +216,15 @@ export function useRunwayForecast(nWeeks = 20) {
 
     const cashStartDate = parseDate(settings.cash_start_date) ?? new Date();
     const week1Start = nextMonday(new Date(cashStartDate.getTime() + MS_DAY));
-    // gap covers [cashStartDate+1, week1Start-1] — whatever happened between the
-    // bank balance snapshot and the first modeled week; excluded before that,
-    // since it's already reflected in cash_start.
+    // Everything dated on/before cashStartDate is assumed already resolved (collected/paid)
+    // and reflected in cash_start — it is excluded from the model entirely, not swept in.
+    // The "gap" period only covers [cashStartDate+1, week1Start-1], the few real forward-looking
+    // days between the balance snapshot and the first full Monday-Sunday week.
     const gapStart = addDays(cashStartDate, 1);
     const gapEnd = addDays(week1Start, -1);
 
     const periodDefs: { key: string; label: string; start: Date; end: Date; isGap: boolean }[] = [
-      { key: "gap", label: `${ymd(gapStart).slice(8,10)}/${ymd(gapStart).slice(5,7)} - ${ymd(gapEnd).slice(8,10)}/${ymd(gapEnd).slice(5,7)} (prior)`, start: gapStart, end: gapEnd, isGap: true },
+      { key: "gap", label: `${ymd(gapStart).slice(8,10)}/${ymd(gapStart).slice(5,7)} - ${ymd(gapEnd).slice(8,10)}/${ymd(gapEnd).slice(5,7)}`, start: gapStart, end: gapEnd, isGap: true },
     ];
     for (let w = 0; w < nWeeks; w++) {
       const s = addDays(week1Start, 7 * w);
@@ -232,8 +233,10 @@ export function useRunwayForecast(nWeeks = 20) {
       periodDefs.push({ key: `w${w}`, label, start: s, end: e, isGap: false });
     }
 
-    function findPeriodIndex(d: Date): number {
-      if (d < periodDefs[0].start) return 0; // clamp anything before the gap into the gap
+    // Returns null when the date is on/before cashStartDate — meaning "already resolved,
+    // don't count it" — instead of sweeping it into the first period.
+    function findPeriodIndex(d: Date): number | null {
+      if (d <= cashStartDate) return null;
       for (let i = 0; i < periodDefs.length; i++) {
         if (d >= periodDefs[i].start && d <= periodDefs[i].end) return i;
       }
@@ -279,24 +282,24 @@ export function useRunwayForecast(nWeeks = 20) {
       const logisticsCost = logi.total != null ? -logi.total : -(cases * settings.logistics_fallback_per_case);
 
       const incomeIdx = findPeriodIndex(collectionDate);
-      const dedIdx = findPeriodIndex(collectionDate); // same timing as income (paid at time of collection)
+      const dedIdx = incomeIdx; // same timing as income (paid at time of collection)
       const logiIdx = findPeriodIndex(invoiceDateCalc); // logistics owed once invoiced/shipped
 
       if (invoiced) {
-        buckets[incomeIdx].ingresoDefinido += gross;
-        buckets[dedIdx].deduccionDefinido += deduction;
-        buckets[logiIdx].logisticaDefinido += logisticsCost;
+        if (incomeIdx != null) buckets[incomeIdx].ingresoDefinido += gross;
+        if (dedIdx != null) buckets[dedIdx].deduccionDefinido += deduction;
+        if (logiIdx != null) buckets[logiIdx].logisticaDefinido += logisticsCost;
       } else {
-        buckets[incomeIdx].ingresoEstimado += gross;
-        buckets[dedIdx].deduccionEstimado += deduction;
-        buckets[logiIdx].logisticaEstimado += logisticsCost;
+        if (incomeIdx != null) buckets[incomeIdx].ingresoEstimado += gross;
+        if (dedIdx != null) buckets[dedIdx].deduccionEstimado += deduction;
+        if (logiIdx != null) buckets[logiIdx].logisticaEstimado += logisticsCost;
       }
     }
 
     // ── COGS Definido: unpaid I&P movements ──
     for (const p of ipPending) {
       const idx = findPeriodIndex(p.date);
-      buckets[idx].cogsDefinido += p.amount;
+      if (idx != null) buckets[idx].cogsDefinido += p.amount;
     }
 
     // ── COGS Estimado: Procurement Planning payments (manually synced table) ──
@@ -304,7 +307,7 @@ export function useRunwayForecast(nWeeks = 20) {
       const d = parseDate(cp.payment_month);
       if (!d) continue;
       const idx = findPeriodIndex(d);
-      buckets[idx].cogsEstimado += Number(cp.ingredient_purchases ?? 0) + Number(cp.heinlein_tolling ?? 0);
+      if (idx != null) buckets[idx].cogsEstimado += Number(cp.ingredient_purchases ?? 0) + Number(cp.heinlein_tolling ?? 0);
     }
 
     // ── Fixed costs: day1 / eom of every month touched by the horizon ──
@@ -317,8 +320,8 @@ export function useRunwayForecast(nWeeks = 20) {
       while (cursor <= horizonEnd) {
         const d1 = cursor;
         const eom = lastDayOfMonth(cursor);
-        if (d1 >= horizonStart) buckets[findPeriodIndex(d1)].fijo += day1Total;
-        if (eom >= horizonStart && eom <= horizonEnd) buckets[findPeriodIndex(eom)].fijo += eomTotal;
+        if (d1 >= horizonStart) { const idx = findPeriodIndex(d1); if (idx != null) buckets[idx].fijo += day1Total; }
+        if (eom >= horizonStart && eom <= horizonEnd) { const idx = findPeriodIndex(eom); if (idx != null) buckets[idx].fijo += eomTotal; }
         cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
       }
     }
@@ -333,7 +336,8 @@ export function useRunwayForecast(nWeeks = 20) {
     for (const ev of events) {
       const d = parseDate(ev.event_date);
       if (!d) continue;
-      buckets[findPeriodIndex(d)].eventos += Number(ev.amount);
+      const idx = findPeriodIndex(d);
+      if (idx != null) buckets[idx].eventos += Number(ev.amount);
     }
 
     // ── Roll forward cash ──
