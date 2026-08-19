@@ -252,6 +252,6 @@ function AccountingPage() {
   );
 }
 
-export const Route = createFileRoute("/_authenticated/accounting")({
+export const Route = createFileRoute("/_authenticated/Accounting")({
   component: AccountingPage,
 });

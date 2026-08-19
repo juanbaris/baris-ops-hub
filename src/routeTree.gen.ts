@@ -23,6 +23,7 @@ import { Route as AuthenticatedFulfillmentRouteImport } from './routes/_authenti
 import { Route as AuthenticatedFpStockRouteImport } from './routes/_authenticated/fp-stock'
 import { Route as AuthenticatedFpMovementsRouteImport } from './routes/_authenticated/fp-movements'
 import { Route as AuthenticatedFinanceRouteImport } from './routes/_authenticated/finance'
+import { Route as AuthenticatedAccountingRouteImport } from './routes/_authenticated/Accounting'
 import { Route as ApiPublicSeedUsersRouteImport } from './routes/api/public/seed-users'
 
 const AuthRoute = AuthRouteImport.update({
@@ -97,6 +98,11 @@ const AuthenticatedFinanceRoute = AuthenticatedFinanceRouteImport.update({
   path: '/finance',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedAccountingRoute = AuthenticatedAccountingRouteImport.update({
+  id: '/Accounting',
+  path: '/Accounting',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const ApiPublicSeedUsersRoute = ApiPublicSeedUsersRouteImport.update({
   id: '/api/public/seed-users',
   path: '/api/public/seed-users',
@@ -106,6 +112,7 @@ const ApiPublicSeedUsersRoute = ApiPublicSeedUsersRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
+  '/Accounting': typeof AuthenticatedAccountingRoute
   '/finance': typeof AuthenticatedFinanceRoute
   '/fp-movements': typeof AuthenticatedFpMovementsRoute
   '/fp-stock': typeof AuthenticatedFpStockRoute
@@ -122,6 +129,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
+  '/Accounting': typeof AuthenticatedAccountingRoute
   '/finance': typeof AuthenticatedFinanceRoute
   '/fp-movements': typeof AuthenticatedFpMovementsRoute
   '/fp-stock': typeof AuthenticatedFpStockRoute
@@ -140,6 +148,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
+  '/_authenticated/Accounting': typeof AuthenticatedAccountingRoute
   '/_authenticated/finance': typeof AuthenticatedFinanceRoute
   '/_authenticated/fp-movements': typeof AuthenticatedFpMovementsRoute
   '/_authenticated/fp-stock': typeof AuthenticatedFpStockRoute
@@ -158,6 +167,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/auth'
+    | '/Accounting'
     | '/finance'
     | '/fp-movements'
     | '/fp-stock'
@@ -174,6 +184,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/auth'
+    | '/Accounting'
     | '/finance'
     | '/fp-movements'
     | '/fp-stock'
@@ -191,6 +202,7 @@ export interface FileRouteTypes {
     | '/'
     | '/_authenticated'
     | '/auth'
+    | '/_authenticated/Accounting'
     | '/_authenticated/finance'
     | '/_authenticated/fp-movements'
     | '/_authenticated/fp-stock'
@@ -314,6 +326,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedFinanceRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/Accounting': {
+      id: '/_authenticated/Accounting'
+      path: '/Accounting'
+      fullPath: '/Accounting'
+      preLoaderRoute: typeof AuthenticatedAccountingRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/api/public/seed-users': {
       id: '/api/public/seed-users'
       path: '/api/public/seed-users'
@@ -325,6 +344,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface AuthenticatedRouteRouteChildren {
+  AuthenticatedAccountingRoute: typeof AuthenticatedAccountingRoute
   AuthenticatedFinanceRoute: typeof AuthenticatedFinanceRoute
   AuthenticatedFpMovementsRoute: typeof AuthenticatedFpMovementsRoute
   AuthenticatedFpStockRoute: typeof AuthenticatedFpStockRoute
@@ -337,6 +357,7 @@ interface AuthenticatedRouteRouteChildren {
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
+  AuthenticatedAccountingRoute: AuthenticatedAccountingRoute,
   AuthenticatedFinanceRoute: AuthenticatedFinanceRoute,
   AuthenticatedFpMovementsRoute: AuthenticatedFpMovementsRoute,
   AuthenticatedFpStockRoute: AuthenticatedFpStockRoute,
