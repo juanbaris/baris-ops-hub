@@ -429,12 +429,7 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
         const { data: existing } = await supabase.from("lot_master").select("id")
           .eq("lot_number", lotNo).eq("warehouse", form.warehouse).maybeSingle();
         if (existing) {
-          const patch: {
-            updated_at: string;
-            expiry_date?: string;
-            cogs_per_case?: number;
-            cogs_status?: string;
-          } = { updated_at: new Date().toISOString() };
+          const patch: Record<string, any> = { updated_at: new Date().toISOString() };
           if (form.expiry) patch.expiry_date = form.expiry;
           if (form.cogs_per_case) { patch.cogs_per_case = Number(form.cogs_per_case); patch.cogs_status = "confirmed"; }
           await supabase.from("lot_master").update(patch).eq("id", (existing as any).id);
@@ -2737,9 +2732,18 @@ function calcProdSchedule(
 }
 function ProcurementTab({ movements, orders, baseline, ipMovements }: { movements: FPRow[]; orders: any[]; baseline: BaselineRow[]; ipMovements: IPRow[] }) {
   const [procTab, setProcTab] = useState<ProcSubTab>("schedule");
-  const [safetyWoh,  setSafetyWoh]  = useState(6);
-  const [minRun,     setMinRun]     = useState(2000);
-  const [freqMonths, setFreqMonths] = useState(3);
+  const [safetyWoh,  setSafetyWoh]  = useState(()=>{
+    try { const v = window.localStorage.getItem("baris.ops.safetyWoh.v1"); if (v) return Number(v); } catch {} return 6;
+  });
+  const [minRun,     setMinRun]     = useState(()=>{
+    try { const v = window.localStorage.getItem("baris.ops.minRun.v1"); if (v) return Number(v); } catch {} return 2000;
+  });
+  const [freqMonths, setFreqMonths] = useState(()=>{
+    try { const v = window.localStorage.getItem("baris.ops.freqMonths.v1"); if (v) return Number(v); } catch {} return 3;
+  });
+  useEffect(()=>{ try { window.localStorage.setItem("baris.ops.safetyWoh.v1", String(safetyWoh)); } catch {} },[safetyWoh]);
+  useEffect(()=>{ try { window.localStorage.setItem("baris.ops.minRun.v1", String(minRun)); } catch {} },[minRun]);
+  useEffect(()=>{ try { window.localStorage.setItem("baris.ops.freqMonths.v1", String(freqMonths)); } catch {} },[freqMonths]);
   const [ingPrices,  setIngPrices]  = useState<Record<string,number>>(()=>{
     try { const raw = window.localStorage.getItem("baris.ops.ingPrices.v2"); if (raw) return {...DEFAULT_ING_PRICES, ...JSON.parse(raw)}; } catch {}
     return {...DEFAULT_ING_PRICES};
@@ -2836,10 +2840,16 @@ function ProcurementTab({ movements, orders, baseline, ipMovements }: { movement
   const WIP_KEY="baris.ops.wip.v1";
   const [wip, setWip] = useState<Record<string,{cases:string;due:string}>>(
     Object.fromEntries(SKUS.map(s=>[s,{cases:"",due:""}])));
-  const [shopScope, setShopScope] = useState<"next"|"3m"|"all">("next");
+  const [shopScope, setShopScope] = useState<"next"|"3m"|"all">(()=>{
+    try { const v = window.localStorage.getItem("baris.ops.shopScope.v1"); if (v) return v as any; } catch {} return "next";
+  });
   const [bomView, setBomView] = useState<"qty"|"pct">("qty");
   // ─── NEW: truck optimization ───
-  const [optimizeTruck, setOptimizeTruck] = useState(false);
+  const [optimizeTruck, setOptimizeTruck] = useState(()=>{
+    try { const v = window.localStorage.getItem("baris.ops.optimizeTruck.v1"); if (v) return v === "true"; } catch {} return false;
+  });
+  useEffect(()=>{ try { window.localStorage.setItem("baris.ops.shopScope.v1", shopScope); } catch {} },[shopScope]);
+  useEffect(()=>{ try { window.localStorage.setItem("baris.ops.optimizeTruck.v1", String(optimizeTruck)); } catch {} },[optimizeTruck]);
   // ─── NEW: per-SKU minimum runs ───
   const [skuMinRuns, setSkuMinRuns] = useState<Record<string,number>>(
     () => {
@@ -3075,8 +3085,13 @@ function ProcurementTab({ movements, orders, baseline, ipMovements }: { movement
             className={`rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${showSkuMins ? "border-blue-400 bg-blue-50 text-blue-700" : "border-border text-muted-foreground hover:text-foreground"}`}>
             {showSkuMins ? "▾ SKU mins" : "▸ SKU mins"}
           </button>
-          <div className="ml-auto flex gap-6 text-center">
-            <div><p className="text-[10px] text-muted-foreground uppercase tracking-wide">Total to produce</p>
+          <div className="ml-auto flex gap-6 items-center">
+            <button onClick={()=>{
+              setSafetyWoh(6); setMinRun(2000); setFreqMonths(3); setOptimizeTruck(false);
+              setSkuMinRuns(Object.fromEntries(SKUS.map(s=>[s,0])));
+              toast.success("Schedule settings reset to defaults");
+            }} className="rounded border border-border px-3 py-1 text-[10px] text-muted-foreground hover:bg-muted">↺ Reset defaults</button>
+            <div className="text-center"><p className="text-[10px] text-muted-foreground uppercase tracking-wide">Total to produce</p>
               <p className="text-xl font-bold font-mono" style={{color:"#A3224A"}}>{totalProduce.toLocaleString()} cases</p></div>
             <div><p className="text-[10px] text-muted-foreground uppercase tracking-wide">COGS ponderado</p>
               <p className="text-xl font-bold font-mono" style={{color:"#1C2340"}}>${weightedCOGS.toFixed(2)}/case</p></div>
