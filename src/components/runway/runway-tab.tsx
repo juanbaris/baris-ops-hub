@@ -3,14 +3,18 @@ import { supabase } from "@/integrations/supabase/client";
 import {
   useRunwayForecast, type RunwayPeriod, type RunwayFixedCost, type RunwayEvent, type RunwayCogsPayment,
 } from "@/hooks/use-runway-forecast";
+import type { Scenario } from "@/lib/sales-forecast";
 
 declare global { interface Window { Chart: any } }
+
+const SCENARIOS: Scenario[] = ["Pessimistic", "Normal", "Optimistic"];
 
 const fmt = (n: number) => {
   if (n == null || isNaN(n)) return "—";
   const sign = n < 0 ? "-" : "";
   return sign + "$" + Math.abs(Math.round(n)).toLocaleString("en-US");
 };
+const fmtOrBlank = (n: number) => (n === 0 ? "" : fmt(n));
 
 function useChart(ref: React.RefObject<HTMLCanvasElement | null>, builder: () => any, deps: any[]) {
   const chartRef = useRef<any>(null);
@@ -40,18 +44,23 @@ function KPI({ label, value, negative }: { label: string; value: string; negativ
 }
 
 export function RunwayTab() {
-  const { periods, loading, error, settings, fixedCosts, events, cogsPayments, reload } = useRunwayForecast(20);
+  const [scenario, setScenario] = useState<Scenario>("Normal");
+  const { periods, loading, error, settings, fixedCosts, events, cogsPayments, reload } = useRunwayForecast(20, scenario);
   const [assumptionsOpen, setAssumptionsOpen] = useState(false);
   const monthlyCanvas = useRef<HTMLCanvasElement>(null);
   const cashCanvas = useRef<HTMLCanvasElement>(null);
 
   const totals = useMemo(() => {
-    const t = { ingreso: 0, deduccion: 0, logistica: 0, cogs: 0, fijo: 0, blando: 0 };
+    const t = { ingreso: 0, ingresoProj: 0, deduccion: 0, deduccionProj: 0, logistica: 0, logisticaProj: 0, cogs: 0, cogsProj: 0, fijo: 0, blando: 0 };
     for (const p of periods) {
       t.ingreso += p.ingresoDefinido + p.ingresoEstimado;
+      t.ingresoProj += p.ingresoProyectado;
       t.deduccion += p.deduccionDefinido + p.deduccionEstimado;
+      t.deduccionProj += p.deduccionProyectado;
       t.logistica += p.logisticaDefinido + p.logisticaEstimado;
-      t.cogs += p.cogsDefinido + p.cogsEstimado;
+      t.logisticaProj += p.logisticaProyectado;
+      t.cogs += p.cogsDefinido;
+      t.cogsProj += p.cogsProyectado;
       t.fijo += p.fijo;
       t.blando += p.blando;
     }
@@ -63,17 +72,20 @@ export function RunwayTab() {
 
   // ── Monthly aggregation for the charts ──
   const monthly = useMemo(() => {
-    const map: Record<string, { label: string; ingreso: number; gasto: number; cashEnd: number; order: number }> = {};
+    const map: Record<string, { label: string; ingresoReal: number; ingresoProj: number; gastoReal: number; gastoProj: number; cashEnd: number; order: number }> = {};
     for (const p of periods) {
       const key = `${p.start.getFullYear()}-${p.start.getMonth()}`;
       const label = p.start.toLocaleDateString("en-US", { month: "short", year: "2-digit" });
-      const ingreso = p.ingresoDefinido + p.ingresoEstimado;
-      const gasto = p.deduccionDefinido + p.deduccionEstimado + p.logisticaDefinido + p.logisticaEstimado
-        + p.cogsDefinido + p.cogsEstimado + p.fijo + p.blando + p.eventos;
-      if (!map[key]) map[key] = { label, ingreso: 0, gasto: 0, cashEnd: 0, order: p.start.getTime() };
-      map[key].ingreso += ingreso;
-      map[key].gasto += gasto;
-      map[key].cashEnd = p.cashEnd; // last period of the month wins
+      const iReal = p.ingresoDefinido + p.ingresoEstimado;
+      const gReal = p.deduccionDefinido + p.deduccionEstimado + p.logisticaDefinido + p.logisticaEstimado + p.cogsDefinido + p.fijo + p.blando + p.eventos;
+      const iProj = p.ingresoProyectado;
+      const gProj = p.deduccionProyectado + p.logisticaProyectado + p.cogsProyectado;
+      if (!map[key]) map[key] = { label, ingresoReal: 0, ingresoProj: 0, gastoReal: 0, gastoProj: 0, cashEnd: 0, order: p.start.getTime() };
+      map[key].ingresoReal += iReal;
+      map[key].ingresoProj += iProj;
+      map[key].gastoReal += gReal;
+      map[key].gastoProj += gProj;
+      map[key].cashEnd = p.cashEnd;
     }
     return Object.values(map).sort((a, b) => a.order - b.order);
   }, [periods]);
@@ -83,9 +95,10 @@ export function RunwayTab() {
     data: {
       labels: monthly.map((m) => m.label),
       datasets: [
-        { label: "Inflows", data: monthly.map((m) => m.ingreso), borderColor: "#2E7D4F", backgroundColor: "#2E7D4F", tension: 0.3, pointRadius: 3, borderWidth: 2 },
-        { label: "Outflows", data: monthly.map((m) => Math.abs(m.gasto)), borderColor: "#A3224A", backgroundColor: "#A3224A", tension: 0.3, pointRadius: 3, borderWidth: 2 },
-        { label: "Net", data: monthly.map((m) => m.ingreso + m.gasto), borderColor: "#1C2340", backgroundColor: "#1C2340", tension: 0.3, pointRadius: 3, borderWidth: 2, borderDash: [5, 4] },
+        { label: "Inflows (Real)", data: monthly.map((m) => m.ingresoReal), borderColor: "#2E7D4F", backgroundColor: "#2E7D4F", tension: 0.3, pointRadius: 3, borderWidth: 2 },
+        { label: "Inflows (Proj)", data: monthly.map((m) => m.ingresoProj), borderColor: "#7C3AED", backgroundColor: "#7C3AED", tension: 0.3, pointRadius: 3, borderWidth: 2, borderDash: [5, 4] },
+        { label: "Outflows (Real)", data: monthly.map((m) => Math.abs(m.gastoReal)), borderColor: "#A3224A", backgroundColor: "#A3224A", tension: 0.3, pointRadius: 3, borderWidth: 2 },
+        { label: "Net", data: monthly.map((m) => m.ingresoReal + m.ingresoProj + m.gastoReal + m.gastoProj), borderColor: "#1C2340", backgroundColor: "#1C2340", tension: 0.3, pointRadius: 3, borderWidth: 2, borderDash: [3, 3] },
       ],
     },
     options: {
@@ -116,26 +129,30 @@ export function RunwayTab() {
     return <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">⚠ {error}</div>;
   }
 
-  const colGroups = [
-    { label: "Revenue", fill: "#DCEEE3" },
-    { label: "Deductions", fill: "#FBE1E7" },
-    { label: "Logistics", fill: "#FDEBD3" },
-    { label: "COGS", fill: "#E2E7F5" },
-  ];
-
   return (
     <div className="space-y-5 pb-10">
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-bold" style={{ color: "#1C2340" }}>Weekly Runway</h1>
           <p className="text-sm text-muted-foreground">
-            Week-by-week projected cash · Confirmed = already invoiced/confirmed · Estimated = Pipeline forecast
+            Week-by-week projected cash · Confirmed = invoiced · Estimated = pipeline · <span style={{ color: "#7C3AED" }}>Projected = Sales Forecast ({scenario})</span>
           </p>
         </div>
-        <button onClick={() => setAssumptionsOpen(true)}
-          className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold hover:bg-muted flex items-center gap-1.5 mt-1">
-          ⚙️ Assumptions
-        </button>
+        <div className="flex items-center gap-2 mt-1">
+          <div className="flex rounded-lg border border-border overflow-hidden text-xs font-semibold">
+            {SCENARIOS.map((s) => (
+              <button key={s} onClick={() => setScenario(s)}
+                className={`px-3 py-1.5 ${scenario === s ? "text-white" : "text-muted-foreground hover:bg-muted"}`}
+                style={scenario === s ? { backgroundColor: "#7C3AED" } : undefined}>
+                {s}
+              </button>
+            ))}
+          </div>
+          <button onClick={() => setAssumptionsOpen(true)}
+            className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold hover:bg-muted flex items-center gap-1.5">
+            ⚙️ Assumptions
+          </button>
+        </div>
       </div>
 
       {cashMin < 0 && (
@@ -146,17 +163,17 @@ export function RunwayTab() {
 
       {assumptionsOpen && (
         <RunwayAssumptionsModal
-          settings={settings} fixedCosts={fixedCosts} events={events} cogsPayments={cogsPayments}
+          settings={settings} fixedCosts={fixedCosts} events={events}
           onClose={() => setAssumptionsOpen(false)} onSaved={reload}
         />
       )}
 
       {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <KPI label="Total Receivables" value={fmt(totals.ingreso)} />
-        <KPI label="Total Deductions" value={fmt(totals.deduccion)} negative />
-        <KPI label="Total Logistics" value={fmt(totals.logistica)} negative />
-        <KPI label="Total COGS" value={fmt(totals.cogs)} negative />
+        <KPI label="Collections (Real)" value={fmt(totals.ingreso)} />
+        <KPI label="Collections (Projected)" value={fmt(totals.ingresoProj)} />
+        <KPI label="IP & Production (Confirmed)" value={fmt(totals.cogs)} negative />
+        <KPI label="IP & Production (Projected)" value={fmt(totals.cogsProj)} negative />
         <KPI label="Total Fixed" value={fmt(totals.fijo)} negative />
         <KPI label="Total Soft Costs" value={fmt(totals.blando)} negative />
         <KPI label="Projected Ending Cash" value={fmt(cashEndFinal)} />
@@ -181,30 +198,32 @@ export function RunwayTab() {
           <thead>
             <tr>
               <th className="px-3 py-2 bg-white" colSpan={2} />
-              <th colSpan={4} className="text-center text-white font-bold text-sm py-1.5" style={{ backgroundColor: "#2E7D4F" }}>COLLECTIONS</th>
-              <th colSpan={7} className="text-center text-white font-bold text-sm py-1.5" style={{ backgroundColor: "#A3224A" }}>EXPENSES</th>
-              <th className="px-3 py-2 bg-white" colSpan={2} />
+              <th colSpan={5} className="text-center text-white font-bold text-sm py-1.5" style={{ backgroundColor: "#2E7D4F" }}>COLLECTIONS</th>
+              <th colSpan={8} className="text-center text-white font-bold text-sm py-1.5" style={{ backgroundColor: "#A3224A" }}>EXPENSES</th>
+              <th className="px-3 py-2 bg-white" colSpan={3} />
             </tr>
             <tr>
               <th className="px-3 py-1 bg-white" colSpan={2} />
-              {colGroups.map((g) => (
-                <th key={g.label} colSpan={2} className="text-center text-[10px] font-bold py-1" style={{ backgroundColor: g.fill, color: "#1C2340" }}>{g.label}</th>
-              ))}
+              <th colSpan={3} className="text-center text-[10px] font-bold py-1" style={{ backgroundColor: "#DCEEE3", color: "#1C2340" }}>Revenue</th>
+              <th colSpan={2} className="text-center text-[10px] font-bold py-1" style={{ backgroundColor: "#FBE1E7", color: "#1C2340" }}>Deductions</th>
+              <th colSpan={2} className="text-center text-[10px] font-bold py-1" style={{ backgroundColor: "#FDEBD3", color: "#1C2340" }}>Logistics</th>
+              <th colSpan={2} className="text-center text-[10px] font-bold py-1" style={{ backgroundColor: "#E2E7F5", color: "#1C2340" }}>IP &amp; Production</th>
               <th colSpan={2} className="text-center text-[10px] font-bold py-1" style={{ backgroundColor: "#EDEAE3", color: "#1C2340" }}>Expenses</th>
               <th className="text-center text-[10px] font-bold py-1" style={{ backgroundColor: "#FFF6D6", color: "#1C2340" }}>Events</th>
-              <th className="px-3 py-1 bg-white" colSpan={2} />
+              <th className="px-3 py-1 bg-white" colSpan={3} />
             </tr>
             <tr className="bg-muted/50 border-b border-border">
               <th className="text-left px-3 py-2 text-[10px] uppercase text-muted-foreground">Week</th>
               <th className="text-right px-2 py-2 text-[10px] uppercase text-muted-foreground">Opening Cash</th>
               <th className="text-right px-2 py-2 text-[10px]">Confirmed</th>
               <th className="text-right px-2 py-2 text-[10px]">Estimated</th>
+              <th className="text-right px-2 py-2 text-[10px]" style={{ color: "#7C3AED" }}>Projected</th>
+              <th className="text-right px-2 py-2 text-[10px]">Conf+Est</th>
+              <th className="text-right px-2 py-2 text-[10px]" style={{ color: "#7C3AED" }}>Projected</th>
+              <th className="text-right px-2 py-2 text-[10px]">Conf+Est</th>
+              <th className="text-right px-2 py-2 text-[10px]" style={{ color: "#7C3AED" }}>Projected</th>
               <th className="text-right px-2 py-2 text-[10px]">Confirmed</th>
-              <th className="text-right px-2 py-2 text-[10px]">Estimated</th>
-              <th className="text-right px-2 py-2 text-[10px]">Confirmed</th>
-              <th className="text-right px-2 py-2 text-[10px]">Estimated</th>
-              <th className="text-right px-2 py-2 text-[10px]">Confirmed</th>
-              <th className="text-right px-2 py-2 text-[10px]">Estimated</th>
+              <th className="text-right px-2 py-2 text-[10px]" style={{ color: "#7C3AED" }}>Projected</th>
               <th className="text-right px-2 py-2 text-[10px]">Fixed</th>
               <th className="text-right px-2 py-2 text-[10px]">Soft</th>
               <th className="text-right px-2 py-2 text-[10px]">Special</th>
@@ -213,22 +232,34 @@ export function RunwayTab() {
             </tr>
           </thead>
           <tbody>
-            {periods.map((p, i) => (
+            {periods.map((p) => (
               <tr key={p.key} className={`border-t border-border/40 ${p.isGap ? "italic bg-red-50/40" : ""}`}>
                 <td className="px-3 py-1.5" style={{ color: p.isGap ? "#A3224A" : "#1C2340" }}>{p.label}</td>
                 <td className="text-right px-2 py-1.5 font-mono font-semibold">{fmt(p.cashStart)}</td>
-                <td className="text-right px-2 py-1.5 font-mono">{fmt(p.ingresoDefinido)}</td>
-                <td className="text-right px-2 py-1.5 font-mono">{fmt(p.ingresoEstimado)}</td>
-                <td className="text-right px-2 py-1.5 font-mono">{fmt(p.deduccionDefinido)}</td>
-                <td className="text-right px-2 py-1.5 font-mono">{fmt(p.deduccionEstimado)}</td>
-                <td className="text-right px-2 py-1.5 font-mono">{fmt(p.logisticaDefinido)}</td>
-                <td className="text-right px-2 py-1.5 font-mono">{fmt(p.logisticaEstimado)}</td>
-                <td className="text-right px-2 py-1.5 font-mono">{fmt(p.cogsDefinido)}</td>
-                <td className="text-right px-2 py-1.5 font-mono">{fmt(p.cogsEstimado)}</td>
-                <td className="text-right px-2 py-1.5 font-mono">{fmt(p.fijo)}</td>
-                <td className="text-right px-2 py-1.5 font-mono">{fmt(p.blando)}</td>
-                <td className="text-right px-2 py-1.5 font-mono">{fmt(p.eventos)}</td>
-                <td className="text-right px-2 py-1.5 font-mono font-semibold" style={{ color: p.neto < 0 ? "#EF4444" : "#10B981" }}>{fmt(p.neto)}</td>
+                {/* Revenue */}
+                <td className="text-right px-2 py-1.5 font-mono">{fmtOrBlank(p.ingresoDefinido)}</td>
+                <td className="text-right px-2 py-1.5 font-mono">{fmtOrBlank(p.ingresoEstimado)}</td>
+                <td className="text-right px-2 py-1.5 font-mono" style={{ color: "#7C3AED" }}>{fmtOrBlank(p.ingresoProyectado)}</td>
+                {/* Deductions */}
+                <td className="text-right px-2 py-1.5 font-mono">{fmtOrBlank(p.deduccionDefinido + p.deduccionEstimado)}</td>
+                <td className="text-right px-2 py-1.5 font-mono" style={{ color: "#7C3AED" }}>{fmtOrBlank(p.deduccionProyectado)}</td>
+                {/* Logistics */}
+                <td className="text-right px-2 py-1.5 font-mono">{fmtOrBlank(p.logisticaDefinido + p.logisticaEstimado)}</td>
+                <td className="text-right px-2 py-1.5 font-mono" style={{ color: "#7C3AED" }}>{fmtOrBlank(p.logisticaProyectado)}</td>
+                {/* IP & Production */}
+                <td className="text-right px-2 py-1.5 font-mono">{fmtOrBlank(p.cogsDefinido)}</td>
+                <td className="text-right px-2 py-1.5 font-mono" style={{ color: "#7C3AED" }}>{fmtOrBlank(p.cogsProyectado)}</td>
+                {/* Expenses */}
+                <td className="text-right px-2 py-1.5 font-mono">{fmtOrBlank(p.fijo)}</td>
+                <td className="text-right px-2 py-1.5 font-mono">{fmtOrBlank(p.blando)}</td>
+                <td className="text-right px-2 py-1.5 font-mono">{fmtOrBlank(p.eventos)}</td>
+                {/* Weekly Net: Real portion + Projected portion */}
+                <td className="text-right px-2 py-1.5 font-mono font-semibold whitespace-nowrap">
+                  {p.netoReal !== 0 && <span style={{ color: p.netoReal < 0 ? "#EF4444" : "#10B981" }}>{fmt(p.netoReal)}</span>}
+                  {p.netoReal !== 0 && p.netoProyectado !== 0 && " "}
+                  {p.netoProyectado !== 0 && <span style={{ color: "#7C3AED" }}>{(p.netoProyectado > 0 ? "+" : "") + fmt(p.netoProyectado).replace("-$", "-$")}</span>}
+                  {p.netoReal === 0 && p.netoProyectado === 0 && "$0"}
+                </td>
                 <td className="text-right px-2 py-1.5 font-mono font-bold" style={{ color: "#1C2340" }}>{fmt(p.cashEnd)}</td>
               </tr>
             ))}
@@ -238,12 +269,13 @@ export function RunwayTab() {
               <td className="px-3 py-2" colSpan={2}>TOTAL</td>
               <td className="text-right px-2 py-2 font-mono">{fmt(periods.reduce((s, p) => s + p.ingresoDefinido, 0))}</td>
               <td className="text-right px-2 py-2 font-mono">{fmt(periods.reduce((s, p) => s + p.ingresoEstimado, 0))}</td>
-              <td className="text-right px-2 py-2 font-mono">{fmt(periods.reduce((s, p) => s + p.deduccionDefinido, 0))}</td>
-              <td className="text-right px-2 py-2 font-mono">{fmt(periods.reduce((s, p) => s + p.deduccionEstimado, 0))}</td>
-              <td className="text-right px-2 py-2 font-mono">{fmt(periods.reduce((s, p) => s + p.logisticaDefinido, 0))}</td>
-              <td className="text-right px-2 py-2 font-mono">{fmt(periods.reduce((s, p) => s + p.logisticaEstimado, 0))}</td>
+              <td className="text-right px-2 py-2 font-mono" style={{ color: "#7C3AED" }}>{fmt(periods.reduce((s, p) => s + p.ingresoProyectado, 0))}</td>
+              <td className="text-right px-2 py-2 font-mono">{fmt(periods.reduce((s, p) => s + p.deduccionDefinido + p.deduccionEstimado, 0))}</td>
+              <td className="text-right px-2 py-2 font-mono" style={{ color: "#7C3AED" }}>{fmt(periods.reduce((s, p) => s + p.deduccionProyectado, 0))}</td>
+              <td className="text-right px-2 py-2 font-mono">{fmt(periods.reduce((s, p) => s + p.logisticaDefinido + p.logisticaEstimado, 0))}</td>
+              <td className="text-right px-2 py-2 font-mono" style={{ color: "#7C3AED" }}>{fmt(periods.reduce((s, p) => s + p.logisticaProyectado, 0))}</td>
               <td className="text-right px-2 py-2 font-mono">{fmt(periods.reduce((s, p) => s + p.cogsDefinido, 0))}</td>
-              <td className="text-right px-2 py-2 font-mono">{fmt(periods.reduce((s, p) => s + p.cogsEstimado, 0))}</td>
+              <td className="text-right px-2 py-2 font-mono" style={{ color: "#7C3AED" }}>{fmt(periods.reduce((s, p) => s + p.cogsProyectado, 0))}</td>
               <td className="text-right px-2 py-2 font-mono">{fmt(periods.reduce((s, p) => s + p.fijo, 0))}</td>
               <td className="text-right px-2 py-2 font-mono">{fmt(periods.reduce((s, p) => s + p.blando, 0))}</td>
               <td className="text-right px-2 py-2 font-mono">{fmt(periods.reduce((s, p) => s + p.eventos, 0))}</td>
@@ -264,16 +296,15 @@ export function RunwayTab() {
 // ASSUMPTIONS MODAL
 // ═══════════════════════════════════════════════════════════════════════════
 function RunwayAssumptionsModal({
-  settings, fixedCosts, events, cogsPayments, onClose, onSaved,
+  settings, fixedCosts, events, onClose, onSaved,
 }: {
   settings: ReturnType<typeof useRunwayForecast>["settings"];
   fixedCosts: RunwayFixedCost[];
   events: RunwayEvent[];
-  cogsPayments: RunwayCogsPayment[];
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [tab, setTab] = useState<"settings" | "fixed" | "events" | "cogs">("settings");
+  const [tab, setTab] = useState<"settings" | "fixed" | "events">("settings");
   const [cashStart, setCashStart] = useState(String(settings.cash_start));
   const [cashStartDate, setCashStartDate] = useState(settings.cash_start_date);
   const [weeks3, setWeeks3] = useState(String(settings.est_weeks_open_accepted));
@@ -325,19 +356,6 @@ function RunwayAssumptionsModal({
     onSaved();
   }
 
-  async function addCogsPayment() {
-    await supabase.from("runway_cogs_estimado_payments").insert({ payment_month: new Date().toISOString().slice(0, 10), ingredient_purchases: 0, heinlein_tolling: 0 });
-    onSaved();
-  }
-  async function updateCogsPayment(id: string, patch: Partial<RunwayCogsPayment>) {
-    await supabase.from("runway_cogs_estimado_payments").update(patch).eq("id", id);
-    onSaved();
-  }
-  async function deleteCogsPayment(id: string) {
-    await supabase.from("runway_cogs_estimado_payments").delete().eq("id", id);
-    onSaved();
-  }
-
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
       <div className="bg-card rounded-2xl border border-border shadow-xl w-full max-w-3xl p-6 space-y-4 max-h-[85vh] overflow-y-auto">
@@ -351,7 +369,6 @@ function RunwayAssumptionsModal({
             { id: "settings", label: "General" },
             { id: "fixed", label: "Fixed Costs" },
             { id: "events", label: "Events" },
-            { id: "cogs", label: "Estimated COGS" },
           ].map((t) => (
             <button key={t.id} onClick={() => setTab(t.id as any)}
               className={`px-3 py-1.5 text-xs font-semibold border-b-2 ${tab === t.id ? "border-[#A3224A] text-[#A3224A]" : "border-transparent text-muted-foreground"}`}>
@@ -413,25 +430,6 @@ function RunwayAssumptionsModal({
           </div>
         )}
 
-        {tab === "cogs" && (
-          <div className="space-y-2">
-            <p className="text-[10px] text-muted-foreground">
-              Sync manually from Operations → Procurement Planning → Payments. (This can be automated in a future iteration.)
-            </p>
-            {cogsPayments.map((cp) => (
-              <div key={cp.id} className="flex items-center gap-2 rounded-lg border border-border p-2">
-                <input type="date" defaultValue={cp.payment_month} onBlur={(e) => updateCogsPayment(cp.id, { payment_month: e.target.value })}
-                  className="rounded border border-border px-2 py-1 text-xs" />
-                <input type="number" defaultValue={cp.ingredient_purchases} onBlur={(e) => updateCogsPayment(cp.id, { ingredient_purchases: parseFloat(e.target.value) || 0 })}
-                  className="w-32 rounded border border-border px-2 py-1 text-xs text-right font-mono" placeholder="Ingredient $" />
-                <input type="number" defaultValue={cp.heinlein_tolling} onBlur={(e) => updateCogsPayment(cp.id, { heinlein_tolling: parseFloat(e.target.value) || 0 })}
-                  className="w-32 rounded border border-border px-2 py-1 text-xs text-right font-mono" placeholder="Tolling $" />
-                <button onClick={() => deleteCogsPayment(cp.id)} className="text-muted-foreground hover:text-red-600 text-xs">✕</button>
-              </div>
-            ))}
-            <button onClick={addCogsPayment} className="text-xs font-semibold text-[#A3224A] hover:underline">+ Add payment</button>
-          </div>
-        )}
       </div>
     </div>
   );
