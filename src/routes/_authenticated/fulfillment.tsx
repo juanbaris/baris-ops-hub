@@ -308,7 +308,7 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
               <div className="flex flex-col gap-0.5">
                 <label className="text-[9px] uppercase tracking-wide text-muted-foreground font-semibold">Distributor</label>
                 <select value={editData.distributor}
-                  onChange={e => { const dist = e.target.value as Distributor; setEditData(d => recalcEdit({ ...d, distributor: dist, case_value: String(DIST_CASE_PRICE[dist] ?? parseFloat(d.case_value) || "") })); }}
+                  onChange={e => { const dist = e.target.value as Distributor; setEditData(d => recalcEdit({ ...d, distributor: dist, case_value: String(DIST_CASE_PRICE[dist] ?? (parseFloat(d.case_value) || "")) })); }}
                   className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400">
                   {DISTRIBUTORS.map(d => <option key={d} value={d}>{d}</option>)}
                 </select>
