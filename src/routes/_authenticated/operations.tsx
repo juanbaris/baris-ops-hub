@@ -2969,6 +2969,21 @@ function ProcurementTab({ movements, orders, baseline, ipMovements }: { movement
     return { ing, toll, meta, keys };
   },[ingByMonth, plan, ingInv, ipOrdered, ingPrices, leadTimes, payTerms, prodCosts]);
 
+  // ── Auto-sync Payments → runway_cogs_estimado_payments (for Runway cashflow) ──
+  useEffect(()=>{
+    if(!payments.keys.length) return;
+    (async()=>{
+      // Clear existing rows and insert fresh from current plan
+      await supabase.from("runway_cogs_estimado_payments").delete().neq("id","__never__");
+      const rows = payments.keys.map(k=>({
+        payment_month: k.length<=7 ? k+"-01" : k, // "2026-11" → "2026-11-01"
+        ingredient_purchases: -(payments.ing[k]??0),
+        heinlein_tolling: -(payments.toll[k]??0),
+      }));
+      if(rows.length) await supabase.from("runway_cogs_estimado_payments").insert(rows);
+    })();
+  },[payments]);
+
   const totalByMonth = FORECAST_MONTHS_OPS.map((_,i)=>PROC_SKUS.reduce((s,sku)=>s+(plan[sku]?.[i]??0),0));
   const nextRunIdx = totalByMonth.findIndex(t=>t>0);
   const shopRange = useMemo(()=>{
