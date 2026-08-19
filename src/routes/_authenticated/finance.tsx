@@ -244,7 +244,7 @@ function KPI({ icon, label, value, sub, subColor, onClick }: {
 }
 
 // ─── Dashboard Tab ────────────────────────────────────────────────────────────
-function DashboardTab({ period, refMonth, actuals, realMonths, actualOnly }: { period: Period; refMonth: number; actuals: Record<string,any>; realMonths: number; actualOnly: boolean }) {
+function DashboardTab({ period, refMonth, actuals, realMonths, actualOnly, invAdjust }: { period: Period; refMonth: number; actuals: Record<string,any>; realMonths: number; actualOnly: boolean; invAdjust?: Record<number,number> }) {
   const { effectiveForecast } = useSalesForecast();
   const { julyGrossSales } = useJulyRealFromFulfillment();
   const assumptions = useFinanceAssumptions();
@@ -255,8 +255,8 @@ function DashboardTab({ period, refMonth, actuals, realMonths, actualOnly }: { p
 
   // Single source of truth: same series as P&L / Balance Sheet / Cash Flow (all in $K).
   const S = useMemo(
-    () => buildFinanceForecast(actuals, fcGrossByMonth, assumptions.get),
-    [actuals, assumptions.rows, effectiveForecast, julyGrossSales]
+    () => buildFinanceForecast(actuals, fcGrossByMonth, assumptions.get, invAdjust),
+    [actuals, assumptions.rows, effectiveForecast, julyGrossSales, invAdjust]
   );
 
   // Month range: Actual = only real P&L months (Jan–Jun); Forecast = full year (Jan–Dec).
@@ -963,6 +963,7 @@ function buildFinanceForecast(
   actuals: Record<string, any>,
   fcGrossByMonth: Record<number, number>,
   get: (k: any, d?: number) => number,
+  invAdjust?: Record<number, number>,
 ): MonthFin[] {
   const bsAt = (i: number) => actuals[PERIODS[i]]?.bs_detail as Record<string,number> | undefined;
   const pnlAt = (i: number) => actuals[PERIODS[i]]?.pnl_detail as Record<string,number> | undefined;
@@ -1078,6 +1079,9 @@ function buildFinanceForecast(
       if (fg + rmv > INV_CAP) rmv = Math.max(0, INV_CAP - fg);
       rm = rmv;
       inv = fg + rmv;
+      // Apply manual inventory adjustment ($K: positive = more inventory, less cash via balancing)
+      const adjK = invAdjust?.[i] ?? 0;
+      if (adjK) { fg! += adjK; inv! += adjK; }
     }
 
     // Liabilities / equity
@@ -1231,7 +1235,7 @@ function AssumptionsModal({ assumptions, onClose }: { assumptions: ReturnType<ty
 
 
 // ─── Cash Flow Tab ────────────────────────────────────────────────────────────
-function CashFlowTab({ actuals, actualOnly, scenario }: { actuals: Record<string, any>; actualOnly: boolean; scenario: Scenario }) {
+function CashFlowTab({ actuals, actualOnly, scenario, invAdjust }: { actuals: Record<string, any>; actualOnly: boolean; scenario: Scenario; invAdjust?: Record<number,number> }) {
   const cashCanvas = useRef<HTMLCanvasElement>(null);
   const { julyGrossSales } = useJulyRealFromFulfillment();
   const scenarioForecast = useFinanceScenarioForecast(scenario); // "2026-8" -> $ (not $K)
@@ -1246,8 +1250,8 @@ function CashFlowTab({ actuals, actualOnly, scenario }: { actuals: Record<string
 
   // Single source of truth — identical to what the Balance Sheet shows (same scenario).
   const S = useMemo(
-    () => buildFinanceForecast(actuals, fcGrossByMonth, assumptions.get),
-    [actuals, assumptions.rows, scenario, julyGrossSales]
+    () => buildFinanceForecast(actuals, fcGrossByMonth, assumptions.get, invAdjust),
+    [actuals, assumptions.rows, scenario, julyGrossSales, invAdjust]
   );
 
   const isReal = (i: number) => S[i].isBsReal || S[i].isPnlReal;
@@ -1471,7 +1475,7 @@ const BS_ROWS: BSNode[] = [
   {id:"t-liab-equity",label:"TOTAL LIABILITIES AND EQUITY",kind:"total",indent:0,forecastFn:(m,i)=>m.total_assets[i]},
 ];
 
-function BalanceTab({ realMonths, actuals, actualOnly, scenario }: { realMonths: number; actuals: Record<string,any>; actualOnly: boolean; scenario: Scenario }) {
+function BalanceTab({ realMonths, actuals, actualOnly, scenario, invAdjust = {}, onInvAdjustChange }: { realMonths: number; actuals: Record<string,any>; actualOnly: boolean; scenario: Scenario; invAdjust?: Record<number,number>; onInvAdjustChange?: React.Dispatch<React.SetStateAction<Record<number,number>>> }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(
     new Set(["g-bank","g-ar","g-inv","g-fixed","g-cc","g-other-liab","g-capital"])
   );
@@ -1479,9 +1483,7 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario }: { realMonths:
   const scenarioForecast = useFinanceScenarioForecast(scenario);
   const assumptions = useFinanceAssumptions();
 
-  // Manual forecast adjustment: move $X from Bank into Inventory (or vice-versa) per forecast month.
-  // Positive = extra inventory (cash goes down by the same amount). Keyed by month index.
-  const [invAdjust, setInvAdjust] = useState<Record<number, number>>({});
+  const setInvAdjust: React.Dispatch<React.SetStateAction<Record<number,number>>> = onInvAdjustChange ?? (() => {});
 
   // bs_detail per period (real, wherever Accountfully sent a balance sheet snapshot)
   const bsByPeriod = useMemo(() => {
@@ -1503,16 +1505,15 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario }: { realMonths:
   // and the Cash Flow are always identical. Nothing is computed twice.
   // ═══════════════════════════════════════════════════════════════════════════
   const S = useMemo(
-    () => buildFinanceForecast(actuals, fcGrossByMonth, assumptions.get),
-    [actuals, assumptions.rows, scenario, julyGrossSales]
+    () => buildFinanceForecast(actuals, fcGrossByMonth, assumptions.get, invAdjust),
+    [actuals, assumptions.rows, scenario, julyGrossSales, invAdjust]
   );
-  // Apply the manual inventory/bank adjustment (inversely proportional) for forecast months.
-  const adj = (idx: number) => (S[idx]?.isForecast ? (invAdjust[idx] ?? 0) : 0);
+  // Adjustments are now baked into S by buildFinanceForecast — no separate adj() needed.
   const forecastAR = (idx: number) => S[idx].ar ?? 0;
-  const forecastFinishedGoods = (idx: number) => (S[idx].fg ?? 0) + adj(idx); // adjustment lands on FG
+  const forecastFinishedGoods = (idx: number) => S[idx].fg ?? 0;
   const forecastRawMaterials = (idx: number) => S[idx].rm ?? 0;
-  const forecastInventory = (idx: number) => (S[idx].inventory ?? 0) + adj(idx);
-  const forecastCash = (idx: number) => (S[idx].cash ?? 0) - adj(idx);         // inversely proportional
+  const forecastInventory = (idx: number) => S[idx].inventory ?? 0;
+  const forecastCash = (idx: number) => S[idx].cash ?? 0;
   const avgCreditCardsK = S.find(m => m.isForecast)?.creditCards ?? 0;
   const accruedK = S.find(m => m.isForecast)?.accrued ?? 10.34;
   const fwdLoansShK = S.find(m => m.isForecast)?.loansSh ?? 0;
@@ -1962,6 +1963,13 @@ function FinancePage() {
   const [scenario, setScenario] = useState<"Forecast"|"Actual">("Actual");
   const [projScenario, setProjScenario] = useState<Scenario>("Normal");
 
+  // ── Manual inventory adjustment (persisted in localStorage) ──
+  const [invAdjust, setInvAdjust] = useState<Record<number, number>>(() => {
+    try { const r = localStorage.getItem("baris.finance.invAdjust"); return r ? JSON.parse(r) : {}; }
+    catch { return {}; }
+  });
+  useEffect(() => { localStorage.setItem("baris.finance.invAdjust", JSON.stringify(invAdjust)); }, [invAdjust]);
+
   // ── Actuals from Supabase ──
   const [actuals, setActuals] = useState<Record<string, any>>({});
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -2410,10 +2418,10 @@ RULES:
         </div>
       )}
 
-      {tab === "dashboard" && <DashboardTab period={period} refMonth={refMonth} actuals={actuals} realMonths={realMonths} actualOnly={actualOnly} />}
+      {tab === "dashboard" && <DashboardTab period={period} refMonth={refMonth} actuals={actuals} realMonths={realMonths} actualOnly={actualOnly} invAdjust={invAdjust} />}
       {tab === "pnl"       && <PNLTab realMonths={realMonths} actuals={actuals} actualOnly={actualOnly} />}
-      {tab === "cashflow"  && <CashFlowTab actuals={actuals} actualOnly={actualOnly} scenario={projScenario} />}
-      {tab === "balance"   && <BalanceTab realMonths={realMonths} actuals={actuals} actualOnly={actualOnly} scenario={projScenario} />}
+      {tab === "cashflow"  && <CashFlowTab actuals={actuals} actualOnly={actualOnly} scenario={projScenario} invAdjust={invAdjust} />}
+      {tab === "balance"   && <BalanceTab realMonths={realMonths} actuals={actuals} actualOnly={actualOnly} scenario={projScenario} invAdjust={invAdjust} onInvAdjustChange={setInvAdjust} />}
       {tab === "runway"    && <RunwayTab />}
       {tab === "ebitda"    && <EBITDATab actuals={actuals} />}
     </div>
