@@ -429,7 +429,12 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
         const { data: existing } = await supabase.from("lot_master").select("id")
           .eq("lot_number", lotNo).eq("warehouse", form.warehouse).maybeSingle();
         if (existing) {
-          const patch: Record<string, any> = { updated_at: new Date().toISOString() };
+          const patch: {
+            updated_at: string;
+            expiry_date?: string;
+            cogs_per_case?: number;
+            cogs_status?: string;
+          } = { updated_at: new Date().toISOString() };
           if (form.expiry) patch.expiry_date = form.expiry;
           if (form.cogs_per_case) { patch.cogs_per_case = Number(form.cogs_per_case); patch.cogs_status = "confirmed"; }
           await supabase.from("lot_master").update(patch).eq("id", (existing as any).id);
