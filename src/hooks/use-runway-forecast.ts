@@ -128,7 +128,7 @@ export function useRunwayForecast(nWeeks = 20, scenario: Scenario = "Normal") {
     return calcForecast(
       scenario,
       s.velActive ?? [], s.velNew ?? [],
-      s.retailerActive ?? [], s.retailerStores ?? [], s.retailerVel ?? [], s.retailerEntry ?? [],
+      s.retActive ?? [], s.retStores ?? [], s.retVel ?? [], s.retEntry ?? [],
       s.velChains, s.seasonIdx, s.newSkus ?? [], s.promoMultipliers, s.retVelBySku,
     );
   }, [scenario, salesState]);
