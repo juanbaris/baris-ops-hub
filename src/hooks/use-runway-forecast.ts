@@ -128,7 +128,7 @@ export function useRunwayForecast(nWeeks = 20, scenario: Scenario = "Normal") {
     return calcForecast(
       scenario,
       s.velActive ?? [], s.velNew ?? [],
-      s.retActive ?? [], s.retStores ?? [], s.retVel ?? [], s.retEntry ?? [],
+      s.retailerActive ?? [], s.retailerStores ?? [], s.retailerVel ?? [], s.retailerEntry ?? [],
       s.velChains, s.seasonIdx, s.newSkus ?? [], s.promoMultipliers, s.retVelBySku,
     );
   }, [scenario, salesState]);
@@ -339,6 +339,12 @@ export function useRunwayForecast(nWeeks = 20, scenario: Scenario = "Normal") {
     }
 
     // ── Projected revenue / deductions / logistics from Sales Forecast ──
+    // Two timing rules:
+    //   1. Projected starts 4 weeks from cash_start_date (before that, nothing is invoiceable).
+    //   2. Sales Forecast = what's SOLD in month M; collection happens in month M+1 (~30d terms).
+    //      So projected collection in a given week = sales forecast of the PREVIOUS month.
+    const projectedStartDate = addDays(cashStartDate, 28); // 4 weeks
+
     // Build monthly forecast map: year-month → { revenue, cases, daysInMonth }
     const forecastByMonth: Record<string, { revenue: number; cases: number; daysInMonth: number }> = {};
     for (const fr of salesForecast) {
@@ -347,20 +353,27 @@ export function useRunwayForecast(nWeeks = 20, scenario: Scenario = "Normal") {
     }
     // For each period, compute its raw projected share (pro-rata by days)
     for (let i = 0; i < periodDefs.length; i++) {
-      let rawRev = 0, rawCases = 0;
       const p = periodDefs[i];
+      // Skip first 4 weeks — too early to invoice anything new
+      if (p.end <= projectedStartDate) continue;
+
+      let rawRev = 0, rawCases = 0;
       const days = Math.round((p.end.getTime() - p.start.getTime()) / MS_DAY) + 1;
       let d = new Date(p.start);
       for (let j = 0; j < days; j++) {
-        const mk = `${d.getFullYear()}-${d.getMonth() + 1}`;
-        const fm = forecastByMonth[mk];
-        if (fm && fm.daysInMonth > 0) {
-          rawRev += fm.revenue / fm.daysInMonth;
-          rawCases += fm.cases / fm.daysInMonth;
+        if (d >= projectedStartDate) {
+          // Shift back 1 month: collection in month M ← sales from month M-1
+          const salesMonth = new Date(d.getFullYear(), d.getMonth() - 1, 1);
+          const mk = `${salesMonth.getFullYear()}-${salesMonth.getMonth() + 1}`;
+          const fm = forecastByMonth[mk];
+          if (fm && fm.daysInMonth > 0) {
+            rawRev += fm.revenue / fm.daysInMonth;
+            rawCases += fm.cases / fm.daysInMonth;
+          }
         }
         d = addDays(d, 1);
       }
-      // Current-month overlap: projected = max(0, forecast - confirmed - estimated)
+      // Overlap: projected = max(0, forecast - confirmed - estimated)
       const overlapRev = Math.max(0, rawRev - buckets[i].ingresoDefinido - buckets[i].ingresoEstimado);
       buckets[i].ingresoProyectado = Math.round(overlapRev);
       // Deductions: % of projected revenue (blended rate)
