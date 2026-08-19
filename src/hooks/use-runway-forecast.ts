@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { calcLogistics, type RateBook } from "@/components/logistics/rates";
+import { useSalesForecast } from "@/hooks/use-sales-forecast";
+import {
+  calcForecast, PRICE_PER_CASE, FORECAST_MONTHS,
+  type Scenario, type ForecastState,
+} from "@/lib/sales-forecast";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // RUNWAY SEMANAL — single source of truth for the weekly cash forecast.
@@ -62,17 +67,28 @@ export type RunwayPeriod = {
   end: Date;
   isGap: boolean;
   cashStart: number;
+  // Collections
   ingresoDefinido: number;
   ingresoEstimado: number;
+  ingresoProyectado: number;
+  // Deductions
   deduccionDefinido: number;
   deduccionEstimado: number;
+  deduccionProyectado: number;
+  // Logistics
   logisticaDefinido: number;
   logisticaEstimado: number;
+  logisticaProyectado: number;
+  // IP & Production costs
   cogsDefinido: number;
-  cogsEstimado: number;
+  cogsProyectado: number;
+  // Expenses
   fijo: number;
   blando: number;
   eventos: number;
+  // Nets
+  netoReal: number;
+  netoProyectado: number;
   neto: number;
   cashEnd: number;
 };
@@ -99,11 +115,23 @@ export type RunwayFixedCost = { id: string; label: string; amount: number; timin
 export type RunwayEvent = { id: string; description: string; amount: number; event_date: string };
 export type RunwayCogsPayment = { id: string; payment_month: string; ingredient_purchases: number; heinlein_tolling: number };
 
-export function useRunwayForecast(nWeeks = 20) {
+export function useRunwayForecast(nWeeks = 20, scenario: Scenario = "Normal") {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const reload = () => setReloadKey((k) => k + 1);
+
+  // ── Sales Forecast (projected revenue by month) ──
+  const { state: salesState } = useSalesForecast();
+  const salesForecast = useMemo(() => {
+    const s = salesState as ForecastState;
+    return calcForecast(
+      scenario,
+      s.velActive ?? [], s.velNew ?? [],
+      s.retailerActive ?? [], s.retailerStores ?? [], s.retailerVel ?? [], s.retailerEntry ?? [],
+      s.velChains, s.seasonIdx, s.newSkus ?? [], s.promoMultipliers, s.retVelBySku,
+    );
+  }, [scenario, salesState]);
 
   const [orders, setOrders] = useState<any[]>([]);
   const [terms, setTerms] = useState<Record<string, number>>({});
@@ -244,10 +272,10 @@ export function useRunwayForecast(nWeeks = 20) {
     }
 
     const buckets = periodDefs.map(() => ({
-      ingresoDefinido: 0, ingresoEstimado: 0,
-      deduccionDefinido: 0, deduccionEstimado: 0,
-      logisticaDefinido: 0, logisticaEstimado: 0,
-      cogsDefinido: 0, cogsEstimado: 0,
+      ingresoDefinido: 0, ingresoEstimado: 0, ingresoProyectado: 0,
+      deduccionDefinido: 0, deduccionEstimado: 0, deduccionProyectado: 0,
+      logisticaDefinido: 0, logisticaEstimado: 0, logisticaProyectado: 0,
+      cogsDefinido: 0, cogsProyectado: 0,
       fijo: 0, blando: 0, eventos: 0,
     }));
 
@@ -302,12 +330,44 @@ export function useRunwayForecast(nWeeks = 20) {
       if (idx != null) buckets[idx].cogsDefinido += p.amount;
     }
 
-    // ── COGS Estimado: Procurement Planning payments (manually synced table) ──
+    // ── IP & Production Proyectado: Procurement Planning payments (auto-synced from Operations) ──
     for (const cp of cogsPayments) {
       const d = parseDate(cp.payment_month);
       if (!d) continue;
       const idx = findPeriodIndex(d);
-      if (idx != null) buckets[idx].cogsEstimado += Number(cp.ingredient_purchases ?? 0) + Number(cp.heinlein_tolling ?? 0);
+      if (idx != null) buckets[idx].cogsProyectado += -(Math.abs(Number(cp.ingredient_purchases ?? 0)) + Math.abs(Number(cp.heinlein_tolling ?? 0)));
+    }
+
+    // ── Projected revenue / deductions / logistics from Sales Forecast ──
+    // Build monthly forecast map: year-month → { revenue, cases, daysInMonth }
+    const forecastByMonth: Record<string, { revenue: number; cases: number; daysInMonth: number }> = {};
+    for (const fr of salesForecast) {
+      const daysInMonth = new Date(fr.year, fr.month, 0).getDate();
+      forecastByMonth[`${fr.year}-${fr.month}`] = { revenue: fr.revenue, cases: fr.totalCases, daysInMonth };
+    }
+    // For each period, compute its raw projected share (pro-rata by days)
+    for (let i = 0; i < periodDefs.length; i++) {
+      let rawRev = 0, rawCases = 0;
+      const p = periodDefs[i];
+      const days = Math.round((p.end.getTime() - p.start.getTime()) / MS_DAY) + 1;
+      let d = new Date(p.start);
+      for (let j = 0; j < days; j++) {
+        const mk = `${d.getFullYear()}-${d.getMonth() + 1}`;
+        const fm = forecastByMonth[mk];
+        if (fm && fm.daysInMonth > 0) {
+          rawRev += fm.revenue / fm.daysInMonth;
+          rawCases += fm.cases / fm.daysInMonth;
+        }
+        d = addDays(d, 1);
+      }
+      // Current-month overlap: projected = max(0, forecast - confirmed - estimated)
+      const overlapRev = Math.max(0, rawRev - buckets[i].ingresoDefinido - buckets[i].ingresoEstimado);
+      buckets[i].ingresoProyectado = Math.round(overlapRev);
+      // Deductions: % of projected revenue (blended rate)
+      buckets[i].deduccionProyectado = overlapRev > 0 ? -Math.round(overlapRev * ded.blend) : 0;
+      // Logistics: projected cases × fallback rate
+      const overlapCases = rawRev > 0 ? rawCases * (overlapRev / rawRev) : 0;
+      buckets[i].logisticaProyectado = overlapCases > 0 ? -Math.round(overlapCases * settings.logistics_fallback_per_case) : 0;
     }
 
     // ── Fixed costs: day1 / eom of every month touched by the horizon ──
@@ -345,16 +405,17 @@ export function useRunwayForecast(nWeeks = 20) {
     let cash = settings.cash_start;
     for (let i = 0; i < periodDefs.length; i++) {
       const b = buckets[i];
-      const neto = b.ingresoDefinido + b.ingresoEstimado + b.deduccionDefinido + b.deduccionEstimado
-        + b.logisticaDefinido + b.logisticaEstimado + b.cogsDefinido + b.cogsEstimado
-        + b.fijo + b.blando + b.eventos;
+      const netoReal = b.ingresoDefinido + b.ingresoEstimado + b.deduccionDefinido + b.deduccionEstimado
+        + b.logisticaDefinido + b.logisticaEstimado + b.cogsDefinido + b.fijo + b.blando + b.eventos;
+      const netoProyectado = b.ingresoProyectado + b.deduccionProyectado + b.logisticaProyectado + b.cogsProyectado;
+      const neto = netoReal + netoProyectado;
       const cashStart = cash;
       const cashEnd = cashStart + neto;
-      result.push({ ...periodDefs[i], cashStart, cashEnd, neto, ...b });
+      result.push({ ...periodDefs[i], cashStart, cashEnd, neto, netoReal, netoProyectado, ...b });
       cash = cashEnd;
     }
     return result;
-  }, [loading, orders, terms, book, ded, ipPending, settings, fixedCosts, events, cogsPayments, nWeeks]);
+  }, [loading, orders, terms, book, ded, ipPending, settings, fixedCosts, events, cogsPayments, salesForecast, nWeeks]);
 
   return { periods, loading, error, settings, fixedCosts, events, cogsPayments, reload };
 }
