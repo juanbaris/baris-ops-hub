@@ -153,7 +153,7 @@ export function useRunwayForecast(nWeeks = 20, scenario: Scenario = "Normal") {
       try {
         const [
           ordersRes, termsRes, mapRes, tariffRes, surRes, keheRes, accRes,
-          faRes, settingsRes, fixedRes, eventsRes, cogsPayRes, ipRes,
+          faRes, settingsRes, fixedRes, eventsRes, ipRes,
         ] = await Promise.all([
           supabase.from("customer_orders").select(
             "id,po_number,distributor,customer,status,ship_est_date,invoice_date,collected_at,gross_sales,wd_cases,pw_cases,hm_cases,matcha_cases,xd_cases,wm_cases"
@@ -170,12 +170,11 @@ export function useRunwayForecast(nWeeks = 20, scenario: Scenario = "Normal") {
           supabase.from("runway_settings").select("*"),
           supabase.from("runway_fixed_costs").select("*").eq("active", true).order("sort_order"),
           supabase.from("runway_events").select("*"),
-          supabase.from("runway_cogs_estimado_payments").select("*").order("payment_month"),
           supabase.from("ip_movements").select("estimated_payment_date,movement_date,actual_payment_date,paid,total_price,shipping_price,other_costs"),
         ]);
         if (cancel) return;
 
-        const firstErr = [ordersRes, termsRes, mapRes, tariffRes, keheRes, accRes, faRes, settingsRes, fixedRes, eventsRes, cogsPayRes, ipRes]
+        const firstErr = [ordersRes, termsRes, mapRes, tariffRes, keheRes, accRes, faRes, settingsRes, fixedRes, eventsRes, ipRes]
           .find((r) => r.error);
         if (firstErr?.error) throw firstErr.error;
 
@@ -220,7 +219,16 @@ export function useRunwayForecast(nWeeks = 20, scenario: Scenario = "Normal") {
 
         setFixedCosts((fixedRes.data ?? []) as any);
         setEvents((eventsRes.data ?? []) as any);
-        setCogsPayments((cogsPayRes.data ?? []) as any);
+
+        // IP & Production projected: read from localStorage (auto-synced from Operations → Procurement)
+        try {
+          const raw = window.localStorage.getItem("baris.runway.procPayments");
+          if (raw) setCogsPayments(JSON.parse(raw).map((r: any, i: number) => ({
+            id: String(i), payment_month: r.payment_month,
+            ingredient_purchases: r.ingredient_purchases ?? 0,
+            heinlein_tolling: r.heinlein_tolling ?? 0,
+          })));
+        } catch {}
 
         const pending = (ipRes.data ?? [])
           .filter((m: any) => !m.paid)
@@ -330,20 +338,24 @@ export function useRunwayForecast(nWeeks = 20, scenario: Scenario = "Normal") {
       if (idx != null) buckets[idx].cogsDefinido += p.amount;
     }
 
-    // ── IP & Production Proyectado: Procurement Planning payments (auto-synced from Operations) ──
+    // ── IP & Production Proyectado: from Procurement Planning payments (via localStorage) ──
+    // Values stored as positive costs → negate for cash outflow; placed in first week of payment month
     for (const cp of cogsPayments) {
       const d = parseDate(cp.payment_month);
       if (!d) continue;
       const idx = findPeriodIndex(d);
-      if (idx != null) buckets[idx].cogsProyectado += -(Math.abs(Number(cp.ingredient_purchases ?? 0)) + Math.abs(Number(cp.heinlein_tolling ?? 0)));
+      if (idx != null) buckets[idx].cogsProyectado += -(Number(cp.ingredient_purchases ?? 0) + Number(cp.heinlein_tolling ?? 0));
     }
 
     // ── Projected revenue / deductions / logistics from Sales Forecast ──
-    // Two timing rules:
-    //   1. Projected starts 4 weeks from cash_start_date (before that, nothing is invoiceable).
-    //   2. Sales Forecast = what's SOLD in month M; collection happens in month M+1 (~30d terms).
-    //      So projected collection in a given week = sales forecast of the PREVIOUS month.
-    const projectedStartDate = addDays(cashStartDate, 28); // 4 weeks
+    // Projected starts from the LAST week that has estimated (pipeline) data —
+    // before that, the pipeline already covers the forecast. Once estimated runs out,
+    // projected fills the gap.
+    // Timing: Sales Forecast = what's SOLD in month M; collection ~30d later (month M+1).
+    let projectedStartIdx = periodDefs.length; // default: no projected at all
+    for (let i = periodDefs.length - 1; i >= 0; i--) {
+      if (buckets[i].ingresoEstimado > 0) { projectedStartIdx = i; break; }
+    }
 
     // Build monthly forecast map: year-month → { revenue, cases, daysInMonth }
     const forecastByMonth: Record<string, { revenue: number; cases: number; daysInMonth: number }> = {};
@@ -351,25 +363,21 @@ export function useRunwayForecast(nWeeks = 20, scenario: Scenario = "Normal") {
       const daysInMonth = new Date(fr.year, fr.month, 0).getDate();
       forecastByMonth[`${fr.year}-${fr.month}`] = { revenue: fr.revenue, cases: fr.totalCases, daysInMonth };
     }
-    // For each period, compute its raw projected share (pro-rata by days)
-    for (let i = 0; i < periodDefs.length; i++) {
+    // For each period from projectedStartIdx onward, compute projected share
+    for (let i = projectedStartIdx; i < periodDefs.length; i++) {
       const p = periodDefs[i];
-      // Skip first 4 weeks — too early to invoice anything new
-      if (p.end <= projectedStartDate) continue;
 
       let rawRev = 0, rawCases = 0;
       const days = Math.round((p.end.getTime() - p.start.getTime()) / MS_DAY) + 1;
       let d = new Date(p.start);
       for (let j = 0; j < days; j++) {
-        if (d >= projectedStartDate) {
-          // Shift back 1 month: collection in month M ← sales from month M-1
-          const salesMonth = new Date(d.getFullYear(), d.getMonth() - 1, 1);
-          const mk = `${salesMonth.getFullYear()}-${salesMonth.getMonth() + 1}`;
-          const fm = forecastByMonth[mk];
-          if (fm && fm.daysInMonth > 0) {
-            rawRev += fm.revenue / fm.daysInMonth;
-            rawCases += fm.cases / fm.daysInMonth;
-          }
+        // Shift back 1 month: collection in month M ← sales from month M-1
+        const salesMonth = new Date(d.getFullYear(), d.getMonth() - 1, 1);
+        const mk = `${salesMonth.getFullYear()}-${salesMonth.getMonth() + 1}`;
+        const fm = forecastByMonth[mk];
+        if (fm && fm.daysInMonth > 0) {
+          rawRev += fm.revenue / fm.daysInMonth;
+          rawCases += fm.cases / fm.daysInMonth;
         }
         d = addDays(d, 1);
       }
