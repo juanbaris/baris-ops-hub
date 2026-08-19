@@ -13,6 +13,7 @@ type Distributor = Database["public"]["Enums"]["distributor"];
 type Status = Database["public"]["Enums"]["order_status"];
 
 const DISTRIBUTORS: Distributor[] = ["UNFI", "KeHe", "Rainforest", "RFD", "Direct", "Other"];
+const DIST_CASE_PRICE: Record<string, number> = { UNFI: 36.96, KeHe: 36.96, Rainforest: 38.50 };
 const STATUSES: Status[] = ["Open", "Accepted", "Sent to 3PL", "Shipment", "BOL Confirmed", "Invoiced"];
 const SKU_ITEMS = [
   { key: "wm_cases" as const, label: "W&M", item: "93562" },
@@ -136,18 +137,17 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
     pw_cases: String(order.pw_cases ?? ""),
     hm_cases: String(order.hm_cases ?? ""),
     matcha_cases: String(order.matcha_cases ?? ""),
-    case_value: String((order as any).case_value ?? ""),
+    case_value: String((order as any).case_value ?? DIST_CASE_PRICE[order.distributor] ?? ""),
     gross_sales: String(order.gross_sales ?? ""),
     promo_discount: String(order.promo_discount ?? ""),
   });
 
-  // Auto-recalculate gross = total × case_value whenever SKU qty or case_value changes
-  function recalcEdit(data: typeof editData, changedKey?: string): typeof editData {
+  // Always recalculate gross = total × case_value
+  function recalcEdit(data: typeof editData): typeof editData {
     const cv = parseFloat(data.case_value) || 0;
-    if (cv <= 0) return data;
     const total = SKU_ITEMS.reduce((s, sk) => s + (parseInt(data[sk.key as keyof typeof data] as string) || 0), 0);
     const gross = total * cv;
-    return { ...data, gross_sales: gross > 0 ? gross.toFixed(2) : data.gross_sales };
+    return { ...data, gross_sales: gross > 0 ? gross.toFixed(2) : (cv > 0 ? "0" : data.gross_sales) };
   }
 
   useEffect(() => {
@@ -164,7 +164,7 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
         pw_cases: String(order.pw_cases ?? ""),
         hm_cases: String(order.hm_cases ?? ""),
         matcha_cases: String(order.matcha_cases ?? ""),
-        case_value: String((order as any).case_value ?? ""),
+        case_value: String((order as any).case_value ?? DIST_CASE_PRICE[order.distributor] ?? ""),
         gross_sales: String(order.gross_sales ?? ""),
         promo_discount: String(order.promo_discount ?? ""),
       });
@@ -308,7 +308,7 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
               <div className="flex flex-col gap-0.5">
                 <label className="text-[9px] uppercase tracking-wide text-muted-foreground font-semibold">Distributor</label>
                 <select value={editData.distributor}
-                  onChange={e => setEditData(d => ({ ...d, distributor: e.target.value as Distributor }))}
+                  onChange={e => { const dist = e.target.value as Distributor; setEditData(d => recalcEdit({ ...d, distributor: dist, case_value: String(DIST_CASE_PRICE[dist] ?? parseFloat(d.case_value) || "") })); }}
                   className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400">
                   {DISTRIBUTORS.map(d => <option key={d} value={d}>{d}</option>)}
                 </select>
@@ -423,12 +423,12 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
                     <div>
                       <label className="text-[9px] uppercase tracking-wide text-muted-foreground flex items-center gap-1">
                         Gross Sales ($)
-                        {editData.case_value && <span className="text-amber-600 font-semibold">= total × ${parseFloat(editData.case_value).toFixed(2)}</span>}
+                        {editData.case_value && <span className="text-amber-600 font-semibold">= {SKU_ITEMS.reduce((s, sk) => s + (parseInt(editData[sk.key as keyof typeof editData] as string) || 0), 0)} × ${parseFloat(editData.case_value).toFixed(2)}</span>}
                       </label>
                       <input type="number" min="0" step="0.01"
                         value={editData.gross_sales}
-                        onChange={e => setEditData(d => ({ ...d, gross_sales: e.target.value }))}
-                        className={`w-full rounded border px-2 py-1 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-amber-400 ${editData.case_value ? "border-amber-200 bg-amber-50/50 text-amber-900" : "border-amber-300 bg-white"}`} />
+                        readOnly
+                        className="w-full rounded border border-amber-200 bg-amber-50/50 text-amber-900 px-2 py-1 text-xs font-mono cursor-default" />
                     </div>
                     <div>
                       <label className="text-[9px] uppercase tracking-wide text-muted-foreground">Allowance ($)</label>
@@ -1198,7 +1198,7 @@ function NewOrderModal({ onClose, onCreated, existingPONumbers }: {
     po_number: "", po_date: ymd(new Date()), ship_est_date: "", distributor: "UNFI" as Distributor,
     customer: "", ship_to_address: "", status: "Open" as unknown as Status,
     wm_cases: "", wd_cases: "", xd_cases: "", pw_cases: "", hm_cases: "", matcha_cases: "",
-    case_value: "", gross_sales: "", promo_discount: "", net_sales: "", notes: "",
+    case_value: String(DIST_CASE_PRICE["UNFI"]), gross_sales: "", promo_discount: "", net_sales: "", notes: "",
   });
 
   const poExists = form.po_number.trim() !== "" && existingPONumbers.has(form.po_number.trim());
@@ -1206,17 +1206,22 @@ function NewOrderModal({ onClose, onCreated, existingPONumbers }: {
   function set(k: string, v: string) {
     setForm(f => {
       const next = { ...f, [k]: v };
-      // Auto-calc gross = total × case_value when SKU qty or case_value changes
+      // When distributor changes, auto-fill case_value from defaults
+      if (k === "distributor") {
+        const dp = DIST_CASE_PRICE[v];
+        if (dp) next.case_value = String(dp);
+      }
+      // Auto-calc gross = total × case_value when SKU qty, case_value, or distributor changes
       const skuKeys = SKU_ITEMS.map(s => s.key as string);
-      if (skuKeys.includes(k) || k === "case_value") {
-        const cv = parseFloat(k === "case_value" ? v : next.case_value) || 0;
+      if (skuKeys.includes(k) || k === "case_value" || k === "distributor") {
+        const cv = parseFloat(next.case_value) || 0;
         if (cv > 0) {
           const total = SKU_ITEMS.reduce((s, sk) => s + (parseInt(next[sk.key as keyof typeof next] as string) || 0), 0);
           next.gross_sales = (total * cv).toFixed(2);
         }
       }
       // Auto-calc net = gross - allowance
-      if (["gross_sales", "promo_discount", "case_value", ...skuKeys].includes(k)) {
+      if (["gross_sales", "promo_discount", "case_value", "distributor", ...skuKeys].includes(k)) {
         const g = parseFloat(next.gross_sales) || 0;
         const p = parseFloat(next.promo_discount) || 0;
         next.net_sales = (g - p).toFixed(2);
@@ -1385,8 +1390,8 @@ function NewOrderModal({ onClose, onCreated, existingPONumbers }: {
                 Gross ($)
                 {form.case_value && <span className="text-amber-600">auto</span>}
               </label>
-              <input type="number" className={`${inp} mt-1 font-mono ${form.case_value ? "bg-amber-50/50" : ""}`}
-                value={form.gross_sales} onChange={e => set("gross_sales", e.target.value)} />
+              <input type="number" className={`${inp} mt-1 font-mono bg-amber-50/50 cursor-default`}
+                value={form.gross_sales} readOnly />
             </div>
             <div><label className="text-[10px] text-muted-foreground">Allowance ($)</label>
               <input type="number" className={`${inp} mt-1 font-mono`} value={form.promo_discount} onChange={e => set("promo_discount", e.target.value)} /></div>
