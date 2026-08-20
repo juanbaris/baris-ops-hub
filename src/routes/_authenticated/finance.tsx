@@ -5,6 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useSalesForecast } from "@/hooks/use-sales-forecast";
 import { forecastFromState, type Scenario } from "@/lib/sales-forecast";
 import { RunwayTab } from "@/components/runway/runway-tab";
+import { parseAccountfullyPdf } from "@/lib/accountfully-parser";
 
 // ─── Data (values in $K) ──────────────────────────────────────────────────────
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'] as const;
@@ -904,6 +905,126 @@ export function PNLTab({ realMonths, actuals, actualOnly }: { realMonths: number
           </tbody>
         </table>
       </div>
+
+      {/* ── Variance Analysis: Actual vs Forecast ─────────────────────────── */}
+      {(() => {
+        // Show variance for months that have actuals AND were previously forecast (Jul=idx 6 onwards)
+        const varMonths: number[] = [];
+        for (let i = 6; i < 12; i++) if (actuals[PERIODS[i]]?.pnl_detail) varMonths.push(i);
+        if (!varMonths.length) return null;
+
+        type VLine = { label: string; actual: number; forecast: number };
+        const byMonth: Record<number, VLine[]> = {};
+
+        for (const idx of varMonths) {
+          const d = actuals[PERIODS[idx]].pnl_detail;
+          const ctx = buildContext(idx);
+          // Actual aggregates ($K)
+          const aGross = ((d.sales_product ?? 0) + (d.shipping_income ?? 0)) / 1000;
+          const aDed = ((d.consumer_returns ?? 0) + (d.distributor_fees ?? 0) + (d.dsd_programs ?? 0) + (d.kehe_allowance ?? 0) + (d.payment_terms ?? 0) + (d.promos ?? 0) + (d.trade_spend ?? 0) + (d.unfi_allowance ?? 0) + (d.returns_refunds ?? 0) + (d.shipping_qty_var ?? 0)) / 1000;
+          const aNet = aGross + aDed;
+          const aCogs = (d.product_costs ?? 0) / 1000;
+          const aLog = ((d.freight_in ?? 0) + (d.freight_out_actual ?? 0) + (d.merchant_fees ?? 0) + (d.warehouse_fulfillment ?? 0)) / 1000;
+          const aGP = aNet + aCogs + aLog;
+          const aSell = ((d.broker_commissions ?? 0) + (d.slotting_fees ?? 0)) / 1000;
+          const aMkt = ((d.demos_merchandising ?? 0) + (d.digital_social ?? 0) + (d.events_tradeshows ?? 0) + (d.printing_promotional ?? 0) + (d.product_samples ?? 0)) / 1000;
+          const aTeam = ((d.contractors ?? 0) + (d.payroll_processing ?? 0) + (d.payroll_taxes ?? 0) + (d.salaries_operations ?? 0)) / 1000;
+          const aGA = ((d.bank_charges ?? 0) + (d.dues_subscriptions ?? 0) + (d.rent ?? 0) + (d.utilities ?? 0) + (d.insurance ?? 0) + (d.meals_entertainment ?? 0) + (d.office_supplies ?? 0) + (d.accounting_finance ?? 0) + (d.business_consultation ?? 0) + (d.legal_fees ?? 0) + (d.quality_rd ?? 0) + (d.taxes_licenses ?? 0) + (d.car_rental_uber ?? 0) + (d.flights ?? 0) + (d.hotel ?? 0) + (d.parking_tolls ?? 0) + (d.vehicle_gas_fuel ?? 0) + (d.vehicle_expenses ?? 0) + (d.uncategorized ?? 0)) / 1000;
+          const aEbitda = aGP + aSell + aMkt + aTeam + aGA;
+          const aOther = (d.other_income ?? 0) / 1000;
+          const aNI = aEbitda + aOther;
+          // Forecast aggregates ($K)
+          const fGross = ctx.grossSales;
+          const fDed = -fGross * ctx.deductionPct;
+          const fNet = fGross + fDed;
+          const fCogs = -(ctx.unitsSold * ctx.cogsPerUnit) / 1000;
+          const fLog = -fGross * ctx.logisticsPct;
+          const fGP = fNet + fCogs + fLog;
+          const fcK = ctx.fixedCostsK;
+          const fSell = (fcK.broker_commissions ?? -10) + (fcK.slotting_fees ?? 0);
+          const fMkt = (fcK.demos_merchandising ?? 0) + (fcK.digital_social ?? -5) + (fcK.events_tradeshows ?? 0) + (fcK.product_samples ?? -1.16);
+          const fTeam = -2.56 - 0.061 - 1.15285 - 15.07;
+          const fGA = -0.558 - 0.32 - 0.97 - 1.3 + (fcK.dues_subscriptions ?? -1.37) + (fcK.quality_rd ?? -0.42);
+          const fEbitda = fGP + fSell + fMkt + fTeam + fGA;
+          const fNI = fEbitda;
+
+          byMonth[idx] = [
+            { label: "Gross Sales", actual: aGross, forecast: fGross },
+            { label: "Deductions", actual: aDed, forecast: fDed },
+            { label: "Net Sales", actual: aNet, forecast: fNet },
+            { label: "COGS", actual: aCogs, forecast: fCogs },
+            { label: "Logistics", actual: aLog, forecast: fLog },
+            { label: "Gross Profit", actual: aGP, forecast: fGP },
+            { label: "Selling Expenses", actual: aSell, forecast: fSell },
+            { label: "Mkt & Trade", actual: aMkt, forecast: fMkt },
+            { label: "Team", actual: aTeam, forecast: fTeam },
+            { label: "G&A", actual: aGA, forecast: fGA },
+            { label: "EBITDA", actual: aEbitda, forecast: fEbitda },
+            { label: "Other Income", actual: aOther, forecast: 0 },
+            { label: "Net Income", actual: aNI, forecast: fNI },
+          ];
+        }
+        const fK = (v: number) => (v < 0 ? "-$" : "$") + Math.abs(v).toFixed(1) + "K";
+        const fPct = (a: number, f: number) => f === 0 ? (a === 0 ? "—" : "∞") : ((a - f) / Math.abs(f) * 100).toFixed(0) + "%";
+        const boldRows = new Set(["Gross Sales", "Net Sales", "Gross Profit", "EBITDA", "Net Income"]);
+        const revenueLines = new Set(["Gross Sales", "Net Sales", "Gross Profit", "EBITDA", "Net Income", "Other Income"]);
+        const deltaColor = (label: string, d: number) => Math.abs(d) < 0.05 ? "#94A3B8" : (revenueLines.has(label) ? d > 0 : d < 0) ? "#10B981" : "#EF4444";
+
+        return (
+          <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden mt-6">
+            <div className="px-5 py-3 border-b" style={{ backgroundColor: "#1C2340" }}>
+              <h3 className="text-sm font-bold text-white">📊 Forecast vs Actual — Variance Analysis</h3>
+              <p className="text-[11px] mt-0.5" style={{ color: "#9CA3AF" }}>
+                Uploaded actuals vs prior forecast · {varMonths.map(i => MONTHS[i]).join(", ")} · <span style={{ color: "#10B981" }}>Green = favorable</span> · <span style={{ color: "#EF4444" }}>Red = unfavorable</span>
+              </p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-border">
+                    <th className="text-left px-4 py-2 text-[10px] text-muted-foreground uppercase w-40">Line</th>
+                    {varMonths.map(idx => <th key={idx} colSpan={3} className="text-center px-1 py-2 text-[10px] font-bold uppercase" style={{ color: "#1C2340" }}>{MONTHS[idx]}</th>)}
+                  </tr>
+                  <tr className="border-b border-border bg-muted/30">
+                    <th />
+                    {varMonths.map(idx => (
+                      <React.Fragment key={idx}>
+                        <th className="text-right px-2 py-1 text-[9px] text-muted-foreground font-semibold">Actual</th>
+                        <th className="text-right px-2 py-1 text-[9px] text-muted-foreground">Forecast</th>
+                        <th className="text-right px-2 py-1 text-[9px] text-muted-foreground">Δ</th>
+                      </React.Fragment>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {(byMonth[varMonths[0]] ?? []).map((line, li) => {
+                    const isBold = boldRows.has(line.label);
+                    const isSep = ["Net Sales", "Gross Profit", "EBITDA", "Net Income"].includes(line.label);
+                    return (
+                      <tr key={li} className={`${isSep ? "border-t border-border" : ""} ${isBold ? "bg-muted/20" : ""}`}>
+                        <td className={`px-4 py-1.5 ${isBold ? "font-bold" : ""}`} style={{ color: "#1C2340" }}>{line.label}</td>
+                        {varMonths.map(idx => {
+                          const ln = byMonth[idx]![li];
+                          const delta = ln.actual - ln.forecast;
+                          return (
+                            <React.Fragment key={idx}>
+                              <td className={`text-right px-2 py-1.5 font-mono ${isBold ? "font-bold" : ""}`}>{fK(ln.actual)}</td>
+                              <td className="text-right px-2 py-1.5 font-mono text-muted-foreground">{fK(ln.forecast)}</td>
+                              <td className="text-right px-2 py-1.5 font-mono font-semibold whitespace-nowrap" style={{ color: deltaColor(ln.label, delta) }}>
+                                {delta > 0 ? "+" : ""}{fK(delta)} <span className="text-[9px] opacity-70">({fPct(ln.actual, ln.forecast)})</span>
+                              </td>
+                            </React.Fragment>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -2047,162 +2168,17 @@ function FinancePage() {
     return MONTHS[idx] + ' ' + last.split('-')[0];
   }, [actuals]);
 
-  // ── PDF upload → Claude API (extracts P&L detail + Balance Sheet detail) ──
+  // ── PDF upload → local parser (no external API needed) ──
   async function handlePdfUpload(file: File) {
     setUploading(true);
     setUploadError(null);
     setUploadPreview(null);
     try {
-      const base64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve((reader.result as string).split(',')[1]);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-6",
-          max_tokens: 8000,
-          messages: [{
-            role: "user",
-            content: [
-              { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } },
-              { type: "text", text: `Extract ALL monthly financial data from this Accountfully management report.
-Return ONLY a JSON array (no markdown, no backticks, no explanation) where each item is one month with this EXACT structure:
-
-[
-  {
-    "period": "2026-03",
-    "period_label": "Mar 2026",
-    "units_sold": null,
-    "gross_sales": 196.70,
-    "trade_spend": -5.63,
-    "distr_fees": -7.22,
-    "net_sales": 183.85,
-    "cogs": -114.74,
-    "storage": -23.37,
-    "freight_out": 0,
-    "gross_margin": 45.73,
-    "gm_pct": 0.249,
-    "selling_exp": -156.37,
-    "mkt_trade": -18.36,
-    "team": -18.54,
-    "gen_exp": -20.28,
-    "ebitda": -167.81,
-    "business_contribution": -128.99,
-    "cash": 780.63,
-    "ar": 233.98,
-    "inventory": 431.27,
-    "total_assets": 1478.11,
-    "total_liab": 30.38,
-    "total_equity": 1447.73,
-    "pnl_detail": {
-      "sales_product": 196696.50,
-      "shipping_income": 0,
-      "consumer_returns": 0,
-      "distributor_fees": -1845.40,
-      "dsd_programs": 0,
-      "kehe_allowance": -1681.68,
-      "payment_terms": -2597.39,
-      "promos": -5625.86,
-      "unfi_allowance": -1094.94,
-      "returns_refunds": 0,
-      "product_costs": -114742.00,
-      "freight_in": -2825.00,
-      "freight_out_actual": 0,
-      "merchant_fees": 0,
-      "warehouse_fulfillment": -20549.52,
-      "broker_commissions": -10340.00,
-      "slotting_fees": -146027.37,
-      "demos_merchandising": -3500.00,
-      "digital_social": -4912.30,
-      "events_tradeshows": -6578.45,
-      "printing_promotional": 0,
-      "product_samples": -3368.42,
-      "bank_charges": -567.90,
-      "dues_subscriptions": -1011.03,
-      "rent": 0,
-      "utilities": -398.82,
-      "insurance": -973.69,
-      "meals_entertainment": -1892.39,
-      "office_supplies": -23.68,
-      "contractors": -2254.00,
-      "payroll_processing": -61.00,
-      "payroll_taxes": -1152.85,
-      "salaries_operations": -15070.00,
-      "accounting_finance": -5150.00,
-      "business_consultation": 0,
-      "legal_fees": 0,
-      "quality_rd": 0,
-      "taxes_licenses": -670.49,
-      "car_rental_uber": -1523.33,
-      "flights": -200.00,
-      "hotel": -554.57,
-      "uncategorized": -7295.00,
-      "vehicle_expenses": -19.17,
-      "other_income": 38.34
-    },
-    "bs_detail": {
-      "bofa_x6854": 329215.39,
-      "citi_bank": 451416.69,
-      "mercury_checking": 0,
-      "mercury_treasury": 0,
-      "accounts_receivable": 233976.15,
-      "finished_goods": 130541.63,
-      "raw_materials_packaging": 300726.83,
-      "loans_to_shareholders": 12961.14,
-      "equipment": 11193.81,
-      "accumulated_depreciation": -4928.88,
-      "due_from_shareholders": 996.75,
-      "boa_3724": 393.08,
-      "boa_7830": 100.97,
-      "boa_8781": 471.55,
-      "citi_credit": 19075.61,
-      "mercury_credit": 0,
-      "accrued_liabilities": 10340.00,
-      "capital_1st_round": 225000.00,
-      "capital_2nd_round": 399865.00,
-      "capital_3rd_round": 685970.00,
-      "capital_4th_round": 1910760.00,
-      "common_stock": 1096.75,
-      "opening_balance_equity": -1866.32,
-      "retained_earnings": -1548940.01,
-      "net_income_equity": -224158.01
-    }
-  }
-]
-
-RULES:
-- The top-level summary fields (gross_sales, net_sales, etc.) are in $K (divide raw dollars by 1000).
-- pnl_detail values are in RAW DOLLARS (not $K). Expenses and costs are NEGATIVE.
-- bs_detail values are in RAW DOLLARS (not $K). Liabilities are positive. Accumulated depreciation is negative.
-- gm_pct = gross_margin / net_sales as a decimal.
-- trade_spend = negative sum of DSD Programs + Promos + Consumer Returns.
-- distr_fees = negative sum of Distributor Fees + KeHE Allowance + UNFI Allowance + Payment Terms.
-- storage = Warehouse/Fulfillment + Freight In combined in $K.
-- freight_out = Freight Out in $K.
-- team = negative Payroll & Employee Related Costs total in $K.
-- gen_exp = negative G&A total minus payroll in $K.
-- ebitda = Net Operating Income in $K.
-- business_contribution = gross_margin + selling_exp + mkt_trade in $K.
-- For the Balance Sheet: extract the LATEST snapshot only (end of the report period). If the report covers Jan-Mar, the BS is as of Mar 31 — assign bs_detail to the LAST month only. Earlier months get bs_detail: null.
-- If a line item is missing or zero, use 0 (not null) for pnl_detail/bs_detail.
-- For "BoA 3724", sum all sub-accounts (BoA 3724 Corp + BoA 3724 (4641), etc.) into one value.
-- Use null for unavailable top-level summary fields.
-- units_sold: set to null (we calculate it separately).` }
-            ]
-          }]
-        })
-      });
-      const data = await response.json();
-      const text = data.content?.find((c: any) => c.type === 'text')?.text ?? '';
-      const clean = text.replace(/```json|```/g, '').trim();
-      const parsed = JSON.parse(clean);
+      const parsed = await parseAccountfullyPdf(file);
+      if (!parsed.length) throw new Error("No monthly data found in the PDF");
       setUploadPreview(parsed);
     } catch (e: any) {
-      setUploadError(e.message ?? 'Failed to parse PDF');
+      setUploadError(e.message ?? "Failed to parse PDF");
     } finally {
       setUploading(false);
     }
