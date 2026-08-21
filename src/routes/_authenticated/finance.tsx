@@ -2187,13 +2187,18 @@ function FinancePage() {
     setUploadError(null);
     try {
       for (const row of uploadPreview) {
-        const { error } = await supabase.from("finance_actuals").upsert(
-          { ...row, source: 'Accountfully', uploaded_at: new Date().toISOString() },
-          { onConflict: 'period' }
-        );
+        const payload: Record<string, any> = { ...row, source: 'Accountfully', uploaded_at: new Date().toISOString() };
+        // Don't overwrite Balance Sheet data with null — only update when PDF has BS data for this month
+        if (payload.bs_detail == null) {
+          delete payload.bs_detail;
+          // Also don't overwrite BS summary fields if not provided
+          for (const k of ['cash', 'ar', 'inventory', 'total_assets', 'total_liab', 'total_equity']) {
+            if (payload[k] == null) delete payload[k];
+          }
+        }
+        const { error } = await supabase.from("finance_actuals").upsert(payload, { onConflict: 'period' });
         if (error) throw new Error(`Failed to save ${row.period}: ${error.message}`);
       }
-      // Reload actuals and recalculate forecast assumptions from the fresh data
       const { data } = await supabase.from("finance_actuals").select("*").order("period");
       if (data) {
         const freshMap: Record<string, any> = {};
