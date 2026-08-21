@@ -192,7 +192,8 @@ async function recalcAssumptionsFromActuals(actuals: Record<string, any>) {
     const deductions = Math.abs(Number(d.consumer_returns ?? 0)) + Math.abs(Number(d.distributor_fees ?? 0))
       + Math.abs(Number(d.dsd_programs ?? 0)) + Math.abs(Number(d.kehe_allowance ?? 0))
       + Math.abs(Number(d.payment_terms ?? 0)) + Math.abs(Number(d.promos ?? 0))
-      + Math.abs(Number(d.unfi_allowance ?? 0)) + Math.abs(Number(d.returns_refunds ?? 0));
+      + Math.abs(Number(d.unfi_allowance ?? 0)) + Math.abs(Number(d.returns_refunds ?? 0))
+      + Math.abs(Number(d.shipping_qty_var ?? 0)) + Math.abs(Number(d.trade_spend ?? 0));
     totalGross += gross; totalUnits += units; totalCogs += cogs;
     totalLogistics += logistics; totalDeductions += deductions;
   }
@@ -473,6 +474,7 @@ const PL_ROWS: PLRow[] = [
       {id:"unfi_allowance",parentId:"g-disc",label:"UNFI Allowance",kind:"item",indent:2,actualKey:"unfi_allowance",forecastFn:(c)=>-c.grossSales*c.deductionPct*0.05},
       {id:"t-disc",parentId:"g-disc",label:"Total Discounts",kind:"total",indent:2},
     {id:"returns_refunds",parentId:"g-4500",label:"Returns / Refunds",kind:"item",indent:1,actualKey:"returns_refunds",forecastFn:()=>0},
+    {id:"shipping_qty_var",parentId:"g-4500",label:"Shipping & QTY Variances",kind:"item",indent:1,actualKey:"shipping_qty_var",forecastFn:()=>0},
     {id:"t-4500",parentId:"g-4500",label:"Total Deductions to Income",kind:"total",indent:1,forecastFn:(c)=>-c.grossSales*c.deductionPct},
   {id:"t-income",label:"Total Income",kind:"total",indent:0,bold:true},
 
@@ -1105,7 +1107,7 @@ function buildFinanceForecast(
   };
   const netIncomeReal = (i: number): number|null => {
     const d = pnlAt(i); if (!d) return null;
-    const inc = ['sales_product','shipping_income','consumer_returns','distributor_fees','dsd_programs','kehe_allowance','payment_terms','promos','unfi_allowance','returns_refunds'].reduce((s,k)=>s+Number(d[k] ?? 0),0);
+    const inc = ['sales_product','shipping_income','consumer_returns','distributor_fees','dsd_programs','kehe_allowance','payment_terms','promos','unfi_allowance','returns_refunds','shipping_qty_var','trade_spend'].reduce((s,k)=>s+Number(d[k] ?? 0),0);
     const cogs = ['product_costs','freight_in','freight_out_actual','merchant_fees','warehouse_fulfillment'].reduce((s,k)=>s+Number(d[k] ?? 0),0);
     const exp = ['broker_commissions','slotting_fees','demos_merchandising','digital_social','events_tradeshows','printing_promotional','product_samples','bank_charges','dues_subscriptions','rent','utilities','insurance','meals_entertainment','office_supplies','contractors','payroll_processing','payroll_taxes','salaries_operations','accounting_finance','business_consultation','legal_fees','quality_rd','taxes_licenses','car_rental_uber','flights','hotel','uncategorized','vehicle_expenses'].reduce((s,k)=>s+Number(d[k] ?? 0),0);
     return (inc + cogs + exp + Number(d.other_income ?? 0)) / 1000;
@@ -1233,7 +1235,7 @@ function buildFinanceForecast(
     if (isPnlReal) {
       const d = pnl!;
       grossSales = (Number(d.sales_product ?? 0) + Number(d.shipping_income ?? 0))/1000;
-      deductions = ['consumer_returns','distributor_fees','dsd_programs','kehe_allowance','payment_terms','promos','unfi_allowance','returns_refunds'].reduce((s,k)=>s+Number(d[k] ?? 0),0)/1000;
+      deductions = ['consumer_returns','distributor_fees','dsd_programs','kehe_allowance','payment_terms','promos','unfi_allowance','returns_refunds','shipping_qty_var','trade_spend'].reduce((s,k)=>s+Number(d[k] ?? 0),0)/1000;
       netSales = grossSales + deductions;
       cogsTotal = ['product_costs','freight_in','freight_out_actual','merchant_fees','warehouse_fulfillment'].reduce((s,k)=>s+Number(d[k] ?? 0),0)/1000;
       grossMargin = netSales + cogsTotal;
@@ -1888,7 +1890,7 @@ function EBITDATab({ actuals }: { actuals: Record<string, any> }) {
   // Real months (Jan–Jun) come straight from the P&L; forecast months use the sliders.
   const realNI = (i: number): number|null => {
     const d = actuals[PERIODS[i]]?.pnl_detail; if (!d) return null;
-    const inc = ['sales_product','shipping_income','consumer_returns','distributor_fees','dsd_programs','kehe_allowance','payment_terms','promos','unfi_allowance','returns_refunds'].reduce((s,k)=>s+Number(d[k] ?? 0),0);
+    const inc = ['sales_product','shipping_income','consumer_returns','distributor_fees','dsd_programs','kehe_allowance','payment_terms','promos','unfi_allowance','returns_refunds','shipping_qty_var','trade_spend'].reduce((s,k)=>s+Number(d[k] ?? 0),0);
     const cg = ['product_costs','freight_in','freight_out_actual','merchant_fees','warehouse_fulfillment'].reduce((s,k)=>s+Number(d[k] ?? 0),0);
     const ex = ['broker_commissions','slotting_fees','demos_merchandising','digital_social','events_tradeshows','printing_promotional','product_samples','bank_charges','dues_subscriptions','rent','utilities','insurance','meals_entertainment','office_supplies','contractors','payroll_processing','payroll_taxes','salaries_operations','accounting_finance','business_consultation','legal_fees','quality_rd','taxes_licenses','car_rental_uber','flights','hotel','uncategorized','vehicle_expenses'].reduce((s,k)=>s+Number(d[k] ?? 0),0);
     return (inc + cg + ex + Number(d.other_income ?? 0)) / 1000;
@@ -1919,7 +1921,7 @@ function EBITDATab({ actuals }: { actuals: Record<string, any> }) {
   const rows12 = MONTHS.map((_, i) => {
     if (isReal(i)) {
       const gross = realLine(i, ['sales_product','shipping_income']);
-      const ded = realLine(i, ['consumer_returns','distributor_fees','dsd_programs','kehe_allowance','payment_terms','promos','unfi_allowance','returns_refunds']);
+      const ded = realLine(i, ['consumer_returns','distributor_fees','dsd_programs','kehe_allowance','payment_terms','promos','unfi_allowance','returns_refunds','shipping_qty_var','trade_spend']);
       const net = gross + ded;
       const cogsTotal = realLine(i, ['product_costs','freight_in','freight_out_actual','merchant_fees','warehouse_fulfillment']);
       const gp = net + cogsTotal;
