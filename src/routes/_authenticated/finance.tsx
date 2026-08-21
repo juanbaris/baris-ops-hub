@@ -906,116 +906,113 @@ export function PNLTab({ realMonths, actuals, actualOnly }: { realMonths: number
         </table>
       </div>
 
-      {/* ── Variance Analysis: Actual vs Forecast ─────────────────────────── */}
+      {/* ── Variance Analysis: Actual vs Forecast (Jul onwards, cumulative) ── */}
       {(() => {
-        // Show variance for months that have actuals AND were previously forecast (Jul=idx 6 onwards)
         const varMonths: number[] = [];
         for (let i = 6; i < 12; i++) if (actuals[PERIODS[i]]?.pnl_detail) varMonths.push(i);
         if (!varMonths.length) return null;
 
         type VLine = { label: string; actual: number; forecast: number };
         const byMonth: Record<number, VLine[]> = {};
-
         for (const idx of varMonths) {
           const d = actuals[PERIODS[idx]].pnl_detail;
           const ctx = buildContext(idx);
-          // Actual aggregates ($K)
           const aGross = ((d.sales_product ?? 0) + (d.shipping_income ?? 0)) / 1000;
           const aDed = ((d.consumer_returns ?? 0) + (d.distributor_fees ?? 0) + (d.dsd_programs ?? 0) + (d.kehe_allowance ?? 0) + (d.payment_terms ?? 0) + (d.promos ?? 0) + (d.trade_spend ?? 0) + (d.unfi_allowance ?? 0) + (d.returns_refunds ?? 0) + (d.shipping_qty_var ?? 0)) / 1000;
-          const aNet = aGross + aDed;
-          const aCogs = (d.product_costs ?? 0) / 1000;
+          const aNet = aGross + aDed; const aCogs = (d.product_costs ?? 0) / 1000;
           const aLog = ((d.freight_in ?? 0) + (d.freight_out_actual ?? 0) + (d.merchant_fees ?? 0) + (d.warehouse_fulfillment ?? 0)) / 1000;
           const aGP = aNet + aCogs + aLog;
           const aSell = ((d.broker_commissions ?? 0) + (d.slotting_fees ?? 0)) / 1000;
           const aMkt = ((d.demos_merchandising ?? 0) + (d.digital_social ?? 0) + (d.events_tradeshows ?? 0) + (d.printing_promotional ?? 0) + (d.product_samples ?? 0)) / 1000;
           const aTeam = ((d.contractors ?? 0) + (d.payroll_processing ?? 0) + (d.payroll_taxes ?? 0) + (d.salaries_operations ?? 0)) / 1000;
           const aGA = ((d.bank_charges ?? 0) + (d.dues_subscriptions ?? 0) + (d.rent ?? 0) + (d.utilities ?? 0) + (d.insurance ?? 0) + (d.meals_entertainment ?? 0) + (d.office_supplies ?? 0) + (d.accounting_finance ?? 0) + (d.business_consultation ?? 0) + (d.legal_fees ?? 0) + (d.quality_rd ?? 0) + (d.taxes_licenses ?? 0) + (d.car_rental_uber ?? 0) + (d.flights ?? 0) + (d.hotel ?? 0) + (d.parking_tolls ?? 0) + (d.vehicle_gas_fuel ?? 0) + (d.vehicle_expenses ?? 0) + (d.uncategorized ?? 0)) / 1000;
-          const aEbitda = aGP + aSell + aMkt + aTeam + aGA;
-          const aOther = (d.other_income ?? 0) / 1000;
-          const aNI = aEbitda + aOther;
-          // Forecast aggregates ($K)
-          const fGross = ctx.grossSales;
-          const fDed = -fGross * ctx.deductionPct;
-          const fNet = fGross + fDed;
-          const fCogs = -(ctx.unitsSold * ctx.cogsPerUnit) / 1000;
-          const fLog = -fGross * ctx.logisticsPct;
-          const fGP = fNet + fCogs + fLog;
+          const aEbitda = aGP + aSell + aMkt + aTeam + aGA; const aOther = (d.other_income ?? 0) / 1000; const aNI = aEbitda + aOther;
+          const fGross = ctx.grossSales; const fDed = -fGross * ctx.deductionPct; const fNet = fGross + fDed;
+          const fCogs = -(ctx.unitsSold * ctx.cogsPerUnit) / 1000; const fLog = -fGross * ctx.logisticsPct; const fGP = fNet + fCogs + fLog;
           const fcK = ctx.fixedCostsK;
           const fSell = (fcK.broker_commissions ?? -10) + (fcK.slotting_fees ?? 0);
           const fMkt = (fcK.demos_merchandising ?? 0) + (fcK.digital_social ?? -5) + (fcK.events_tradeshows ?? 0) + (fcK.product_samples ?? -1.16);
           const fTeam = -2.56 - 0.061 - 1.15285 - 15.07;
           const fGA = -0.558 - 0.32 - 0.97 - 1.3 + (fcK.dues_subscriptions ?? -1.37) + (fcK.quality_rd ?? -0.42);
-          const fEbitda = fGP + fSell + fMkt + fTeam + fGA;
-          const fNI = fEbitda;
-
+          const fEbitda = fGP + fSell + fMkt + fTeam + fGA; const fNI = fEbitda;
           byMonth[idx] = [
-            { label: "Gross Sales", actual: aGross, forecast: fGross },
-            { label: "Deductions", actual: aDed, forecast: fDed },
-            { label: "Net Sales", actual: aNet, forecast: fNet },
-            { label: "COGS", actual: aCogs, forecast: fCogs },
-            { label: "Logistics", actual: aLog, forecast: fLog },
-            { label: "Gross Profit", actual: aGP, forecast: fGP },
-            { label: "Selling Expenses", actual: aSell, forecast: fSell },
-            { label: "Mkt & Trade", actual: aMkt, forecast: fMkt },
-            { label: "Team", actual: aTeam, forecast: fTeam },
-            { label: "G&A", actual: aGA, forecast: fGA },
-            { label: "EBITDA", actual: aEbitda, forecast: fEbitda },
-            { label: "Other Income", actual: aOther, forecast: 0 },
+            { label: "Gross Sales", actual: aGross, forecast: fGross }, { label: "Deductions", actual: aDed, forecast: fDed },
+            { label: "Net Sales", actual: aNet, forecast: fNet }, { label: "COGS", actual: aCogs, forecast: fCogs },
+            { label: "Logistics", actual: aLog, forecast: fLog }, { label: "Gross Profit", actual: aGP, forecast: fGP },
+            { label: "Selling Expenses", actual: aSell, forecast: fSell }, { label: "Mkt & Trade", actual: aMkt, forecast: fMkt },
+            { label: "Team", actual: aTeam, forecast: fTeam }, { label: "G&A", actual: aGA, forecast: fGA },
+            { label: "EBITDA", actual: aEbitda, forecast: fEbitda }, { label: "Other Income", actual: aOther, forecast: 0 },
             { label: "Net Income", actual: aNI, forecast: fNI },
           ];
         }
+        const nLines = byMonth[varMonths[0]]?.length ?? 0;
+        const totals = Array.from({ length: nLines }, (_, li) => ({
+          label: byMonth[varMonths[0]]![li].label,
+          actual: varMonths.reduce((s, idx) => s + byMonth[idx]![li].actual, 0),
+          forecast: varMonths.reduce((s, idx) => s + byMonth[idx]![li].forecast, 0),
+        }));
+        const grossByMonth: Record<number, number> = {};
+        for (const idx of varMonths) grossByMonth[idx] = byMonth[idx]![0].actual;
+        const grossTotal = totals[0]?.actual ?? 0;
         const fK = (v: number) => (v < 0 ? "-$" : "$") + Math.abs(v).toFixed(1) + "K";
         const fPct = (a: number, f: number) => f === 0 ? (a === 0 ? "—" : "∞") : ((a - f) / Math.abs(f) * 100).toFixed(0) + "%";
+        const fGS = (v: number, gs: number) => gs === 0 ? "" : (v / gs * 100).toFixed(1) + "%";
         const boldRows = new Set(["Gross Sales", "Net Sales", "Gross Profit", "EBITDA", "Net Income"]);
         const revenueLines = new Set(["Gross Sales", "Net Sales", "Gross Profit", "EBITDA", "Net Income", "Other Income"]);
-        const deltaColor = (label: string, d: number) => Math.abs(d) < 0.05 ? "#94A3B8" : (revenueLines.has(label) ? d > 0 : d < 0) ? "#10B981" : "#EF4444";
+        const deltaColor = (lbl: string, d: number) => Math.abs(d) < 0.05 ? "#94A3B8" : (revenueLines.has(lbl) ? d > 0 : d < 0) ? "#10B981" : "#EF4444";
+        const showTotal = varMonths.length > 1;
+        const colKeys = [...varMonths, ...(showTotal ? [-1] : [])];
 
         return (
           <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden mt-6">
             <div className="px-5 py-3 border-b" style={{ backgroundColor: "#1C2340" }}>
               <h3 className="text-sm font-bold text-white">📊 Forecast vs Actual — Variance Analysis</h3>
               <p className="text-[11px] mt-0.5" style={{ color: "#9CA3AF" }}>
-                Uploaded actuals vs prior forecast · {varMonths.map(i => MONTHS[i]).join(", ")} · <span style={{ color: "#10B981" }}>Green = favorable</span> · <span style={{ color: "#EF4444" }}>Red = unfavorable</span>
+                {varMonths.map(i => MONTHS[i]).join(" · ")}{showTotal ? " · TOTAL" : ""} · %GS = % of Gross Sales
               </p>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-border">
-                    <th className="text-left px-4 py-2 text-[10px] text-muted-foreground uppercase w-40">Line</th>
-                    {varMonths.map(idx => <th key={idx} colSpan={3} className="text-center px-1 py-2 text-[10px] font-bold uppercase" style={{ color: "#1C2340" }}>{MONTHS[idx]}</th>)}
+                    <th className="text-left px-4 py-2 text-[10px] text-muted-foreground uppercase w-36">Line</th>
+                    {varMonths.map(idx => <th key={idx} colSpan={4} className="text-center px-1 py-2 text-[10px] font-bold uppercase" style={{ color: "#1C2340" }}>{MONTHS[idx]}</th>)}
+                    {showTotal && <th colSpan={4} className="text-center px-1 py-2 text-[10px] font-bold uppercase" style={{ color: "#A3224A", backgroundColor: "#FFF5F7" }}>TOTAL</th>}
                   </tr>
                   <tr className="border-b border-border bg-muted/30">
                     <th />
-                    {varMonths.map(idx => (
-                      <Fragment key={idx}>
-                        <th className="text-right px-2 py-1 text-[9px] text-muted-foreground font-semibold">Actual</th>
-                        <th className="text-right px-2 py-1 text-[9px] text-muted-foreground">Forecast</th>
-                        <th className="text-right px-2 py-1 text-[9px] text-muted-foreground">Δ</th>
+                    {colKeys.map(k => (
+                      <Fragment key={k}>
+                        <th className="text-right px-1.5 py-1 text-[9px] font-semibold">Actual</th>
+                        <th className="text-right px-0.5 py-1 text-[8px] text-muted-foreground italic">%GS</th>
+                        <th className="text-right px-1.5 py-1 text-[9px] text-muted-foreground">Fcst</th>
+                        <th className="text-right px-1.5 py-1 text-[9px] text-muted-foreground">Δ</th>
                       </Fragment>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {(byMonth[varMonths[0]] ?? []).map((line, li) => {
-                    const isBold = boldRows.has(line.label);
-                    const isSep = ["Net Sales", "Gross Profit", "EBITDA", "Net Income"].includes(line.label);
+                  {totals.map((tl, li) => {
+                    const isBold = boldRows.has(tl.label);
+                    const isSep = ["Net Sales", "Gross Profit", "EBITDA", "Net Income"].includes(tl.label);
+                    const renderCols = (ln: VLine, gs: number, isTotal: boolean) => {
+                      const delta = ln.actual - ln.forecast;
+                      return (
+                        <Fragment>
+                          <td className={`text-right px-1.5 py-1.5 font-mono ${isBold ? "font-bold" : ""} ${isTotal ? "" : ""}`} style={isTotal ? { color: "#A3224A" } : undefined}>{fK(ln.actual)}</td>
+                          <td className="text-right px-0.5 py-1.5 text-[9px] text-muted-foreground italic">{tl.label === "Gross Sales" ? "" : fGS(ln.actual, gs)}</td>
+                          <td className="text-right px-1.5 py-1.5 font-mono text-muted-foreground">{fK(ln.forecast)}</td>
+                          <td className="text-right px-1.5 py-1.5 font-mono font-semibold whitespace-nowrap" style={{ color: deltaColor(tl.label, delta) }}>
+                            {delta > 0 ? "+" : ""}{fK(delta)} <span className="text-[8px] opacity-60">({fPct(ln.actual, ln.forecast)})</span>
+                          </td>
+                        </Fragment>
+                      );
+                    };
                     return (
                       <tr key={li} className={`${isSep ? "border-t border-border" : ""} ${isBold ? "bg-muted/20" : ""}`}>
-                        <td className={`px-4 py-1.5 ${isBold ? "font-bold" : ""}`} style={{ color: "#1C2340" }}>{line.label}</td>
-                        {varMonths.map(idx => {
-                          const ln = byMonth[idx]![li];
-                          const delta = ln.actual - ln.forecast;
-                          return (
-                            <Fragment key={idx}>
-                              <td className={`text-right px-2 py-1.5 font-mono ${isBold ? "font-bold" : ""}`}>{fK(ln.actual)}</td>
-                              <td className="text-right px-2 py-1.5 font-mono text-muted-foreground">{fK(ln.forecast)}</td>
-                              <td className="text-right px-2 py-1.5 font-mono font-semibold whitespace-nowrap" style={{ color: deltaColor(ln.label, delta) }}>
-                                {delta > 0 ? "+" : ""}{fK(delta)} <span className="text-[9px] opacity-70">({fPct(ln.actual, ln.forecast)})</span>
-                              </td>
-                            </Fragment>
-                          );
-                        })}
+                        <td className={`px-4 py-1.5 ${isBold ? "font-bold" : ""}`} style={{ color: "#1C2340" }}>{tl.label}</td>
+                        {varMonths.map(idx => <Fragment key={idx}>{renderCols(byMonth[idx]![li], grossByMonth[idx], false)}</Fragment>)}
+                        {showTotal && renderCols(tl, grossTotal, true)}
                       </tr>
                     );
                   })}
