@@ -356,9 +356,7 @@ function buildSummary(pnl: Record<string, number>) {
   return {
     gross_sales: +(gs / 1000).toFixed(2),
     net_sales: +(ns / 1000).toFixed(2),
-    deductions: +(deductions / 1000).toFixed(2),
     cogs: +(cogs / 1000).toFixed(2),
-    logistics: +((cogs + logistics) / 1000).toFixed(2),  // total COGS in $K
     gross_margin: +(gm / 1000).toFixed(2),
     gm_pct: ns !== 0 ? +(gm / ns).toFixed(4) : 0,
     selling_exp: +(selling / 1000).toFixed(2),
@@ -368,7 +366,6 @@ function buildSummary(pnl: Record<string, number>) {
     gen_exp: +(genExp / 1000).toFixed(2),
     ebitda: +(ebitda / 1000).toFixed(2),
     other_income: +(otherIncome / 1000).toFixed(2),
-    net_income: +(netIncome / 1000).toFixed(2),
     trade_spend: +((-(pnl.dsd_programs ?? 0) - (pnl.promos ?? 0) - (pnl.consumer_returns ?? 0)) / 1000).toFixed(2),
     distr_fees: +((-(pnl.distributor_fees ?? 0) - (pnl.kehe_allowance ?? 0) - (pnl.unfi_allowance ?? 0) - (pnl.payment_terms ?? 0)) / 1000).toFixed(2),
     storage: +((-(pnl.warehouse_fulfillment ?? 0) - (pnl.freight_in ?? 0)) / 1000).toFixed(2),
@@ -433,8 +430,10 @@ export async function parseAccountfullyPdf(file: File): Promise<any[]> {
     const summary = buildSummary(pnl);
     const isLast = period === lastMonth;
 
+    const MLABELS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
     rows.push({
       period,
+      period_label: (() => { const [y, m] = period.split("-"); return `${MLABELS[parseInt(m)-1]} ${y}`; })(),
       ...summary,
       pnl_detail: pnl,
       bs_detail: isLast && Object.keys(bsData).length > 0 ? bsData : null,
