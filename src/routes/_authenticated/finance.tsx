@@ -2187,23 +2187,30 @@ function FinancePage() {
   async function saveActuals() {
     if (!uploadPreview) return;
     setUploading(true);
-    for (const row of uploadPreview) {
-      await supabase.from("finance_actuals").upsert(
-        { ...row, source: 'Accountfully', uploaded_at: new Date().toISOString() },
-        { onConflict: 'period' }
-      );
+    setUploadError(null);
+    try {
+      for (const row of uploadPreview) {
+        const { error } = await supabase.from("finance_actuals").upsert(
+          { ...row, source: 'Accountfully', uploaded_at: new Date().toISOString() },
+          { onConflict: 'period' }
+        );
+        if (error) throw new Error(`Failed to save ${row.period}: ${error.message}`);
+      }
+      // Reload actuals and recalculate forecast assumptions from the fresh data
+      const { data } = await supabase.from("finance_actuals").select("*").order("period");
+      if (data) {
+        const freshMap: Record<string, any> = {};
+        data.forEach((r: any) => { freshMap[r.period] = r; });
+        await recalcAssumptionsFromActuals(freshMap);
+      }
+      setUploadOpen(false);
+      setUploadPreview(null);
+      loadActuals();
+    } catch (e: any) {
+      setUploadError(e.message ?? "Failed to save actuals");
+    } finally {
+      setUploading(false);
     }
-    // Reload actuals and recalculate forecast assumptions from the fresh data
-    const { data } = await supabase.from("finance_actuals").select("*").order("period");
-    if (data) {
-      const freshMap: Record<string, any> = {};
-      data.forEach((r: any) => { freshMap[r.period] = r; });
-      await recalcAssumptionsFromActuals(freshMap);
-    }
-    setUploading(false);
-    setUploadOpen(false);
-    setUploadPreview(null);
-    loadActuals();
   }
 
   // Load Chart.js if not already loaded
@@ -2396,6 +2403,169 @@ function FinancePage() {
 
       {tab === "dashboard" && <DashboardTab period={period} refMonth={refMonth} actuals={actuals} realMonths={realMonths} actualOnly={actualOnly} invAdjust={invAdjust} />}
       {tab === "pnl"       && <PNLTab realMonths={realMonths} actuals={actuals} actualOnly={actualOnly} />}
+
+      {/* ── PDF Upload Comparison: current app data vs incoming PDF, line by line ── */}
+      {tab === "pnl" && uploadPreview && (() => {
+        const MONTHS_L = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+        const PNL_KEYS: { key: string; label: string; section?: string }[] = [
+          { key: "sales_product", label: "Sales of Product Income", section: "INCOME" },
+          { key: "shipping_income", label: "Shipping Income" },
+          { key: "consumer_returns", label: "Consumer Returns", section: "DEDUCTIONS" },
+          { key: "distributor_fees", label: "Distributor Fees" },
+          { key: "dsd_programs", label: "DSD Programs" },
+          { key: "kehe_allowance", label: "KeHE Allowance" },
+          { key: "payment_terms", label: "Payment Terms" },
+          { key: "promos", label: "Promos" },
+          { key: "trade_spend", label: "Trade Spend" },
+          { key: "unfi_allowance", label: "UNFI Allowance" },
+          { key: "returns_refunds", label: "Returns / Refunds" },
+          { key: "shipping_qty_var", label: "Shipping & QTY Variances" },
+          { key: "product_costs", label: "Product Costs", section: "COGS" },
+          { key: "freight_in", label: "Freight In", section: "LOGISTICS" },
+          { key: "freight_out_actual", label: "Freight Out" },
+          { key: "merchant_fees", label: "Merchant Account Fees" },
+          { key: "warehouse_fulfillment", label: "Warehouse / Fulfillment" },
+          { key: "broker_commissions", label: "Broker Commissions & Fees", section: "SELLING" },
+          { key: "slotting_fees", label: "Slotting Fees" },
+          { key: "demos_merchandising", label: "Demos & Merchandising", section: "MARKETING" },
+          { key: "digital_social", label: "Digital & Social Media" },
+          { key: "events_tradeshows", label: "Events / Trade Shows" },
+          { key: "printing_promotional", label: "Printing & Promotional" },
+          { key: "product_samples", label: "Product Samples" },
+          { key: "bank_charges", label: "Bank Charges & Fees", section: "G&A" },
+          { key: "dues_subscriptions", label: "Dues & Subscriptions" },
+          { key: "rent", label: "Rent" },
+          { key: "utilities", label: "Utilities" },
+          { key: "insurance", label: "Insurance" },
+          { key: "meals_entertainment", label: "Meals & Entertainment" },
+          { key: "office_supplies", label: "Office Supplies" },
+          { key: "contractors", label: "Contractors" },
+          { key: "payroll_processing", label: "Payroll Processing Fees" },
+          { key: "payroll_taxes", label: "Payroll Taxes" },
+          { key: "salaries_operations", label: "Salaries & Wages - Operations" },
+          { key: "accounting_finance", label: "Accounting & Finance" },
+          { key: "business_consultation", label: "Business Consultation" },
+          { key: "legal_fees", label: "Legal Fees" },
+          { key: "quality_rd", label: "Quality and R&D" },
+          { key: "taxes_licenses", label: "Taxes & Licenses" },
+          { key: "car_rental_uber", label: "Car Rental / Uber" },
+          { key: "flights", label: "Flights" },
+          { key: "hotel", label: "Hotel" },
+          { key: "vehicle_expenses", label: "Vehicle Expenses" },
+          { key: "uncategorized", label: "Uncategorized Expense" },
+          { key: "other_income", label: "Other Income", section: "OTHER" },
+        ];
+
+        // Build comparison: for each month in preview, compare vs current actuals
+        const months = uploadPreview.map((r: any) => r.period as string).sort();
+        type CellDiff = { current: number; pdf: number; delta: number; isNew: boolean };
+        const diffByKey: Record<string, Record<string, CellDiff>> = {};
+        let hasAnyDiff = false;
+
+        for (const period of months) {
+          const preview = uploadPreview.find((r: any) => r.period === period);
+          const pdfDetail = preview?.pnl_detail ?? {};
+          const curDetail = actuals[period]?.pnl_detail ?? {};
+          const isNewMonth = !actuals[period]?.pnl_detail;
+
+          for (const pk of PNL_KEYS) {
+            const cur = Number(curDetail[pk.key] ?? 0);
+            const pdf = Number(pdfDetail[pk.key] ?? 0);
+            const delta = pdf - cur;
+            if (!diffByKey[pk.key]) diffByKey[pk.key] = {};
+            diffByKey[pk.key][period] = { current: cur, pdf, delta, isNew: isNewMonth };
+            if (Math.abs(delta) > 0.005 || isNewMonth) hasAnyDiff = true;
+          }
+        }
+
+        if (!hasAnyDiff) return null;
+
+        const f$ = (v: number) => {
+          if (v === 0) return "—";
+          const s = v < 0 ? "-" : "";
+          return s + "$" + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        };
+        const fPct = (cur: number, pdf: number) => {
+          if (cur === 0 && pdf === 0) return "";
+          if (cur === 0) return "new";
+          return ((pdf - cur) / Math.abs(cur) * 100).toFixed(1) + "%";
+        };
+
+        return (
+          <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden mt-6">
+            <div className="px-5 py-3 border-b" style={{ backgroundColor: "#1C2340" }}>
+              <h3 className="text-sm font-bold text-white">📋 Upload Preview — Current App vs Incoming PDF</h3>
+              <p className="text-[11px] mt-0.5" style={{ color: "#9CA3AF" }}>
+                Line-by-line comparison · Highlighted cells have changes · Confirm the upload above to apply
+              </p>
+            </div>
+            <div className="overflow-x-auto" style={{ maxHeight: "70vh" }}>
+              <table className="w-full text-[11px]">
+                <thead className="sticky top-0 bg-card z-10">
+                  <tr className="border-b border-border">
+                    <th className="text-left px-3 py-2 text-[10px] text-muted-foreground uppercase w-52 bg-card">Line</th>
+                    {months.map(p => {
+                      const [y, m] = p.split("-");
+                      const isNew = !actuals[p]?.pnl_detail;
+                      return (
+                        <th key={p} colSpan={3} className="text-center px-1 py-2 text-[10px] font-bold uppercase bg-card" style={{ color: isNew ? "#7C3AED" : "#1C2340" }}>
+                          {MONTHS_L[parseInt(m) - 1]} {y} {isNew && <span className="text-[8px] ml-1 px-1 py-0.5 rounded bg-purple-100 text-purple-700">NEW</span>}
+                        </th>
+                      );
+                    })}
+                  </tr>
+                  <tr className="border-b border-border bg-muted/30">
+                    <th className="bg-muted/30" />
+                    {months.map(p => (
+                      <React.Fragment key={p}>
+                        <th className="text-right px-1.5 py-1 text-[9px] text-muted-foreground bg-muted/30">Current</th>
+                        <th className="text-right px-1.5 py-1 text-[9px] font-semibold bg-muted/30" style={{ color: "#1C2340" }}>PDF</th>
+                        <th className="text-right px-1.5 py-1 text-[9px] text-muted-foreground bg-muted/30">Δ</th>
+                      </React.Fragment>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {PNL_KEYS.map((pk, li) => {
+                    // Check if this row has any diff across all months
+                    const rowHasDiff = months.some(p => {
+                      const d = diffByKey[pk.key]?.[p];
+                      return d && (Math.abs(d.delta) > 0.005 || d.isNew);
+                    });
+                    return (
+                      <React.Fragment key={pk.key}>
+                        {pk.section && (
+                          <tr><td colSpan={1 + months.length * 3} className="px-3 py-1.5 text-[9px] uppercase tracking-wider font-bold border-t border-border" style={{ color: "#A3224A", backgroundColor: "#FFF5F7" }}>{pk.section}</td></tr>
+                        )}
+                        <tr className={rowHasDiff ? "bg-amber-50/60" : ""}>
+                          <td className="px-3 py-1 text-muted-foreground">{pk.label}</td>
+                          {months.map(p => {
+                            const d = diffByKey[pk.key]?.[p] ?? { current: 0, pdf: 0, delta: 0, isNew: false };
+                            const changed = Math.abs(d.delta) > 0.005;
+                            return (
+                              <React.Fragment key={p}>
+                                <td className="text-right px-1.5 py-1 font-mono text-muted-foreground">{d.isNew ? "" : f$(d.current)}</td>
+                                <td className={`text-right px-1.5 py-1 font-mono ${changed || d.isNew ? "font-semibold" : ""}`} style={{ color: changed ? "#1C2340" : undefined }}>
+                                  {f$(d.pdf)}
+                                </td>
+                                <td className="text-right px-1.5 py-1 font-mono whitespace-nowrap" style={{ color: !changed && !d.isNew ? "#CBD5E1" : changed ? (d.delta > 0 ? "#10B981" : "#EF4444") : "#7C3AED" }}>
+                                  {d.isNew ? <span className="text-[9px]">new</span> : changed ? (
+                                    <>{d.delta > 0 ? "+" : ""}{f$(d.delta)} <span className="text-[8px] opacity-70">{fPct(d.current, d.pdf)}</span></>
+                                  ) : "—"}
+                                </td>
+                              </React.Fragment>
+                            );
+                          })}
+                        </tr>
+                      </React.Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })()}
       {tab === "cashflow"  && <CashFlowTab actuals={actuals} actualOnly={actualOnly} scenario={projScenario} invAdjust={invAdjust} />}
       {tab === "balance"   && <BalanceTab realMonths={realMonths} actuals={actuals} actualOnly={actualOnly} scenario={projScenario} invAdjust={invAdjust} onInvAdjustChange={setInvAdjust} />}
       {tab === "runway"    && <RunwayTab />}
