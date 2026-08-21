@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useInvoicedActuals } from "@/hooks/use-invoiced-actuals";
 import { supabase } from "@/integrations/supabase/client";
 import { useSalesForecast } from "@/hooks/use-sales-forecast";
@@ -988,11 +988,11 @@ export function PNLTab({ realMonths, actuals, actualOnly }: { realMonths: number
                   <tr className="border-b border-border bg-muted/30">
                     <th />
                     {varMonths.map(idx => (
-                      <React.Fragment key={idx}>
+                      <Fragment key={idx}>
                         <th className="text-right px-2 py-1 text-[9px] text-muted-foreground font-semibold">Actual</th>
                         <th className="text-right px-2 py-1 text-[9px] text-muted-foreground">Forecast</th>
                         <th className="text-right px-2 py-1 text-[9px] text-muted-foreground">Δ</th>
-                      </React.Fragment>
+                      </Fragment>
                     ))}
                   </tr>
                 </thead>
@@ -1007,13 +1007,13 @@ export function PNLTab({ realMonths, actuals, actualOnly }: { realMonths: number
                           const ln = byMonth[idx]![li];
                           const delta = ln.actual - ln.forecast;
                           return (
-                            <React.Fragment key={idx}>
+                            <Fragment key={idx}>
                               <td className={`text-right px-2 py-1.5 font-mono ${isBold ? "font-bold" : ""}`}>{fK(ln.actual)}</td>
                               <td className="text-right px-2 py-1.5 font-mono text-muted-foreground">{fK(ln.forecast)}</td>
                               <td className="text-right px-2 py-1.5 font-mono font-semibold whitespace-nowrap" style={{ color: deltaColor(ln.label, delta) }}>
                                 {delta > 0 ? "+" : ""}{fK(delta)} <span className="text-[9px] opacity-70">({fPct(ln.actual, ln.forecast)})</span>
                               </td>
-                            </React.Fragment>
+                            </Fragment>
                           );
                         })}
                       </tr>
@@ -2517,11 +2517,11 @@ function FinancePage() {
                   <tr className="border-b border-border bg-muted/30">
                     <th className="bg-muted/30" />
                     {months.map(p => (
-                      <React.Fragment key={p}>
+                      <Fragment key={p}>
                         <th className="text-right px-1.5 py-1 text-[9px] text-muted-foreground bg-muted/30">Current</th>
                         <th className="text-right px-1.5 py-1 text-[9px] font-semibold bg-muted/30" style={{ color: "#1C2340" }}>PDF</th>
                         <th className="text-right px-1.5 py-1 text-[9px] text-muted-foreground bg-muted/30">Δ</th>
-                      </React.Fragment>
+                      </Fragment>
                     ))}
                   </tr>
                 </thead>
@@ -2533,7 +2533,7 @@ function FinancePage() {
                       return d && (Math.abs(d.delta) > 0.005 || d.isNew);
                     });
                     return (
-                      <React.Fragment key={pk.key}>
+                      <Fragment key={pk.key}>
                         {pk.section && (
                           <tr><td colSpan={1 + months.length * 3} className="px-3 py-1.5 text-[9px] uppercase tracking-wider font-bold border-t border-border" style={{ color: "#A3224A", backgroundColor: "#FFF5F7" }}>{pk.section}</td></tr>
                         )}
@@ -2543,7 +2543,7 @@ function FinancePage() {
                             const d = diffByKey[pk.key]?.[p] ?? { current: 0, pdf: 0, delta: 0, isNew: false };
                             const changed = Math.abs(d.delta) > 0.005;
                             return (
-                              <React.Fragment key={p}>
+                              <Fragment key={p}>
                                 <td className="text-right px-1.5 py-1 font-mono text-muted-foreground">{d.isNew ? "" : f$(d.current)}</td>
                                 <td className={`text-right px-1.5 py-1 font-mono ${changed || d.isNew ? "font-semibold" : ""}`} style={{ color: changed ? "#1C2340" : undefined }}>
                                   {f$(d.pdf)}
@@ -2553,11 +2553,11 @@ function FinancePage() {
                                     <>{d.delta > 0 ? "+" : ""}{f$(d.delta)} <span className="text-[8px] opacity-70">{fPct(d.current, d.pdf)}</span></>
                                   ) : "—"}
                                 </td>
-                              </React.Fragment>
+                              </Fragment>
                             );
                           })}
                         </tr>
-                      </React.Fragment>
+                      </Fragment>
                     );
                   })}
                 </tbody>
