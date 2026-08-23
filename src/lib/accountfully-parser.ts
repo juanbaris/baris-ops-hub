@@ -73,7 +73,11 @@ const PNL_MAP: Record<string, string> = {
   "Hotel": "hotel",
   "Parking & tolls": "vehicle_expenses",
   "Vehicle gas & fuel": "vehicle_expenses",
+  "Vehicle expenses": "vehicle_expenses",
+  "Uncategorized Expense": "uncategorized",
   "9000 Other Income": "other_income",
+  "Other Income": "other_income",
+  "Total Other Income": "other_income",
 };
 
 // Deduction keys: come NEGATIVE from Accountfully PDF → keep as-is (no sign change)
@@ -267,9 +271,18 @@ function parsePnl(pages: { items: TI[]; pageNum: number }[]): {
 
   for (const row of allRows) {
     const label = rowLabel(row, cols.months[0].x);
+    // Skip "Total ..." rows (they sum sub-items we already captured) except for Other Income fallback
+    const isTotal = label.startsWith("Total ");
     // Match label to PNL_MAP
     const key = PNL_MAP[label];
     if (!key) continue;
+    // If this is a "Total" row but we already have data for this key from sub-items, skip it
+    if (isTotal && key !== "other_income") continue;
+    // For other_income: skip "Total Other Income" if "9000 Other Income" already provided data
+    if (isTotal && key === "other_income") {
+      const hasData = cols.months.some(m => (result[m.period][key] ?? 0) !== 0);
+      if (hasData) continue;
+    }
 
     const values = assignToColumns(row, colPositions);
     for (let i = 0; i < cols.months.length; i++) {
