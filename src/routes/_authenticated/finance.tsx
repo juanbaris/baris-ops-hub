@@ -1454,7 +1454,7 @@ function CashFlowTab({ actuals, actualOnly, scenario, invAdjust }: { actuals: Re
     { name: 'Cash from Operations',       type:'total', data: cfo },
     { name: 'Cash from Investing',        type:'sub', data: cfi },
     { name: 'Capital Contributions', indent:true, data: dCapital },
-    { name: 'Interest / Other Income', indent:true, data: interest },
+    { name: 'Interest', indent:true, data: interest },
     { name: 'Cash — Beginning of Month',         data: cashBop },
     { name: 'Cash — End of Month',        type:'total', data: cashEop },
   ];
