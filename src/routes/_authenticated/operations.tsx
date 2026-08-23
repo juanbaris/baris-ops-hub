@@ -2558,7 +2558,165 @@ function payDateFor(prodDate: Date, leadWeeks: number, term: PayTerm): Date {
   return new Date(prodDate.getFullYear(), prodDate.getMonth() + 1, 1);   // 30d after receipt (next month)
 }
 
-type ProcSubTab = "schedule"|"stock_proj"|"bom_cogs"|"shopping"|"raw_materials"|"payments";
+type ProcSubTab = "forecast_dash"|"schedule"|"stock_proj"|"bom_cogs"|"shopping"|"raw_materials"|"payments"|"ip_forecast"|"ip_stock_fcst"|"fp_stock_fcst";
+
+// ─── Forecast IP Purchase Order type ───
+type IPForecastPO = {
+  id: number;
+  material: string;        // procurement material name
+  qty: number;             // lbs or units
+  matCost: number;         // material cost $
+  freight: number;         // freight/logistics cost $
+  mBuy: string;            // YYYY-MM
+  mRecv: string;           // YYYY-MM
+  mPay: string;            // YYYY-MM
+};
+const IP_FORECAST_KEY = "baris.ops.ipForecastPOs.v1";
+
+// ─── FIFO Forecast simulation engine ───
+// Generates month-by-month IP & FP stock with lot-level tracking.
+// 13-month horizon: current month + 12 forward.
+const FORECAST_HORIZON_MONTHS = (() => {
+  const out: { key: string; label: string }[] = [];
+  for (let i = 0; i < 13; i++) {
+    const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() + i);
+    out.push({ key: `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`, label: d.toLocaleDateString("en",{month:"short",year:"2-digit"}) });
+  }
+  return out;
+})();
+
+type FifoLot = { id: string; qty: number; remaining: number; costPerUnit: number; monthArrived: string; label: string };
+type ForecastMonthResult = {
+  mk: string; ml: string;
+  ipStock: Record<string, { qty: number; value: number }>;
+  ipReceived: Record<string, number>;
+  ipConsumed: Record<string, number>;
+  fpStock: Record<string, { cases: number; value: number }>;
+  fpProduced: Record<string, number>;
+  fpSold: Record<string, number>;
+  fpCogs: Record<string, number>;
+  ipPayments: number;
+  tollPayments: number;
+  totalPayments: number;
+  ipLots: Record<string, FifoLot[]>;
+  fpLots: Record<string, FifoLot[]>;
+};
+
+function runFifoForecast(
+  ipStartStock: Record<string, { qty: number; costPerUnit: number }>,
+  fpStartStock: Record<string, { cases: number; totalValue: number }>,
+  ipPOs: IPForecastPO[],
+  prodPlan: { sku: string; cases: number; month: string }[],
+  salesFcst: Record<string, Record<string, number>>,
+  bomQty: Record<string, Record<string, number>>,
+  tollingPerCase: number,
+  allMaterials: string[],
+  skuList: string[],
+): ForecastMonthResult[] {
+  // Initialize IP lots
+  const ipLots: Record<string, FifoLot[]> = {};
+  for (const mat of allMaterials) {
+    const s = ipStartStock[mat];
+    ipLots[mat] = (s && s.qty > 0)
+      ? [{ id: "s0", qty: s.qty, remaining: s.qty, costPerUnit: s.costPerUnit, monthArrived: FORECAST_HORIZON_MONTHS[0].key, label: "Starting" }]
+      : [];
+  }
+  // Initialize FP lots
+  const fpLots: Record<string, FifoLot[]> = {};
+  for (const sku of skuList) {
+    const s = fpStartStock[sku];
+    if (s && s.cases > 0) {
+      const cpc = s.totalValue / s.cases;
+      fpLots[sku] = [{ id: "s0", qty: s.cases, remaining: s.cases, costPerUnit: cpc, monthArrived: FORECAST_HORIZON_MONTHS[0].key, label: "Starting" }];
+    } else {
+      fpLots[sku] = [];
+    }
+  }
+
+  return FORECAST_HORIZON_MONTHS.map((m) => {
+    const r: ForecastMonthResult = {
+      mk: m.key, ml: m.label,
+      ipStock: {}, ipReceived: {}, ipConsumed: {},
+      fpStock: {}, fpProduced: {}, fpSold: {}, fpCogs: {},
+      ipPayments: 0, tollPayments: 0, totalPayments: 0,
+      ipLots: {}, fpLots: {},
+    };
+
+    // 1) Receive IP POs
+    for (const po of ipPOs) {
+      if (po.mRecv === m.key && po.qty > 0) {
+        const cpu = (po.matCost + po.freight) / po.qty;
+        if (!ipLots[po.material]) ipLots[po.material] = [];
+        ipLots[po.material].push({ id: `PO${po.id}`, qty: po.qty, remaining: po.qty, costPerUnit: cpu, monthArrived: m.key, label: `PO#${po.id}` });
+        r.ipReceived[po.material] = (r.ipReceived[po.material] ?? 0) + po.qty;
+      }
+    }
+
+    // 2) Production: consume IP FIFO → create FP lots
+    for (const pr of prodPlan) {
+      if (pr.month !== m.key || pr.cases <= 0) continue;
+      const bom = bomQty[pr.sku] ?? {};
+      let ingredientCost = 0;
+      for (const [mat, qtyPerCase] of Object.entries(bom)) {
+        if (qtyPerCase <= 0) continue;
+        const totalNeed = pr.cases * qtyPerCase;
+        let rem = totalNeed, cost = 0;
+        for (const lot of (ipLots[mat] ?? [])) {
+          if (rem <= 0) break;
+          const take = Math.min(lot.remaining, rem);
+          cost += take * lot.costPerUnit;
+          lot.remaining -= take;
+          rem -= take;
+        }
+        r.ipConsumed[mat] = (r.ipConsumed[mat] ?? 0) + (totalNeed - rem);
+        ingredientCost += cost;
+      }
+      const cpc = (ingredientCost / pr.cases) + tollingPerCase;
+      if (!fpLots[pr.sku]) fpLots[pr.sku] = [];
+      fpLots[pr.sku].push({ id: `PR${pr.sku}${m.key}`, qty: pr.cases, remaining: pr.cases, costPerUnit: cpc, monthArrived: m.key, label: `Prod ${m.label}` });
+      r.fpProduced[pr.sku] = (r.fpProduced[pr.sku] ?? 0) + pr.cases;
+      r.fpCogs[pr.sku] = cpc;
+    }
+
+    // 3) Sales: consume FP FIFO
+    for (const sku of skuList) {
+      const qty = salesFcst[sku]?.[m.key] ?? 0;
+      if (qty <= 0) continue;
+      let rem = qty;
+      for (const lot of (fpLots[sku] ?? [])) {
+        if (rem <= 0) break;
+        const take = Math.min(lot.remaining, rem);
+        lot.remaining -= take;
+        rem -= take;
+      }
+      r.fpSold[sku] = qty - rem;
+    }
+
+    // 4) Payments
+    for (const po of ipPOs) {
+      if (po.mPay === m.key) r.ipPayments += (po.matCost + po.freight);
+    }
+    for (const pr of prodPlan) {
+      if (pr.month === m.key && pr.cases > 0) r.tollPayments += pr.cases * tollingPerCase;
+    }
+    r.totalPayments = r.ipPayments + r.tollPayments;
+
+    // 5) Stock snapshots
+    for (const mat of allMaterials) {
+      const lots = ipLots[mat] ?? [];
+      r.ipStock[mat] = { qty: lots.reduce((s, l) => s + l.remaining, 0), value: lots.reduce((s, l) => s + l.remaining * l.costPerUnit, 0) };
+    }
+    for (const sku of skuList) {
+      const lots = fpLots[sku] ?? [];
+      r.fpStock[sku] = { cases: lots.reduce((s, l) => s + l.remaining, 0), value: lots.reduce((s, l) => s + l.remaining * l.costPerUnit, 0) };
+    }
+    // Deep-copy lot state
+    for (const mat of allMaterials) r.ipLots[mat] = (ipLots[mat] ?? []).filter(l => l.remaining > 0.01).map(l => ({ ...l }));
+    for (const sku of skuList) r.fpLots[sku] = (fpLots[sku] ?? []).filter(l => l.remaining > 0.5).map(l => ({ ...l }));
+
+    return r;
+  });
+}
 
 const MANUAL_PROD_KEY = "baris.ops.manualProd.v1";
 const SKU_MINS_KEY = "baris.ops.skuMins.v1";
@@ -2875,6 +3033,51 @@ function ProcurementTab({ movements, orders, baseline, ipMovements }: { movement
     try { window.localStorage.setItem(MANUAL_PROD_KEY, JSON.stringify(manualProd)); } catch {}
   },[manualProd]);
 
+  // ─── IP Forecast Purchase Orders ───
+  const [ipForecastPOs, setIpForecastPOs] = useState<IPForecastPO[]>(() => {
+    try { const raw = window.localStorage.getItem(IP_FORECAST_KEY); if (raw) return JSON.parse(raw); } catch {}
+    return [];
+  });
+  const [ipFcstNextId, setIpFcstNextId] = useState(() => {
+    try { const raw = window.localStorage.getItem(IP_FORECAST_KEY); if (raw) { const arr = JSON.parse(raw); return arr.length > 0 ? Math.max(...arr.map((p:any)=>p.id)) + 1 : 1; } } catch {}
+    return 1;
+  });
+  useEffect(()=>{ try { window.localStorage.setItem(IP_FORECAST_KEY, JSON.stringify(ipForecastPOs)); } catch {} },[ipForecastPOs]);
+
+  function addIpForecastPO() {
+    const firstRawMat = RAW_MATS[0];
+    const lt = leadTimes[firstRawMat] ?? 4;
+    const now = new Date(); now.setDate(1);
+    const buyKey = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`;
+    const rcvD = new Date(now); rcvD.setDate(rcvD.getDate() + lt * 7);
+    const rcvKey = `${rcvD.getFullYear()}-${String(rcvD.getMonth()+1).padStart(2,"0")}`;
+    const payD = new Date(rcvD); payD.setMonth(payD.getMonth() + 1);
+    const payKey = `${payD.getFullYear()}-${String(payD.getMonth()+1).padStart(2,"0")}`;
+    setIpForecastPOs(prev => [...prev, { id: ipFcstNextId, material: firstRawMat, qty: 0, matCost: 0, freight: 0, mBuy: buyKey, mRecv: rcvKey, mPay: payKey }]);
+    setIpFcstNextId(n => n + 1);
+  }
+  function removeIpForecastPO(id: number) { setIpForecastPOs(prev => prev.filter(p => p.id !== id)); }
+  function updateIpForecastPO(id: number, field: string, value: any) {
+    setIpForecastPOs(prev => prev.map(p => {
+      if (p.id !== id) return p;
+      const updated = { ...p, [field]: value };
+      // Auto-fill dates when material or buy month changes
+      if (field === "material" || field === "mBuy") {
+        const mat = field === "material" ? value : p.material;
+        const buyM = field === "mBuy" ? value : p.mBuy;
+        const lt = leadTimes[mat] ?? 4;
+        const [by,bm] = buyM.split("-").map(Number);
+        const rcvD = new Date(by, bm - 1, 1); rcvD.setDate(rcvD.getDate() + lt * 7);
+        updated.mRecv = `${rcvD.getFullYear()}-${String(rcvD.getMonth()+1).padStart(2,"0")}`;
+        const pt = payTerms[mat] ?? "lead";
+        if (pt === "t0") updated.mPay = buyM;
+        else if (pt === "lead") updated.mPay = updated.mRecv;
+        else { const pd = new Date(rcvD); pd.setMonth(pd.getMonth()+1); updated.mPay = `${pd.getFullYear()}-${String(pd.getMonth()+1).padStart(2,"0")}`; }
+      }
+      return updated;
+    }));
+  }
+
   useEffect(()=>{
     try{
       const raw=window.localStorage.getItem(WIP_KEY);
@@ -3035,9 +3238,84 @@ function ProcurementTab({ movements, orders, baseline, ipMovements }: { movement
     return result;
   },[hasAnyManual,stockProj,fcstOps]);
 
+  // ─── FIFO Forecast simulation ───
+  // Build IP starting stock from I&P Summary (on-hand) with average cost
+  const ipStartForForecast = useMemo(() => {
+    const out: Record<string, { qty: number; costPerUnit: number }> = {};
+    for (const mat of ALL_INGS) {
+      const qty = parseInt(ingInv[mat]) || 0;
+      const price = ingPrices[mat] ?? 0;
+      if (qty > 0) out[mat] = { qty, costPerUnit: price };
+    }
+    return out;
+  }, [ingInv, ingPrices]);
+
+  // Build FP starting stock from lot master + FP movements (bySku)
+  const fpStartForForecast = useMemo(() => {
+    const out: Record<string, { cases: number; totalValue: number }> = {};
+    for (const sku of SKUS) {
+      const cases = bySku[sku] ?? 0;
+      // Estimate total value from lots if available, else use COGS avg
+      const avgCogs = cogs[sku]?.per_case ?? 0;
+      out[sku] = { cases, totalValue: cases * avgCogs };
+    }
+    return out;
+  }, [bySku, cogs]);
+
+  // Build production plan from schedule for FIFO simulation
+  const prodPlanForForecast = useMemo(() => {
+    const out: { sku: string; cases: number; month: string }[] = [];
+    for (const sku of PROC_SKUS) {
+      for (let i = 0; i < FORECAST_MONTHS_OPS.length; i++) {
+        const cases = plan[sku]?.[i] ?? 0;
+        if (cases > 0) {
+          const fk = FORECAST_KEYS_OPS[i];
+          // Convert YYYY-M to YYYY-MM
+          const [y, m] = fk.split("-");
+          out.push({ sku, cases, month: `${y}-${m.padStart(2, "0")}` });
+        }
+      }
+    }
+    return out;
+  }, [plan]);
+
+  // Build sales forecast map for FIFO
+  const salesFcstForForecast = useMemo(() => {
+    const out: Record<string, Record<string, number>> = {};
+    for (const sku of SKUS) {
+      out[sku] = {};
+      for (let i = 0; i < FORECAST_KEYS_OPS.length; i++) {
+        const fk = FORECAST_KEYS_OPS[i];
+        const [y, m] = fk.split("-");
+        out[sku][`${y}-${m.padStart(2, "0")}`] = fcstOps[sku]?.[i] ?? 0;
+      }
+    }
+    return out;
+  }, [fcstOps]);
+
+  // Tolling per case
+  const tollingPerCase = (prodCosts.tolling_per_unit ?? 0) * UNITS_PER_CASE_BOM;
+
+  const fifoResults = useMemo(() => runFifoForecast(
+    ipStartForForecast, fpStartForForecast, ipForecastPOs,
+    prodPlanForForecast, salesFcstForForecast, bomQty,
+    tollingPerCase, ALL_INGS, SKUS as unknown as string[],
+  ), [ipStartForForecast, fpStartForForecast, ipForecastPOs, prodPlanForForecast, salesFcstForForecast, bomQty, tollingPerCase]);
+
+  // Shopping list: PO forecast totals per material
+  const poForecastByMat = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const po of ipForecastPOs) { out[po.material] = (out[po.material] ?? 0) + po.qty; }
+    return out;
+  }, [ipForecastPOs]);
+
   const inp="rounded border border-border bg-background px-2 py-1 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-primary/30";
   const SUBTABS: {id:ProcSubTab;label:string}[] = [
-    {id:"schedule",label:"📅 Schedule"},{id:"stock_proj",label:"📊 Stock Projection"},
+    {id:"forecast_dash",label:"📊 Forecast"},
+    {id:"schedule",label:"📅 Schedule"},{id:"stock_proj",label:"📊 Stock Proj."},
+    {id:"ip_forecast",label:"🛒 IP Purchases"},
+    {id:"ip_stock_fcst",label:"🧪 IP Stock Fcst"},
+    {id:"fp_stock_fcst",label:"📦 FP Stock Fcst"},
     {id:"bom_cogs",label:"🧪 BOM + COGS"},{id:"shopping",label:"🛒 Shopping List"},
     {id:"raw_materials",label:"📦 Raw Materials"},
     {id:"payments",label:"💵 Payments"},
@@ -3697,6 +3975,555 @@ function ProcurementTab({ movements, orders, baseline, ipMovements }: { movement
           <p className="text-[11px] text-muted-foreground">⚠ = payment date already in the past (order/produce ASAP). This is a planning forecast from the schedule &amp; shopping list, not booked I&amp;P payments.</p>
         </div>
       )}
+
+      {/* ── FORECAST DASHBOARD ── */}
+      {procTab==="forecast_dash" && (() => {
+        const FR = fifoResults;
+        const last = FR[FR.length - 1];
+        const tIPv = ALL_INGS.reduce((s, g) => s + (last?.ipStock[g]?.value ?? 0), 0);
+        const tFPv = SKUS.reduce((s, sk) => s + (last?.fpStock[sk]?.value ?? 0), 0);
+        const tFPc = SKUS.reduce((s, sk) => s + (last?.fpStock[sk]?.cases ?? 0), 0);
+        const tPay = FR.reduce((s, r) => s + r.totalPayments, 0);
+        return (
+          <div className="space-y-4">
+            <div className="flex gap-3 flex-wrap">
+              <div className="rounded-2xl border border-border bg-card p-4 shadow-sm text-center min-w-[120px]">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">IP Value (End)</p>
+                <p className="text-xl font-bold font-mono" style={{color:"#7C3AED"}}>${Math.round(tIPv).toLocaleString()}</p>
+              </div>
+              <div className="rounded-2xl border border-border bg-card p-4 shadow-sm text-center min-w-[120px]">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">FP Value (End)</p>
+                <p className="text-xl font-bold font-mono" style={{color:"#7C3AED"}}>${Math.round(tFPv).toLocaleString()}</p>
+              </div>
+              <div className="rounded-2xl border border-border bg-card p-4 shadow-sm text-center min-w-[120px]">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">FP Cases (End)</p>
+                <p className="text-xl font-bold font-mono" style={{color:"#1C2340"}}>{tFPc.toLocaleString()}</p>
+              </div>
+              <div className="rounded-2xl border border-border bg-card p-4 shadow-sm text-center min-w-[120px]">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Total Payments</p>
+                <p className="text-xl font-bold font-mono text-red-600">${Math.round(tPay).toLocaleString()}</p>
+              </div>
+            </div>
+
+            {/* FP Stock with WoH */}
+            <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+              <div className="px-5 py-3 border-b border-border bg-muted/30">
+                <p className="text-sm font-bold" style={{color:"#1C2340"}}>FP Stock & Weeks on Hand (FIFO Forecast)</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs min-w-max">
+                  <thead>
+                    <tr className="text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
+                      <th className="px-4 py-2 text-left sticky left-0 bg-muted/20">SKU</th>
+                      {FR.map(r => <th key={r.mk} className="px-3 py-2 text-right">{r.ml}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {SKUS.map(sk => (
+                      <tr key={sk} className="border-t border-border/60">
+                        <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{sk}</td>
+                        {FR.map(r => {
+                          const c = r.fpStock[sk]?.cases ?? 0;
+                          const fcst = salesFcstForForecast[sk]?.[r.mk] ?? 0;
+                          const woh = fcst > 0 ? (c / fcst) * 4 : 99;
+                          const isCrit = c <= 0 || woh < 4;
+                          const isLow = !isCrit && woh < 8;
+                          const isOver = woh > 17.5;
+                          const isProd = (r.fpProduced[sk] ?? 0) > 0;
+                          return (
+                            <td key={r.mk} className="px-3 py-1.5 text-right font-mono"
+                              style={{
+                                backgroundColor: isCrit ? "#FEE2E2" : isLow ? "#FEF3C7" : isOver ? "#EDE9FE" : undefined,
+                                color: isCrit ? "#DC2626" : isLow ? "#92400E" : isOver ? "#7C3AED" : "#1C2340",
+                                fontWeight: isProd ? "bold" : undefined,
+                                borderLeft: isProd ? "3px solid #16a34a" : undefined,
+                              }}>
+                              {Math.round(c).toLocaleString()}
+                              <div className="text-[8px] opacity-60">{woh < 99 ? `${woh.toFixed(1)}w` : "∞"}</div>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="px-4 py-2 flex gap-3 text-[10px] flex-wrap border-t border-border">
+                <span className="rounded px-2 py-0.5 bg-red-100 text-red-700">🔴 Critical &lt;4w</span>
+                <span className="rounded px-2 py-0.5 bg-yellow-100 text-yellow-800">🟡 Low 4-8w</span>
+                <span className="rounded px-2 py-0.5 bg-purple-100 text-purple-700">🟣 Over &gt;17.5w</span>
+                <span className="rounded px-2 py-0.5 bg-emerald-100 text-emerald-700">🟢 OK</span>
+              </div>
+            </div>
+
+            {/* IP Stock evolution */}
+            <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+              <div className="px-5 py-3 border-b border-border bg-muted/30">
+                <p className="text-sm font-bold" style={{color:"#1C2340"}}>IP Stock (Lbs) — FIFO Forecast</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs min-w-max">
+                  <thead>
+                    <tr className="text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
+                      <th className="px-4 py-2 text-left sticky left-0 bg-muted/20">Material</th>
+                      {FR.map(r => <th key={r.mk} className="px-3 py-2 text-right">{r.ml}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {RAW_MATS.filter(g => FR.some(r => (r.ipStock[g]?.qty ?? 0) > 0 || (r.ipReceived[g] ?? 0) > 0)).map(g => (
+                      <tr key={g} className="border-t border-border/60">
+                        <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{g}</td>
+                        {FR.map(r => {
+                          const q = r.ipStock[g]?.qty ?? 0;
+                          return <td key={r.mk} className={`px-3 py-1.5 text-right font-mono ${q < 100 ? "text-red-600 font-semibold" : ""}`}>{Math.round(q).toLocaleString()}</td>;
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Payments timeline */}
+            <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+              <div className="px-5 py-3 border-b border-border bg-muted/30">
+                <p className="text-sm font-bold" style={{color:"#1C2340"}}>Payments Timeline (FIFO Forecast)</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs min-w-max">
+                  <thead>
+                    <tr className="text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
+                      <th className="px-4 py-2 text-left sticky left-0 bg-muted/20">Category</th>
+                      {FR.map(r => <th key={r.mk} className="px-3 py-2 text-right">{r.ml}</th>)}
+                      <th className="px-4 py-2 text-right font-bold">TOTAL</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-t border-border/60">
+                      <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card">IP Purchases</td>
+                      {FR.map(r => <td key={r.mk} className="px-3 py-1.5 text-right font-mono">{r.ipPayments > 0 ? `$${Math.round(r.ipPayments).toLocaleString()}` : "—"}</td>)}
+                      <td className="px-4 py-1.5 text-right font-mono font-bold">${Math.round(FR.reduce((s,r)=>s+r.ipPayments,0)).toLocaleString()}</td>
+                    </tr>
+                    <tr className="border-t border-border/60">
+                      <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card">Tolling</td>
+                      {FR.map(r => <td key={r.mk} className="px-3 py-1.5 text-right font-mono">{r.tollPayments > 0 ? `$${Math.round(r.tollPayments).toLocaleString()}` : "—"}</td>)}
+                      <td className="px-4 py-1.5 text-right font-mono font-bold">${Math.round(FR.reduce((s,r)=>s+r.tollPayments,0)).toLocaleString()}</td>
+                    </tr>
+                    <tr className="border-t-2 border-border" style={{backgroundColor:"#FEF2F2"}}>
+                      <td className="px-4 py-1.5 font-bold sticky left-0" style={{backgroundColor:"#FEF2F2"}}>TOTAL</td>
+                      {FR.map(r => <td key={r.mk} className="px-3 py-1.5 text-right font-mono font-bold text-red-600">{r.totalPayments > 0 ? `$${Math.round(r.totalPayments).toLocaleString()}` : "—"}</td>)}
+                      <td className="px-4 py-1.5 text-right font-mono font-bold text-red-600">${Math.round(tPay).toLocaleString()}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── IP FORECAST PURCHASES ── */}
+      {procTab==="ip_forecast" && (
+        <div className="space-y-4">
+          {/* Shopping list helper */}
+          <div className="rounded-2xl border-2 border-blue-200 bg-blue-50 shadow-sm p-4">
+            <p className="text-sm font-bold text-blue-900 mb-2">🛒 Quick Reference: What you need vs what you have</p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-[10px] uppercase tracking-wide text-blue-700 border-b border-blue-200">
+                    <th className="px-3 py-2 text-left">Material</th>
+                    <th className="px-3 py-2 text-right">Needed (all prod)</th>
+                    <th className="px-3 py-2 text-right">IP Stock</th>
+                    <th className="px-3 py-2 text-right">IP Ordered</th>
+                    <th className="px-3 py-2 text-right" style={{color:"#7C3AED"}}>PO Forecast</th>
+                    <th className="px-3 py-2 text-right font-bold">To Acquire</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {RAW_MATS.filter(mat => (ingNeeded[mat] ?? 0) > 0).map(mat => {
+                    const needed = Math.round(ingNeeded[mat] ?? 0);
+                    const stock = parseInt(ingInv[mat]) || 0;
+                    const ordered = Math.round(ipOrdered[mat] ?? 0);
+                    const poFcst = Math.round(poForecastByMat[mat] ?? 0);
+                    const toAcq = Math.max(0, needed - stock - ordered - poFcst);
+                    return (
+                      <tr key={mat} className="border-t border-blue-100">
+                        <td className="px-3 py-1.5 font-semibold text-blue-900">{mat}</td>
+                        <td className="px-3 py-1.5 text-right font-mono">{needed.toLocaleString()}</td>
+                        <td className="px-3 py-1.5 text-right font-mono">{stock > 0 ? stock.toLocaleString() : "—"}</td>
+                        <td className="px-3 py-1.5 text-right font-mono text-emerald-700">{ordered > 0 ? ordered.toLocaleString() : "—"}</td>
+                        <td className="px-3 py-1.5 text-right font-mono" style={{color:"#7C3AED"}}>{poFcst > 0 ? poFcst.toLocaleString() : "—"}</td>
+                        <td className={`px-3 py-1.5 text-right font-mono font-bold ${toAcq > 0 ? "text-orange-600" : "text-emerald-600"}`}>
+                          {toAcq > 0 ? toAcq.toLocaleString() : "✓"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* IP Forecast POs table */}
+          <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+            <div className="px-5 py-3 border-b border-border bg-muted/30 flex items-center justify-between">
+              <div>
+                <p className="text-sm font-bold" style={{color:"#1C2340"}}>IP Purchase Orders — Forecast</p>
+                <p className="text-xs text-muted-foreground">Each PO creates a lot with its own $/unit. Lead time & payment terms auto-fill from Raw Materials settings.</p>
+              </div>
+              <button onClick={addIpForecastPO} className="rounded-lg px-4 py-1.5 text-xs font-semibold text-white" style={{backgroundColor:"#A3224A"}}>+ Add Purchase</button>
+            </div>
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
+                  <th className="px-3 py-2 text-left">Material</th>
+                  <th className="px-3 py-2 text-right">Qty</th>
+                  <th className="px-3 py-2 text-right">Mat. Cost</th>
+                  <th className="px-3 py-2 text-right">Freight</th>
+                  <th className="px-3 py-2 text-right">$/unit</th>
+                  <th className="px-3 py-2 text-left">Buy</th>
+                  <th className="px-3 py-2 text-left">Receive</th>
+                  <th className="px-3 py-2 text-left">Pay</th>
+                  <th className="px-3 py-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {ipForecastPOs.length === 0 && (
+                  <tr><td colSpan={9} className="px-4 py-6 text-center text-muted-foreground">No forecast POs yet. Click "+ Add Purchase" to start planning.</td></tr>
+                )}
+                {ipForecastPOs.map(po => {
+                  const cpu = po.qty > 0 ? (po.matCost + po.freight) / po.qty : 0;
+                  return (
+                    <tr key={po.id} className="border-t border-border/60 hover:bg-muted/20">
+                      <td className="px-3 py-1.5">
+                        <select value={po.material} onChange={e => updateIpForecastPO(po.id, "material", e.target.value)}
+                          className={`${inp} w-full`}>
+                          {RAW_MATS.map(m => <option key={m} value={m}>{m}</option>)}
+                        </select>
+                      </td>
+                      <td className="px-3 py-1.5"><input type="number" value={po.qty || ""} onChange={e => updateIpForecastPO(po.id, "qty", Number(e.target.value) || 0)} className={`${inp} w-20 text-right`} placeholder="0" /></td>
+                      <td className="px-3 py-1.5"><input type="number" value={po.matCost || ""} onChange={e => updateIpForecastPO(po.id, "matCost", Number(e.target.value) || 0)} className={`${inp} w-24 text-right`} placeholder="0" /></td>
+                      <td className="px-3 py-1.5"><input type="number" value={po.freight || ""} onChange={e => updateIpForecastPO(po.id, "freight", Number(e.target.value) || 0)} className={`${inp} w-20 text-right`} placeholder="0" /></td>
+                      <td className="px-3 py-1.5 text-right font-mono font-semibold" style={{color:"#7C3AED"}}>{cpu > 0 ? `$${cpu.toFixed(4)}` : "—"}</td>
+                      <td className="px-3 py-1.5"><input type="month" value={po.mBuy} onChange={e => updateIpForecastPO(po.id, "mBuy", e.target.value)} className={`${inp} w-36`} /></td>
+                      <td className="px-3 py-1.5"><input type="month" value={po.mRecv} onChange={e => updateIpForecastPO(po.id, "mRecv", e.target.value)} className={`${inp} w-36`} /></td>
+                      <td className="px-3 py-1.5"><input type="month" value={po.mPay} onChange={e => updateIpForecastPO(po.id, "mPay", e.target.value)} className={`${inp} w-36`} /></td>
+                      <td className="px-3 py-1.5">
+                        <button onClick={() => removeIpForecastPO(po.id)} className="rounded bg-red-600 px-2 py-0.5 text-[10px] font-semibold text-white">✕</button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              {ipForecastPOs.length > 0 && (
+                <tfoot>
+                  <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
+                    <td className="px-3 py-2 font-semibold text-xs">TOTAL</td>
+                    <td className="px-3 py-2 text-right font-mono">{ipForecastPOs.reduce((s,p)=>s+p.qty,0).toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right font-mono">${Math.round(ipForecastPOs.reduce((s,p)=>s+p.matCost,0)).toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right font-mono">${Math.round(ipForecastPOs.reduce((s,p)=>s+p.freight,0)).toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right font-mono font-bold text-emerald-400">${Math.round(ipForecastPOs.reduce((s,p)=>s+p.matCost+p.freight,0)).toLocaleString()}</td>
+                    <td colSpan={4}></td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ── IP STOCK FORECAST (FIFO) ── */}
+      {procTab==="ip_stock_fcst" && (() => {
+        const FR = fifoResults;
+        const last = FR[FR.length - 1];
+        return (
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+              <div className="px-5 py-3 border-b border-border bg-muted/30">
+                <p className="text-sm font-bold" style={{color:"#1C2340"}}>IP Stock Forecast — End of Month (FIFO)</p>
+                <p className="text-xs text-muted-foreground">Stock = Starting + Received POs − Consumed in Production. Lot-level FIFO tracking.</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs min-w-max">
+                  <thead>
+                    <tr className="text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
+                      <th className="px-4 py-2 text-left sticky left-0 bg-muted/20">Material</th>
+                      {FR.map(r => <th key={r.mk} className="px-3 py-2 text-right">{r.ml}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {RAW_MATS.filter(g => FR.some(r => (r.ipStock[g]?.qty ?? 0) > 0 || (r.ipReceived[g] ?? 0) > 0 || (r.ipConsumed[g] ?? 0) > 0)).map(g => (
+                      <tr key={g} className="border-t border-border/60">
+                        <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{g}</td>
+                        {FR.map(r => {
+                          const q = r.ipStock[g]?.qty ?? 0;
+                          return <td key={r.mk} className={`px-3 py-1.5 text-right font-mono ${q < 100 ? "text-red-600 font-bold" : q < 500 ? "" : "text-emerald-600"}`}>{Math.round(q).toLocaleString()}</td>;
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* IP Value */}
+            <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+              <div className="px-5 py-3 border-b border-border bg-muted/30">
+                <p className="text-sm font-bold" style={{color:"#1C2340"}}>IP Stock Value ($)</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs min-w-max">
+                  <thead>
+                    <tr className="text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
+                      <th className="px-4 py-2 text-left sticky left-0 bg-muted/20">Material</th>
+                      {FR.map(r => <th key={r.mk} className="px-3 py-2 text-right">{r.ml}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {RAW_MATS.filter(g => FR.some(r => (r.ipStock[g]?.value ?? 0) > 0)).map(g => (
+                      <tr key={g} className="border-t border-border/60">
+                        <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{g}</td>
+                        {FR.map(r => <td key={r.mk} className="px-3 py-1.5 text-right font-mono">${Math.round(r.ipStock[g]?.value ?? 0).toLocaleString()}</td>)}
+                      </tr>
+                    ))}
+                    <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
+                      <td className="px-4 py-2 font-semibold text-xs sticky left-0" style={{backgroundColor:"#1C2340"}}>TOTAL</td>
+                      {FR.map(r => <td key={r.mk} className="px-3 py-2 text-right font-mono font-bold text-emerald-400">${Math.round(ALL_INGS.reduce((s,g)=>s+(r.ipStock[g]?.value??0),0)).toLocaleString()}</td>)}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* IP Movements */}
+            <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+              <div className="px-5 py-3 border-b border-border bg-muted/30">
+                <p className="text-sm font-bold" style={{color:"#1C2340"}}>IP Monthly Movements</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs min-w-max">
+                  <thead>
+                    <tr className="text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
+                      <th className="px-4 py-2 text-left sticky left-0 bg-muted/20">Material</th>
+                      <th className="px-3 py-2 text-left">Flow</th>
+                      {FR.map(r => <th key={r.mk} className="px-3 py-2 text-right">{r.ml}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {RAW_MATS.filter(g => FR.some(r => (r.ipReceived[g] ?? 0) > 0 || (r.ipConsumed[g] ?? 0) > 0)).map(g => (
+                      <React.Fragment key={g}>
+                        <tr className="border-t border-border/60">
+                          <td className="px-4 py-1 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}} rowSpan={2}>{g}</td>
+                          <td className="px-3 py-1 text-emerald-600 font-semibold">+ Recv</td>
+                          {FR.map(r => <td key={r.mk} className="px-3 py-1 text-right font-mono text-emerald-600">{(r.ipReceived[g] ?? 0) > 0 ? `+${Math.round(r.ipReceived[g]!).toLocaleString()}` : "—"}</td>)}
+                        </tr>
+                        <tr>
+                          <td className="px-3 py-1 text-red-600 font-semibold">− Used</td>
+                          {FR.map(r => <td key={r.mk} className="px-3 py-1 text-right font-mono text-red-600">{(r.ipConsumed[g] ?? 0) > 0 ? `−${Math.round(r.ipConsumed[g]!).toLocaleString()}` : "—"}</td>)}
+                        </tr>
+                      </React.Fragment>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Lot detail */}
+            <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+              <div className="px-5 py-3 border-b border-border bg-muted/30">
+                <p className="text-sm font-bold" style={{color:"#1C2340"}}>IP Lot Detail — End of Period ({last?.ml})</p>
+              </div>
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
+                    <th className="px-4 py-2 text-left">Material</th>
+                    <th className="px-4 py-2 text-left">Lot</th>
+                    <th className="px-4 py-2 text-right">Original</th>
+                    <th className="px-4 py-2 text-right">Remaining</th>
+                    <th className="px-4 py-2 text-right">$/unit</th>
+                    <th className="px-4 py-2 text-right">Value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {RAW_MATS.map(g => {
+                    const lots = last?.ipLots[g] ?? [];
+                    if (lots.length === 0) return null;
+                    return lots.map((l, i) => (
+                      <tr key={`${g}-${l.id}`} className="border-t border-border/60 hover:bg-muted/20">
+                        <td className="px-4 py-1.5 font-semibold" style={{color:"#1C2340"}}>{i === 0 ? g : ""}</td>
+                        <td className="px-4 py-1.5"><span className="rounded px-2 py-0.5 text-[9px] font-semibold bg-purple-100 text-purple-700">{l.label}</span></td>
+                        <td className="px-4 py-1.5 text-right font-mono">{Math.round(l.qty).toLocaleString()}</td>
+                        <td className={`px-4 py-1.5 text-right font-mono ${l.remaining < l.qty * 0.1 ? "text-red-600 font-bold" : ""}`}>{Math.round(l.remaining).toLocaleString()}</td>
+                        <td className="px-4 py-1.5 text-right font-mono">${l.costPerUnit.toFixed(4)}</td>
+                        <td className="px-4 py-1.5 text-right font-mono">${Math.round(l.remaining * l.costPerUnit).toLocaleString()}</td>
+                      </tr>
+                    ));
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── FP STOCK FORECAST (FIFO) ── */}
+      {procTab==="fp_stock_fcst" && (() => {
+        const FR = fifoResults;
+        const last = FR[FR.length - 1];
+        return (
+          <div className="space-y-4">
+            {/* Stock with WoH */}
+            <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+              <div className="px-5 py-3 border-b border-border bg-muted/30">
+                <p className="text-sm font-bold" style={{color:"#1C2340"}}>FP Stock Forecast — End of Month (FIFO)</p>
+                <p className="text-xs text-muted-foreground">Stock = Starting + Produced − Sold. COGS per lot from FIFO ingredient costs + tolling.</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs min-w-max">
+                  <thead>
+                    <tr className="text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
+                      <th className="px-4 py-2 text-left sticky left-0 bg-muted/20">SKU</th>
+                      {FR.map(r => <th key={r.mk} className="px-3 py-2 text-right">{r.ml}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {SKUS.map(sk => (
+                      <tr key={sk} className="border-t border-border/60">
+                        <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{sk}</td>
+                        {FR.map(r => {
+                          const c = r.fpStock[sk]?.cases ?? 0;
+                          const fcst = salesFcstForForecast[sk]?.[r.mk] ?? 0;
+                          const woh = fcst > 0 ? (c / fcst) * 4 : 99;
+                          const isCrit = c <= 0 || woh < 4;
+                          const isLow = !isCrit && woh < 8;
+                          const isOver = woh > 17.5;
+                          return (
+                            <td key={r.mk} className="px-3 py-1.5 text-right font-mono"
+                              style={{
+                                backgroundColor: isCrit ? "#FEE2E2" : isLow ? "#FEF3C7" : isOver ? "#EDE9FE" : undefined,
+                                color: isCrit ? "#DC2626" : isLow ? "#92400E" : isOver ? "#7C3AED" : "#1C2340",
+                              }}>
+                              {Math.round(c).toLocaleString()}
+                              <div className="text-[8px] opacity-60">{woh < 99 ? `${woh.toFixed(1)}w` : "∞"}</div>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                    <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
+                      <td className="px-4 py-2 font-semibold text-xs sticky left-0" style={{backgroundColor:"#1C2340"}}>TOTAL</td>
+                      {FR.map(r => <td key={r.mk} className="px-3 py-2 text-right font-mono font-bold">{Math.round(SKUS.reduce((s,sk)=>s+(r.fpStock[sk]?.cases??0),0)).toLocaleString()}</td>)}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* FP Value */}
+            <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+              <div className="px-5 py-3 border-b border-border bg-muted/30">
+                <p className="text-sm font-bold" style={{color:"#1C2340"}}>FP Stock Value ($)</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs min-w-max">
+                  <thead>
+                    <tr className="text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
+                      <th className="px-4 py-2 text-left sticky left-0 bg-muted/20">SKU</th>
+                      {FR.map(r => <th key={r.mk} className="px-3 py-2 text-right">{r.ml}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {SKUS.map(sk => (
+                      <tr key={sk} className="border-t border-border/60">
+                        <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{sk}</td>
+                        {FR.map(r => <td key={r.mk} className="px-3 py-1.5 text-right font-mono">${Math.round(r.fpStock[sk]?.value ?? 0).toLocaleString()}</td>)}
+                      </tr>
+                    ))}
+                    <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
+                      <td className="px-4 py-2 font-semibold text-xs sticky left-0" style={{backgroundColor:"#1C2340"}}>TOTAL</td>
+                      {FR.map(r => <td key={r.mk} className="px-3 py-2 text-right font-mono font-bold text-emerald-400">${Math.round(SKUS.reduce((s,sk)=>s+(r.fpStock[sk]?.value??0),0)).toLocaleString()}</td>)}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* FP Movements */}
+            <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+              <div className="px-5 py-3 border-b border-border bg-muted/30">
+                <p className="text-sm font-bold" style={{color:"#1C2340"}}>FP Monthly Movements</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs min-w-max">
+                  <thead>
+                    <tr className="text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
+                      <th className="px-4 py-2 text-left sticky left-0 bg-muted/20">SKU</th>
+                      <th className="px-3 py-2 text-left">Flow</th>
+                      {FR.map(r => <th key={r.mk} className="px-3 py-2 text-right">{r.ml}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {SKUS.map(sk => (
+                      <React.Fragment key={sk}>
+                        <tr className="border-t border-border/60">
+                          <td className="px-4 py-1 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}} rowSpan={2}>{sk}</td>
+                          <td className="px-3 py-1 text-emerald-600 font-semibold">+ Prod</td>
+                          {FR.map(r => <td key={r.mk} className="px-3 py-1 text-right font-mono text-emerald-600">{(r.fpProduced[sk] ?? 0) > 0 ? `+${Math.round(r.fpProduced[sk]!).toLocaleString()}` : "—"}</td>)}
+                        </tr>
+                        <tr>
+                          <td className="px-3 py-1 text-red-600 font-semibold">− Sold</td>
+                          {FR.map(r => <td key={r.mk} className="px-3 py-1 text-right font-mono text-red-600">{(r.fpSold[sk] ?? 0) > 0 ? `−${Math.round(r.fpSold[sk]!).toLocaleString()}` : "—"}</td>)}
+                        </tr>
+                      </React.Fragment>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* FP Lot detail */}
+            <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+              <div className="px-5 py-3 border-b border-border bg-muted/30">
+                <p className="text-sm font-bold" style={{color:"#1C2340"}}>FP Lot Detail — End of Period ({last?.ml})</p>
+              </div>
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
+                    <th className="px-4 py-2 text-left">SKU</th>
+                    <th className="px-4 py-2 text-left">Lot</th>
+                    <th className="px-4 py-2 text-right">Produced</th>
+                    <th className="px-4 py-2 text-right">Remaining</th>
+                    <th className="px-4 py-2 text-right">COGS/Case</th>
+                    <th className="px-4 py-2 text-right">Value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {SKUS.map(sk => {
+                    const lots = last?.fpLots[sk] ?? [];
+                    if (lots.length === 0) return (
+                      <tr key={sk} className="border-t border-border/60">
+                        <td className="px-4 py-1.5 font-semibold" style={{color:"#1C2340"}}>{sk}</td>
+                        <td colSpan={5} className="px-4 py-1.5 text-red-600">No stock remaining</td>
+                      </tr>
+                    );
+                    return lots.map((l, i) => (
+                      <tr key={`${sk}-${l.id}`} className="border-t border-border/60 hover:bg-muted/20">
+                        <td className="px-4 py-1.5 font-semibold" style={{color:"#1C2340"}}>{i === 0 ? sk : ""}</td>
+                        <td className="px-4 py-1.5"><span className="rounded px-2 py-0.5 text-[9px] font-semibold bg-purple-100 text-purple-700">{l.label}</span></td>
+                        <td className="px-4 py-1.5 text-right font-mono">{Math.round(l.qty).toLocaleString()}</td>
+                        <td className="px-4 py-1.5 text-right font-mono">{Math.round(l.remaining).toLocaleString()}</td>
+                        <td className="px-4 py-1.5 text-right font-mono" style={{color:"#7C3AED"}}>${l.costPerUnit.toFixed(2)}</td>
+                        <td className="px-4 py-1.5 text-right font-mono">${Math.round(l.remaining * l.costPerUnit).toLocaleString()}</td>
+                      </tr>
+                    ));
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
