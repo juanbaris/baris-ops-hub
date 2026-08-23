@@ -3147,32 +3147,20 @@ function ProcurementTab({ movements, orders, baseline, ipMovements }: { movement
   );
   const cogs = useMemo(()=>calcCOGSFull(ingPrices,prodCosts,matScrap,matOverfill,bomQty),[ingPrices,prodCosts,matScrap,matOverfill,bomQty]);
 
-  // ─── NEW: Payments forecast — ingredient purchases (timed by lead time) + Heinlein tolling (30d after production) ───
+  // ─── Payments forecast — from IP Forecast POs (by payment month) + Heinlein tolling (30d after production) ───
   const payments = useMemo(()=>{
     const ing: Record<string,number> = {};      // payMonthKey -> $
     const toll: Record<string,number> = {};      // payMonthKey -> $
     const meta: Record<string,string> = {};      // monthKey -> label
-    const bump = (bucket:Record<string,number>, d:Date, amt:number) => {
-      const k = monthKeyOf(d);
-      bucket[k] = (bucket[k]??0) + amt;
-      meta[k] = fmtMonthShort(new Date(d.getFullYear(), d.getMonth(), 1));
+    const addToMonth = (bucket:Record<string,number>, monthKey:string, amt:number) => {
+      bucket[monthKey] = (bucket[monthKey]??0) + amt;
+      const [y,m] = monthKey.split("-").map(Number);
+      meta[monthKey] = new Date(y, m-1, 1).toLocaleDateString("en",{month:"short",year:"2-digit"});
     };
-    // Ingredient purchases: net current inventory greedily against earliest needs
-    for (const ingName of ALL_INGS) {
-      let remInv = (parseInt(ingInv[ingName])||0) + Math.round(ipOrdered[ingName]??0); // stock + already ordered
-      const price = ingPrices[ingName] ?? 0;
-      const ps = ING_PACK_SIZES[ingName] ?? 1;
-      const lead = leadTimes[ingName] ?? DEFAULT_LEAD_WEEKS;
-      const term = payTerms[ingName] ?? "lead";
-      for (let i=0;i<FORECAST_MONTHS_OPS.length;i++) {
-        const need = ingByMonth[ingName]?.[i] ?? 0;
-        if (need<=0) continue;
-        const fromInv = Math.min(remInv, need); remInv -= fromInv;
-        const buy = need - fromInv;
-        if (buy<=0) continue;
-        const finalAmt = Math.ceil(buy/ps)*ps;
-        const cost = finalAmt*price;
-        bump(ing, payDateFor(opsMonthDate(i), lead, term), cost);   // pay per payment terms
+    // IP Purchases from forecast POs — grouped by payment month
+    for (const po of ipForecastPOs) {
+      if (po.matCost + po.freight > 0 && po.mPay) {
+        addToMonth(ing, po.mPay, po.matCost + po.freight);
       }
     }
     // Heinlein tolling: cases produced month i -> units×tolling, paid 30 days later (next month)
@@ -3181,11 +3169,12 @@ function ProcurementTab({ movements, orders, baseline, ipMovements }: { movement
       if (cases<=0) continue;
       const amt = cases * UNITS_PER_CASE_BOM * (prodCosts.tolling_per_unit ?? 0);
       const prod = opsMonthDate(i);
-      bump(toll, new Date(prod.getFullYear(), prod.getMonth()+1, 1), amt);  // +1 month
+      const payD = new Date(prod.getFullYear(), prod.getMonth()+1, 1);
+      addToMonth(toll, `${payD.getFullYear()}-${String(payD.getMonth()+1).padStart(2,"0")}`, amt);
     }
     const keys = [...new Set([...Object.keys(ing),...Object.keys(toll)])].sort();
     return { ing, toll, meta, keys };
-  },[ingByMonth, plan, ingInv, ipOrdered, ingPrices, leadTimes, payTerms, prodCosts]);
+  },[ipForecastPOs, plan, prodCosts]);
 
   // ── Auto-sync Payments → localStorage for Runway cashflow (instant, no RLS issues) ──
   useEffect(()=>{
@@ -3311,12 +3300,11 @@ function ProcurementTab({ movements, orders, baseline, ipMovements }: { movement
 
   const inp="rounded border border-border bg-background px-2 py-1 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-primary/30";
   const SUBTABS: {id:ProcSubTab;label:string}[] = [
-    {id:"forecast_dash",label:"📊 Forecast"},
-    {id:"schedule",label:"📅 Schedule"},{id:"stock_proj",label:"📊 Stock Proj."},
+    {id:"schedule",label:"📅 Schedule"},
     {id:"ip_forecast",label:"🛒 IP Purchases"},
     {id:"ip_stock_fcst",label:"🧪 IP Stock Fcst"},
     {id:"fp_stock_fcst",label:"📦 FP Stock Fcst"},
-    {id:"bom_cogs",label:"🧪 BOM + COGS"},{id:"shopping",label:"🛒 Shopping List"},
+    {id:"bom_cogs",label:"🧪 BOM + COGS"},
     {id:"raw_materials",label:"📦 Raw Materials"},
     {id:"payments",label:"💵 Payments"},
   ];
@@ -3972,7 +3960,50 @@ function ProcurementTab({ movements, orders, baseline, ipMovements }: { movement
               </tfoot>
             </table>
           </div>
-          <p className="text-[11px] text-muted-foreground">⚠ = payment date already in the past (order/produce ASAP). This is a planning forecast from the schedule &amp; shopping list, not booked I&amp;P payments.</p>
+          <p className="text-[11px] text-muted-foreground">Payments are driven by IP Purchase forecast POs (payment month) and Heinlein tolling (30d after production, {UNITS_PER_CASE_BOM} units/case × ${(prodCosts.tolling_per_unit??0).toFixed(2)}/unit). Add purchase orders in the "IP Purchases" tab to see them here.</p>
+
+          {/* IP PO detail */}
+          {ipForecastPOs.length > 0 && (
+            <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+              <div className="px-5 py-3 border-b border-border bg-muted/30">
+                <p className="text-sm font-bold" style={{color:"#1C2340"}}>IP Purchase Payment Detail</p>
+              </div>
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
+                    <th className="px-4 py-2 text-left">Material</th>
+                    <th className="px-4 py-2 text-right">Qty</th>
+                    <th className="px-4 py-2 text-right">Mat. Cost</th>
+                    <th className="px-4 py-2 text-right">Freight</th>
+                    <th className="px-4 py-2 text-right font-bold">Total</th>
+                    <th className="px-4 py-2 text-left">Buy</th>
+                    <th className="px-4 py-2 text-left">Receive</th>
+                    <th className="px-4 py-2 text-left font-bold">Pay</th>
+                    <th className="px-4 py-2 text-right">$/unit</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ipForecastPOs.map(po => {
+                    const cpu = po.qty > 0 ? (po.matCost + po.freight) / po.qty : 0;
+                    const fmtMo = (k:string) => { const [y,m]=k.split("-").map(Number); return new Date(y,m-1,1).toLocaleDateString("en",{month:"short",year:"2-digit"}); };
+                    return (
+                      <tr key={po.id} className="border-t border-border/60 hover:bg-muted/20">
+                        <td className="px-4 py-1.5 font-semibold" style={{color:"#1C2340"}}>{po.material}</td>
+                        <td className="px-4 py-1.5 text-right font-mono">{po.qty.toLocaleString()}</td>
+                        <td className="px-4 py-1.5 text-right font-mono">${Math.round(po.matCost).toLocaleString()}</td>
+                        <td className="px-4 py-1.5 text-right font-mono">${Math.round(po.freight).toLocaleString()}</td>
+                        <td className="px-4 py-1.5 text-right font-mono font-bold">${Math.round(po.matCost + po.freight).toLocaleString()}</td>
+                        <td className="px-4 py-1.5">{fmtMo(po.mBuy)}</td>
+                        <td className="px-4 py-1.5">{fmtMo(po.mRecv)}</td>
+                        <td className="px-4 py-1.5 font-bold">{fmtMo(po.mPay)}</td>
+                        <td className="px-4 py-1.5 text-right font-mono" style={{color:"#7C3AED"}}>{cpu > 0 ? `$${cpu.toFixed(4)}` : "—"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 
