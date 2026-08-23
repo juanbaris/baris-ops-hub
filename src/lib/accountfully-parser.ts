@@ -71,23 +71,30 @@ const PNL_MAP: Record<string, string> = {
   "Car Rental / Uber": "car_rental_uber",
   "Flights": "flights",
   "Hotel": "hotel",
-  "Parking & tolls": "parking_tolls",
-  "Vehicle gas & fuel": "vehicle_gas_fuel",
+  "Parking & tolls": "vehicle_expenses",
+  "Vehicle gas & fuel": "vehicle_expenses",
   "9000 Other Income": "other_income",
 };
 
-// Expense keys that should be stored as negative in pnl_detail
-const EXPENSE_KEYS = new Set([
+// Deduction keys: come NEGATIVE from Accountfully PDF → keep as-is (no sign change)
+// (These are under "4500 Deductions to Income" in the PDF)
+const DEDUCTION_KEYS = new Set([
   "consumer_returns", "distributor_fees", "dsd_programs", "kehe_allowance",
   "payment_terms", "promos", "trade_spend", "unfi_allowance", "returns_refunds",
-  "shipping_qty_var", "product_costs", "freight_in", "freight_out_actual",
+  "shipping_qty_var",
+]);
+
+// Cost/Expense keys: come POSITIVE from Accountfully PDF → ALWAYS negate (v = -v)
+// Credits (negative in PDF, e.g. trade show refund) get negated to positive = correct
+const COST_KEYS = new Set([
+  "product_costs", "freight_in", "freight_out_actual",
   "merchant_fees", "warehouse_fulfillment", "broker_commissions", "slotting_fees",
   "demos_merchandising", "digital_social", "events_tradeshows", "printing_promotional",
   "product_samples", "bank_charges", "dues_subscriptions", "rent", "utilities",
   "insurance", "meals_entertainment", "office_supplies", "contractors",
   "payroll_processing", "payroll_taxes", "salaries_operations", "accounting_finance",
   "business_consultation", "legal_fees", "quality_rd", "taxes_licenses",
-  "car_rental_uber", "flights", "hotel", "parking_tolls", "vehicle_gas_fuel",
+  "car_rental_uber", "flights", "hotel", "vehicle_expenses", "uncategorized",
 ]);
 
 // ─── BS label → bs_detail key mapping ────────────────────────────────────────
@@ -267,9 +274,11 @@ function parsePnl(pages: { items: TI[]; pageNum: number }[]): {
     const values = assignToColumns(row, colPositions);
     for (let i = 0; i < cols.months.length; i++) {
       let v = values[i] ?? 0;
-      // Ensure expenses are negative in pnl_detail
-      if (EXPENSE_KEYS.has(key) && v > 0) v = -v;
-      result[cols.months[i].period][key] = v;
+      // Deductions: already negative in PDF → keep as-is
+      // Costs/Expenses: positive in PDF → negate; credits (negative) → negate to positive
+      if (COST_KEYS.has(key)) v = -v;
+      // Use += to accumulate (e.g. parking + gas → vehicle_expenses)
+      result[cols.months[i].period][key] = (result[cols.months[i].period][key] ?? 0) + v;
     }
   }
 
@@ -344,7 +353,7 @@ function buildSummary(pnl: Record<string, number>) {
   const genExpTotal = (pnl.bank_charges ?? 0) + (pnl.dues_subscriptions ?? 0) + (pnl.rent ?? 0)
     + (pnl.utilities ?? 0) + (pnl.insurance ?? 0) + (pnl.meals_entertainment ?? 0) + (pnl.office_supplies ?? 0)
     + profSvcs + (pnl.quality_rd ?? 0) + (pnl.taxes_licenses ?? 0) + travel
-    + (pnl.parking_tolls ?? 0) + (pnl.vehicle_gas_fuel ?? 0) + (pnl.vehicle_expenses ?? 0);
+    + (pnl.vehicle_expenses ?? 0);
   const genExp = genExpTotal - team; // G&A minus payroll
   const totalExp = selling + mkt + team + genExp;
   const ebitda = gm + totalExp;
