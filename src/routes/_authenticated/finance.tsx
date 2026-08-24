@@ -502,39 +502,39 @@ const PL_ROWS: PLRow[] = [
     {id:"demos_merchandising",parentId:"g-7000",label:"Demos & Merchandising",kind:"item",indent:1,actualKey:"demos_merchandising",forecastFn:(c)=>c.fixedCostsK.demos_merchandising ?? 0},
     {id:"digital_social",parentId:"g-7000",label:"Digital & Social Media",kind:"item",indent:1,actualKey:"digital_social",forecastFn:(c)=>c.fixedCostsK.digital_social ?? 0},
     {id:"events_tradeshows",parentId:"g-7000",label:"Events / Trade Shows",kind:"item",indent:1,actualKey:"events_tradeshows",forecastFn:(c)=>c.fixedCostsK.events_tradeshows ?? 0},
-    {id:"printing_promotional",parentId:"g-7000",label:"Printing & Promotional",kind:"item",indent:1,actualKey:"printing_promotional",forecastFn:()=>0},
+    {id:"printing_promotional",parentId:"g-7000",label:"Printing & Promotional",kind:"item",indent:1,actualKey:"printing_promotional",forecastFn:(c)=>c.fixedCostsK.printing_promotional ?? 0},
     {id:"product_samples",parentId:"g-7000",label:"Product Samples",kind:"item",indent:1,actualKey:"product_samples",forecastFn:(c)=>c.fixedCostsK.product_samples ?? 0},
     {id:"t-7000",parentId:"g-7000",label:"Total 7000 Marketing",kind:"total",indent:1},
   {id:"g-8000",label:"8000 · General & Administrative",kind:"group",indent:0},
-    {id:"bank_charges",parentId:"g-8000",label:"Bank Charges & Fees",kind:"item",indent:1,actualKey:"bank_charges",forecastFn:()=>0},
+    {id:"bank_charges",parentId:"g-8000",label:"Bank Charges & Fees",kind:"item",indent:1,actualKey:"bank_charges",forecastFn:(c)=>c.fixedCostsK.bank_charges ?? -0.1},
     {id:"dues_subscriptions",parentId:"g-8000",label:"Dues & Subscriptions",kind:"item",indent:1,actualKey:"dues_subscriptions",forecastFn:(c)=>c.fixedCostsK.dues_subscriptions ?? -1.37},
     {id:"g-facility",parentId:"g-8000",label:"Facility Costs",kind:"group",indent:1},
-      {id:"rent",parentId:"g-facility",label:"Rent",kind:"item",indent:2,actualKey:"rent",forecastFn:()=>-0.558},
-      {id:"utilities",parentId:"g-facility",label:"Utilities",kind:"item",indent:2,actualKey:"utilities",forecastFn:()=>-0.32},
+      {id:"rent",parentId:"g-facility",label:"Rent",kind:"item",indent:2,actualKey:"rent",forecastFn:(c)=>c.fixedCostsK.rent ?? -0.56},
+      {id:"utilities",parentId:"g-facility",label:"Utilities",kind:"item",indent:2,actualKey:"utilities",forecastFn:(c)=>c.fixedCostsK.utilities ?? -0.32},
       {id:"t-facility",parentId:"g-facility",label:"Total Facility Costs",kind:"total",indent:2},
-    {id:"insurance",parentId:"g-8000",label:"Insurance",kind:"item",indent:1,actualKey:"insurance",forecastFn:()=>-0.97},
-    {id:"meals_entertainment",parentId:"g-8000",label:"Meals & Entertainment",kind:"item",indent:1,actualKey:"meals_entertainment",forecastFn:()=>0},
-    {id:"office_supplies",parentId:"g-8000",label:"Office Supplies",kind:"item",indent:1,actualKey:"office_supplies",forecastFn:()=>0},
+    {id:"insurance",parentId:"g-8000",label:"Insurance",kind:"item",indent:1,actualKey:"insurance",forecastFn:(c)=>c.fixedCostsK.insurance ?? -0.97},
+    {id:"meals_entertainment",parentId:"g-8000",label:"Meals & Entertainment",kind:"item",indent:1,actualKey:"meals_entertainment",forecastFn:(c)=>c.fixedCostsK.meals_entertainment ?? -0.5},
+    {id:"office_supplies",parentId:"g-8000",label:"Office Supplies",kind:"item",indent:1,actualKey:"office_supplies",forecastFn:(c)=>c.fixedCostsK.office_supplies ?? -0.05},
     {id:"g-payroll",parentId:"g-8000",label:"Payroll & Employee Related",kind:"group",indent:1},
-      {id:"contractors",parentId:"g-payroll",label:"Contractors",kind:"item",indent:2,actualKey:"contractors",forecastFn:()=>-2.56},
-      {id:"payroll_processing",parentId:"g-payroll",label:"Payroll Processing Fees",kind:"item",indent:2,actualKey:"payroll_processing",forecastFn:()=>-0.061},
-      {id:"payroll_taxes",parentId:"g-payroll",label:"Payroll Taxes",kind:"item",indent:2,actualKey:"payroll_taxes",forecastFn:()=>-1.15285},
-      {id:"salaries_operations",parentId:"g-payroll",label:"Salaries & Wages - Operations",kind:"item",indent:2,actualKey:"salaries_operations",forecastFn:()=>-15.07},
+      {id:"contractors",parentId:"g-payroll",label:"Contractors",kind:"item",indent:2,actualKey:"contractors",forecastFn:(c)=>c.fixedCostsK.contractors ?? -2.56},
+      {id:"payroll_processing",parentId:"g-payroll",label:"Payroll Processing Fees",kind:"item",indent:2,actualKey:"payroll_processing",forecastFn:(c)=>c.fixedCostsK.payroll_processing ?? -0.06},
+      {id:"payroll_taxes",parentId:"g-payroll",label:"Payroll Taxes",kind:"item",indent:2,actualKey:"payroll_taxes",forecastFn:(c)=>c.fixedCostsK.payroll_taxes ?? -1.15},
+      {id:"salaries_operations",parentId:"g-payroll",label:"Salaries & Wages - Operations",kind:"item",indent:2,actualKey:"salaries_operations",forecastFn:(c)=>c.fixedCostsK.salaries_operations ?? -15.07},
       {id:"t-payroll",parentId:"g-payroll",label:"Total Payroll & Employee Related",kind:"total",indent:2},
     {id:"g-profsvcs",parentId:"g-8000",label:"Professional Services",kind:"group",indent:1},
-      {id:"accounting_finance",parentId:"g-profsvcs",label:"Accounting & Finance",kind:"item",indent:2,actualKey:"accounting_finance",forecastFn:()=>-1.3},
-      {id:"business_consultation",parentId:"g-profsvcs",label:"Business Consultation",kind:"item",indent:2,actualKey:"business_consultation",forecastFn:()=>0},
-      {id:"legal_fees",parentId:"g-profsvcs",label:"Legal Fees",kind:"item",indent:2,actualKey:"legal_fees",forecastFn:()=>0},
+      {id:"accounting_finance",parentId:"g-profsvcs",label:"Accounting & Finance",kind:"item",indent:2,actualKey:"accounting_finance",forecastFn:(c)=>c.fixedCostsK.accounting_finance ?? -1.3},
+      {id:"business_consultation",parentId:"g-profsvcs",label:"Business Consultation",kind:"item",indent:2,actualKey:"business_consultation",forecastFn:(c)=>c.fixedCostsK.business_consultation ?? 0},
+      {id:"legal_fees",parentId:"g-profsvcs",label:"Legal Fees",kind:"item",indent:2,actualKey:"legal_fees",forecastFn:(c)=>c.fixedCostsK.legal_fees ?? 0},
       {id:"t-profsvcs",parentId:"g-profsvcs",label:"Total Professional Services",kind:"total",indent:2},
     {id:"quality_rd",parentId:"g-8000",label:"Quality and R&D",kind:"item",indent:1,actualKey:"quality_rd",forecastFn:(c)=>c.fixedCostsK.quality_rd ?? -0.42},
-    {id:"taxes_licenses",parentId:"g-8000",label:"Taxes & Licenses",kind:"item",indent:1,actualKey:"taxes_licenses",forecastFn:()=>0},
+    {id:"taxes_licenses",parentId:"g-8000",label:"Taxes & Licenses",kind:"item",indent:1,actualKey:"taxes_licenses",forecastFn:(c)=>c.fixedCostsK.taxes_licenses ?? 0},
     {id:"g-travel",parentId:"g-8000",label:"Travel",kind:"group",indent:1},
-      {id:"car_rental_uber",parentId:"g-travel",label:"Car Rental / Uber",kind:"item",indent:2,actualKey:"car_rental_uber",forecastFn:()=>0},
-      {id:"flights",parentId:"g-travel",label:"Flights",kind:"item",indent:2,actualKey:"flights",forecastFn:()=>0},
-      {id:"hotel",parentId:"g-travel",label:"Hotel",kind:"item",indent:2,actualKey:"hotel",forecastFn:()=>0},
+      {id:"car_rental_uber",parentId:"g-travel",label:"Car Rental / Uber",kind:"item",indent:2,actualKey:"car_rental_uber",forecastFn:(c)=>c.fixedCostsK.car_rental_uber ?? 0},
+      {id:"flights",parentId:"g-travel",label:"Flights",kind:"item",indent:2,actualKey:"flights",forecastFn:(c)=>c.fixedCostsK.flights ?? 0},
+      {id:"hotel",parentId:"g-travel",label:"Hotel",kind:"item",indent:2,actualKey:"hotel",forecastFn:(c)=>c.fixedCostsK.hotel ?? 0},
       {id:"t-travel",parentId:"g-travel",label:"Total Travel",kind:"total",indent:2},
-    {id:"uncategorized",parentId:"g-8000",label:"Uncategorized Expense",kind:"item",indent:1,actualKey:"uncategorized",forecastFn:()=>0},
-    {id:"vehicle_expenses",parentId:"g-8000",label:"Vehicle Expenses",kind:"item",indent:1,actualKey:"vehicle_expenses",forecastFn:()=>0},
+    {id:"uncategorized",parentId:"g-8000",label:"Uncategorized Expense",kind:"item",indent:1,actualKey:"uncategorized",forecastFn:(c)=>c.fixedCostsK.uncategorized ?? 0},
+    {id:"vehicle_expenses",parentId:"g-8000",label:"Vehicle Expenses",kind:"item",indent:1,actualKey:"vehicle_expenses",forecastFn:(c)=>c.fixedCostsK.vehicle_expenses ?? 0},
     {id:"t-8000",parentId:"g-8000",label:"Total 8000 General & Administrative",kind:"total",indent:1},
   {id:"t-expenses",label:"Total Expenses",kind:"total",indent:0,bold:true},
 
@@ -613,7 +613,7 @@ export function PNLTab({ realMonths, actuals, actualOnly }: { realMonths: number
       cogsPerUnit,
       logisticsPct,
       deductionPct,
-      fixedCostsK: FIXED_COSTS_BEST_ESTIMATE[monthNum] ?? {},
+      fixedCostsK: loadExpenseOverrides(),
     };
   }
 
@@ -1028,20 +1028,47 @@ export function PNLTab({ realMonths, actuals, actualOnly }: { realMonths: number
   );
 }
 
-// ─── Best Estimate fixed-cost lines that don't scale with sales (unchanged from budget) ──
-// $K per month-number (1=Jan..12=Dec), used for forecast months only.
-const FIXED_COSTS_BEST_ESTIMATE: Record<number, Record<string, number>> = {
-  7:  { broker_commissions:-10, slotting_fees:-0.37, demos_merchandising:-4.5, digital_social:-5, events_tradeshows:0, product_samples:-1.16, dues_subscriptions:-1.37, quality_rd:-1.62 },
-  8:  { broker_commissions:-10, slotting_fees:-0.37, demos_merchandising:0,   digital_social:-5, events_tradeshows:0, product_samples:-1.16, dues_subscriptions:-1.37, quality_rd:-0.42 },
-  9:  { broker_commissions:-10, slotting_fees:-0.74, demos_merchandising:0,   digital_social:-5, events_tradeshows:0, product_samples:-1.16, dues_subscriptions:-1.37, quality_rd:-0.42 },
-  10: { broker_commissions:-10, slotting_fees:-0.37, demos_merchandising:0,   digital_social:-5, events_tradeshows:-4, product_samples:-1.16, dues_subscriptions:-1.37, quality_rd:-1.62 },
-  11: { broker_commissions:-10, slotting_fees:-0.37, demos_merchandising:0,   digital_social:-5, events_tradeshows:0, product_samples:-1.16, dues_subscriptions:-1.37, quality_rd:-0.42 },
-  12: { broker_commissions:-10, slotting_fees:0,      demos_merchandising:0,   digital_social:-5, events_tradeshows:0, product_samples:-1.16, dues_subscriptions:-1.37, quality_rd:-0.42 },
+// ─── Editable SG&A expense assumptions ($K/month, negative = cost) ──────────
+// All forecast expense lines in one place. Editable via Assumptions → Expenses tab.
+// Persisted in localStorage so changes stick forever.
+const DEFAULT_EXPENSE_K: Record<string, number> = {
+  broker_commissions: -10,
+  slotting_fees: -0.5,
+  demos_merchandising: -4,
+  digital_social: -5,
+  events_tradeshows: -2,
+  product_samples: -2,
+  bank_charges: -0.1,
+  dues_subscriptions: -1.4,
+  rent: -0.56,
+  utilities: -0.32,
+  insurance: -0.97,
+  meals_entertainment: -0.5,
+  office_supplies: -0.05,
+  contractors: -9.79,
+  payroll_processing: -0.06,
+  payroll_taxes: -1.15,
+  salaries_operations: -15.07,
+  accounting_finance: -2.6,
+  business_consultation: -1,
+  legal_fees: -0.4,
+  quality_rd: -0.42,
+  taxes_licenses: 0,
+  car_rental_uber: -0.7,
+  flights: -0.8,
+  hotel: -0.5,
+  vehicle_expenses: 0,
+  uncategorized: 0,
 };
+// Sum ≈ -$60K/month
 
-// Total fixed SG&A (payroll, rent, insurance, travel, etc.) not covered by FIXED_COSTS_BEST_ESTIMATE
-// overrides above — these are constant month to month per the Best Estimate.
-const FIXED_SGA_CONSTANT_K = -0.558-0.32-0.97-2.56-0.061-1.15285-15.07-1.3; // rent+utilities+insurance+contractors+payroll_processing+payroll_taxes+salaries+accounting
+function loadExpenseOverrides(): Record<string, number> {
+  try { const r = localStorage.getItem("baris.finance.expenseK"); return r ? { ...DEFAULT_EXPENSE_K, ...JSON.parse(r) } : { ...DEFAULT_EXPENSE_K }; }
+  catch { return { ...DEFAULT_EXPENSE_K }; }
+}
+function saveExpenseOverrides(v: Record<string, number>) {
+  try { localStorage.setItem("baris.finance.expenseK", JSON.stringify(v)); } catch {}
+}
 
 // Pure function: given a forecast context, compute this month's Net Income in $K.
 // Mirrors PNLTab's getValue logic exactly, so Balance Sheet cash roll-forward stays consistent with the P&L.
@@ -1050,12 +1077,9 @@ function computeMonthlyNetIncome(ctx: ForecastContext): number {
     - ctx.grossSales * ctx.deductionPct
     - (ctx.unitsSold * ctx.cogsPerUnit) / 1000
     - ctx.grossSales * ctx.logisticsPct;
-  const scalingSGA = (ctx.fixedCostsK.broker_commissions ?? -10) + (ctx.fixedCostsK.slotting_fees ?? 0)
-    + (ctx.fixedCostsK.demos_merchandising ?? 0) + (ctx.fixedCostsK.digital_social ?? -5)
-    + (ctx.fixedCostsK.events_tradeshows ?? 0) + (ctx.fixedCostsK.product_samples ?? -1.16)
-    + (ctx.fixedCostsK.dues_subscriptions ?? -1.37) + (ctx.fixedCostsK.quality_rd ?? -0.42);
-  const noi = grossProfit + scalingSGA + FIXED_SGA_CONSTANT_K;
-  return noi; // other_income assumed 0 for forecast months (matches PNLTab default)
+  const totalSGA = Object.values(ctx.fixedCostsK).reduce((s, v) => s + (v ?? 0), 0);
+  const noi = grossProfit + totalSGA;
+  return noi; // other_income assumed 0 for forecast months
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1117,7 +1141,7 @@ function buildFinanceForecast(
     const ctx: ForecastContext = {
       grossSales: gsK, unitsSold: gsK>0 ? Math.round(gsK*1000/37) : 0,
       cogsPerUnit: get('cogs_per_unit',22.27), logisticsPct: get('logistics_pct_of_gross',9.8)/100,
-      deductionPct: dedPct, fixedCostsK: FIXED_COSTS_BEST_ESTIMATE[i+1] ?? {},
+      deductionPct: dedPct, fixedCostsK: loadExpenseOverrides(),
     };
     return computeMonthlyNetIncome(ctx);
   };
@@ -1273,27 +1297,70 @@ function buildFinanceForecast(
 
 
 function AssumptionsModal({ assumptions, onClose }: { assumptions: ReturnType<typeof useFinanceAssumptions>; onClose: () => void }) {
+  const [tab, setTab] = useState<"forecast"|"expenses">("forecast");
   const keys: { key: AssumptionKey; hint: string }[] = [
     { key: "cogs_per_unit", hint: "$/case — used as Units Sold × this value = Product Costs forecast" },
     { key: "logistics_pct_of_gross", hint: "% of Gross Sales — splits into Freight In/Out + Warehouse" },
     { key: "deduction_pct_overall", hint: "% of Gross Sales — splits into Distributor Fees / DSD / KeHE / Payment Terms / Promos / UNFI" },
-    { key: "deduction_pct_kehe", hint: "Reference only — KeHE-specific deduction rate from H1 real mix" },
-    { key: "deduction_pct_unfi", hint: "Reference only — UNFI-specific deduction rate from H1 real mix" },
-    { key: "deduction_pct_rainforest", hint: "Reference only — Rainforest-specific deduction rate (18% distribution fee + 60-day terms)" },
-    { key: "sales_mix_kehe", hint: "Reference only — % of gross sales $ through KeHE (H1 2026 pipeline)" },
-    { key: "sales_mix_unfi", hint: "Reference only — % of gross sales $ through UNFI (H1 2026 pipeline)" },
-    { key: "sales_mix_rainforest", hint: "Reference only — % of gross sales $ through Rainforest (H1 2026 pipeline)" },
+    { key: "deduction_pct_kehe", hint: "Reference only — KeHE-specific deduction rate" },
+    { key: "deduction_pct_unfi", hint: "Reference only — UNFI-specific deduction rate" },
+    { key: "deduction_pct_rainforest", hint: "Reference only — Rainforest-specific deduction rate" },
   ];
   const [edits, setEdits] = useState<Record<string, string>>({});
+  const [expenseEdits, setExpenseEdits] = useState<Record<string, number>>(() => loadExpenseOverrides());
 
   async function handleSave(key: AssumptionKey) {
-    const raw = edits[key];
-    if (raw == null) return;
-    const val = parseFloat(raw);
-    if (isNaN(val)) return;
+    const raw = edits[key]; if (raw == null) return;
+    const val = parseFloat(raw); if (isNaN(val)) return;
     await assumptions.saveOverride(key, val);
     setEdits(prev => { const n = { ...prev }; delete n[key]; return n; });
   }
+
+  function handleExpenseSave() {
+    saveExpenseOverrides(expenseEdits);
+    onClose();
+    window.location.reload(); // reload to pick up new values in all tabs
+  }
+
+  const EXPENSE_GROUPS: { label: string; items: { key: string; label: string }[] }[] = [
+    { label: "SELLING", items: [
+      { key: "broker_commissions", label: "Broker Commissions" },
+      { key: "slotting_fees", label: "Slotting Fees" },
+    ]},
+    { label: "MARKETING & TRADE", items: [
+      { key: "demos_merchandising", label: "Demos & Merchandising" },
+      { key: "digital_social", label: "Digital & Social Media" },
+      { key: "events_tradeshows", label: "Events / Trade Shows" },
+      { key: "product_samples", label: "Product Samples" },
+    ]},
+    { label: "TEAM", items: [
+      { key: "salaries_operations", label: "Salaries & Wages" },
+      { key: "contractors", label: "Contractors" },
+      { key: "payroll_taxes", label: "Payroll Taxes" },
+      { key: "payroll_processing", label: "Payroll Processing" },
+    ]},
+    { label: "PROFESSIONAL SERVICES", items: [
+      { key: "accounting_finance", label: "Accounting & Finance" },
+      { key: "business_consultation", label: "Business Consultation" },
+      { key: "legal_fees", label: "Legal Fees" },
+    ]},
+    { label: "TRAVEL", items: [
+      { key: "car_rental_uber", label: "Car Rental / Uber" },
+      { key: "flights", label: "Flights" },
+      { key: "hotel", label: "Hotel" },
+    ]},
+    { label: "OTHER G&A", items: [
+      { key: "rent", label: "Rent" },
+      { key: "utilities", label: "Utilities" },
+      { key: "insurance", label: "Insurance" },
+      { key: "dues_subscriptions", label: "Dues & Subscriptions" },
+      { key: "meals_entertainment", label: "Meals & Entertainment" },
+      { key: "office_supplies", label: "Office Supplies" },
+      { key: "quality_rd", label: "Quality and R&D" },
+      { key: "bank_charges", label: "Bank Charges" },
+    ]},
+  ];
+  const expTotal = Object.values(expenseEdits).reduce((s, v) => s + Math.abs(v ?? 0), 0);
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
@@ -1302,52 +1369,83 @@ function AssumptionsModal({ assumptions, onClose }: { assumptions: ReturnType<ty
           <h2 className="font-bold text-sm" style={{color:"#1C2340"}}>Forecast Assumptions</h2>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-lg">✕</button>
         </div>
-        <p className="text-xs text-muted-foreground">
-          These drive every forecast (non-Accountfully) month in the P&L. They auto-recalculate from real
-          data whenever a new month is loaded via "Upload Accountfully PDF" — unless you override manually here.
-        </p>
-        <div className="space-y-3">
-          {keys.map(({ key, hint }) => {
-            const row = assumptions.rows[key];
-            if (!row) return null;
-            const displayVal = edits[key] ?? String(row.value);
-            return (
-              <div key={key} className="rounded-xl border border-border p-3">
-                <div className="flex items-center justify-between gap-2">
-                  <div>
-                    <div className="text-xs font-semibold" style={{color:"#1C2340"}}>{row.label}</div>
-                    <div className="text-[10px] text-muted-foreground mt-0.5">{hint}</div>
-                  </div>
-                  <div className="flex items-center gap-1.5 flex-shrink-0">
-                    <input
-                      type="number" step="0.01" value={displayVal}
-                      onChange={e => setEdits(prev => ({ ...prev, [key]: e.target.value }))}
-                      className="w-20 rounded-lg border border-border px-2 py-1 text-xs text-right font-mono"
-                    />
-                    <span className="text-[10px] text-muted-foreground w-4">{row.unit === "percent" ? "%" : row.unit === "currency" ? "$" : ""}</span>
-                    <button onClick={() => handleSave(key)}
-                      className="rounded-lg bg-[#1C2340] text-white px-2 py-1 text-[10px] font-semibold hover:opacity-90">
-                      Save
-                    </button>
+        <div className="flex gap-1 border-b border-border">
+          {[{id:"forecast",label:"Revenue & COGS"},{id:"expenses",label:"Monthly Expenses"}].map(t => (
+            <button key={t.id} onClick={() => setTab(t.id as any)}
+              className={`px-3 py-1.5 text-xs font-semibold border-b-2 ${tab === t.id ? "border-[#A3224A] text-[#A3224A]" : "border-transparent text-muted-foreground"}`}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {tab === "forecast" && (
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">
+              These drive every forecast month in the P&L. They auto-recalculate from real data unless you override.
+            </p>
+            {keys.map(({ key, hint }) => {
+              const row = assumptions.rows[key]; if (!row) return null;
+              const displayVal = edits[key] ?? String(row.value);
+              return (
+                <div key={key} className="rounded-xl border border-border p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <div className="text-xs font-semibold" style={{color:"#1C2340"}}>{row.label}</div>
+                      <div className="text-[10px] text-muted-foreground mt-0.5">{hint}</div>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      <input type="number" step="0.01" value={displayVal}
+                        onChange={e => setEdits(prev => ({ ...prev, [key]: e.target.value }))}
+                        className="w-20 rounded-lg border border-border px-2 py-1 text-xs text-right font-mono" />
+                      <span className="text-[10px] text-muted-foreground w-4">{row.unit === "percent" ? "%" : "$"}</span>
+                      <button onClick={() => handleSave(key)} className="rounded-lg bg-[#1C2340] text-white px-2 py-1 text-[10px] font-semibold hover:opacity-90">Save</button>
+                    </div>
                   </div>
                 </div>
-                <div className="flex items-center justify-between mt-1.5 text-[10px] text-muted-foreground">
-                  <span>
-                    {row.is_manual_override
-                      ? <span className="text-amber-600">✎ Manual override</span>
-                      : <span className="text-emerald-600">✓ Auto from real data</span>}
-                    {row.auto_calculated_value != null && ` · Auto value: ${row.auto_calculated_value.toFixed(2)}`}
-                  </span>
-                  {row.is_manual_override && (
-                    <button onClick={() => assumptions.resetToAuto(key)} className="underline hover:text-foreground">
-                      Reset to auto
-                    </button>
-                  )}
+              );
+            })}
+          </div>
+        )}
+
+        {tab === "expenses" && (
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">
+              Monthly SG&A for forecast months ($K). Enter as positive numbers. These persist forever — edit once, stays set.
+            </p>
+            <div className="rounded-xl border-2 border-[#A3224A] bg-[#FFF5F7] px-4 py-2 flex justify-between items-center">
+              <span className="text-sm font-bold" style={{color:"#A3224A"}}>Monthly Total SG&A</span>
+              <span className="text-lg font-bold font-mono" style={{color:"#A3224A"}}>${expTotal.toFixed(1)}K</span>
+            </div>
+            {EXPENSE_GROUPS.map(g => (
+              <div key={g.label}>
+                <p className="text-[9px] uppercase tracking-wider font-bold mb-1.5" style={{color:"#A3224A"}}>{g.label}</p>
+                <div className="space-y-1">
+                  {g.items.map(item => (
+                    <div key={item.key} className="flex items-center justify-between gap-2 py-0.5">
+                      <span className="text-xs text-muted-foreground">{item.label}</span>
+                      <div className="flex items-center gap-1">
+                        <span className="text-[10px] text-muted-foreground">$</span>
+                        <input type="number" step="0.1"
+                          value={Math.abs(expenseEdits[item.key] ?? 0).toFixed(1)}
+                          onChange={e => setExpenseEdits(prev => ({ ...prev, [item.key]: -Math.abs(parseFloat(e.target.value) || 0) }))}
+                          className="w-16 rounded border border-border px-1.5 py-0.5 text-xs text-right font-mono" />
+                        <span className="text-[10px] text-muted-foreground">K</span>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
-            );
-          })}
-        </div>
+            ))}
+            <div className="flex gap-2 pt-2">
+              <button onClick={handleExpenseSave} className="rounded-lg bg-[#1C2340] text-white px-4 py-2 text-xs font-semibold hover:opacity-90 flex-1">
+                💾 Save Expense Assumptions
+              </button>
+              <button onClick={() => { setExpenseEdits({...DEFAULT_EXPENSE_K}); }} className="rounded-lg border border-border px-3 py-2 text-xs text-muted-foreground hover:bg-muted">
+                ↺ Reset
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1907,11 +2005,11 @@ function EBITDATab({ actuals }: { actuals: Record<string, any> }) {
     const net = gross + ded;
     const cogsTotal = -(casesPerMonth * cogs)/1000 - gross * logPct/100;
     const gp = net + cogsTotal;
-    // scaling SG&A (from Best Estimate) + fixed SG&A — same rule as the forecast model
-    const fc = FIXED_COSTS_BEST_ESTIMATE[monthNum] ?? {};
-    const scalingSGA = (fc.broker_commissions ?? -10)+(fc.slotting_fees ?? 0)+(fc.demos_merchandising ?? 0)+(fc.digital_social ?? -5)+(fc.events_tradeshows ?? 0)+(fc.product_samples ?? -1.16)+(fc.dues_subscriptions ?? -1.37)+(fc.quality_rd ?? -0.42);
-    const ebitda = gp + scalingSGA + FIXED_SGA_CONSTANT_K;
-    return { gross, ded, net, cogsTotal, gp, sga: scalingSGA + FIXED_SGA_CONSTANT_K, ebitda };
+    // SG&A from expense assumptions
+    const expK = loadExpenseOverrides();
+    const totalSGA = Object.values(expK).reduce((s, v) => s + (v ?? 0), 0);
+    const ebitda = gp + totalSGA;
+    return { gross, ded, net, cogsTotal, gp, sga: totalSGA, ebitda };
   }
 
   const realMonths = PERIODS.filter(p => actuals[p]?.pnl_detail).length;
@@ -1936,16 +2034,13 @@ function EBITDATab({ actuals }: { actuals: Record<string, any> }) {
   const annualGross = T(r=>r.gross), annualNet = T(r=>r.net), annualGP = T(r=>r.gp), annualEbitda = T(r=>r.ebitda);
   const gmPct = annualNet ? annualGP/annualNet*100 : 0;
 
-  // Annual breakeven: cases/month (applied to forecast months) that make annual EBITDA = 0,
-  // holding real months fixed. Solve by scanning contribution.
+  // Annual breakeven
   const fcMonths = MONTHS.map((_,i)=>i).filter(i=>!isReal(i));
   const realEbitdaSum = MONTHS.map((_,i)=>i).filter(i=>isReal(i)).reduce((s,i)=>s+(rows12[i].ebitda),0);
-  const contribPerCaseK = (price*(1-dedPct/100) - cogs - price*logPct/100)/1000; // $K contribution per case
-  const fixedPerMonthK = -(( -10) + FIXED_SGA_CONSTANT_K ) * -1; // approx scaling+fixed; compute exactly below
-  // exact fixed per forecast month (avg of scaling + constant)
-  const fixedFcK = fcMonths.reduce((s,i)=>{ const fc=FIXED_COSTS_BEST_ESTIMATE[i+1]??{}; const sc=(fc.broker_commissions??-10)+(fc.slotting_fees??0)+(fc.demos_merchandising??0)+(fc.digital_social??-5)+(fc.events_tradeshows??0)+(fc.product_samples??-1.16)+(fc.dues_subscriptions??-1.37)+(fc.quality_rd??-0.42); return s + -(sc+FIXED_SGA_CONSTANT_K); },0);
-  // annual EBITDA = realEbitdaSum + Σ_fc (contribPerCaseK*cases − fixedPerMonth) = 0
-  const totalFixedFc = fixedFcK; // $K over all forecast months (positive number)
+  const contribPerCaseK = (price*(1-dedPct/100) - cogs - price*logPct/100)/1000;
+  const expOverrides = loadExpenseOverrides();
+  const fixedPerFcMonthK = -Object.values(expOverrides).reduce((s, v) => s + (v ?? 0), 0); // positive
+  const totalFixedFc = fixedPerFcMonthK * fcMonths.length;
   const beCasesPerMonth = (contribPerCaseK > 0 && fcMonths.length>0)
     ? Math.ceil(((totalFixedFc - realEbitdaSum) / contribPerCaseK) / fcMonths.length)
     : null;
