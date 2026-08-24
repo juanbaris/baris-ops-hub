@@ -9,30 +9,32 @@ export const IMPLIED_ANNUAL_2026 = 71680;
 // Reproduces exact Excel values: baseCases = annualBase/12 × seasonIdx × promoMult
 // Sum = 12.0 → annual total preserved. Editable in Seasonality tab.
 export const DEFAULT_SEASON_IDX: Record<number, number> = {
-  1:  0.6945, // Jan
-  2:  0.7987, // Feb
-  3:  0.9375, // Mar
-  4:  1.0244, // Apr
-  5:  1.0852, // May
-  6:  1.1112, // Jun
-  7:  1.0591, // Jul
-  8:  0.8682, // Aug
-  9:  1.1460, // Sep
-  10: 1.0678, // Oct
-  11: 1.0678, // Nov
-  12: 1.1395, // Dec
+  1:  0.56,  // Jan
+  2:  0.67,  // Feb
+  3:  0.84,  // Mar
+  4:  1.01,  // Apr
+  5:  1.12,  // May
+  6:  1.29,  // Jun
+  7:  1.40,  // Jul
+  8:  1.29,  // Aug
+  9:  1.12,  // Sep
+  10: 1.01,  // Oct
+  11: 0.90,  // Nov
+  12: 0.79,  // Dec
 };
 
-// Growth rates vs 2025 actuals, display reference only.
-export const GROWTH = { Pessimistic: -0.30, Normal: 0.43, Optimistic: 0.80 };
+// Growth rates vs pessimistic baseline.
+export const GROWTH = { Pessimistic: 0, Normal: 0.43, Optimistic: 0.80 };
 export type Scenario = keyof typeof GROWTH;
 
-// Annual base cases per scenario (12-month total Aug 2026 → Jul 2027).
-// Monthly = annualBase / 12 × seasonIdx × promoMult
+// Annual base cases per scenario (12-month forecast Aug 2026 → Jul 2027).
+// Pessimistic calibrated so FY2026 (Jan-Jul actual ~$1.33M + Aug-Dec forecast) ≈ $2.0M.
+// Aug@129% ≈ 4,324 cases ≈ $160K. Base monthly ≈ 3,352 cases → annual ≈ 40,230.
+// Normal = Pessimistic × 1.43; Optimistic = Pessimistic × 1.80.
 export const SCENARIO_ANNUAL_CASES: Record<Scenario, number> = {
-  Pessimistic: 53284,   // Budget baseline → $2.2M full-year 2026 (real Jan-Jul + forecast Aug-Dec)
-  Normal:      71680,   // → $2.5M full-year 2026
-  Optimistic:  90075,   // → $2.8M full-year 2026
+  Pessimistic: 40230,   // → ~$2.0M full-year 2026 (real Jan-Jul + forecast Aug-Dec)
+  Normal:      57529,   // → ~$2.5M (43% above pessimistic)
+  Optimistic:  72414,   // → ~$3.2M (80% above pessimistic)
 };
 
 // Default promo multipliers — 1 per forecast month (1.0 = no promo effect)
