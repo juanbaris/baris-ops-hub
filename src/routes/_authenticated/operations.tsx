@@ -2518,6 +2518,10 @@ const IP_TO_PROC_MAT: Record<string,string> = {
   "Sealers":"Sealers (Momar)",
   "Cases":"Master Cases (8u)",
 };
+// Reverse mapping: procurement material name → IP movement material name
+const PROC_TO_IP_MAT: Record<string,string> = Object.fromEntries(
+  Object.entries(IP_TO_PROC_MAT).map(([ip, proc]) => [proc, ip])
+);
 type PayTerm = "t0"|"lead"|"lead1m";
 const PAY_TERM_LABEL: Record<PayTerm,string> = { t0:"On order (t=0)", lead:"On arrival (t=lead)", lead1m:"30d after receipt" };
 const PAY_TERM_KEY = "baris.ops.payTerms.v1";
@@ -2888,7 +2892,7 @@ function calcProdSchedule(
   }
   return {plan,stockProj,ingNeeded,ingByMonth};
 }
-function ProcurementTab({ movements, orders, baseline, ipMovements }: { movements: FPRow[]; orders: any[]; baseline: BaselineRow[]; ipMovements: IPRow[] }) {
+function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: { movements: FPRow[]; orders: any[]; baseline: BaselineRow[]; ipMovements: IPRow[]; onAdded: () => void }) {
   const [procTab, setProcTab] = useState<ProcSubTab>("schedule");
   const [safetyWoh,  setSafetyWoh]  = useState(()=>{
     try { const v = window.localStorage.getItem("baris.ops.safetyWoh.v1"); if (v) return Number(v); } catch {} return 6;
@@ -3058,6 +3062,53 @@ function ProcurementTab({ movements, orders, baseline, ipMovements }: { movement
     setIpFcstNextId(n => n + 1);
   }
   function removeIpForecastPO(id: number) { setIpForecastPOs(prev => prev.filter(p => p.id !== id)); }
+
+  // ─── Confirm forecast PO → create real IP movement ───
+  const [confirmingPO, setConfirmingPO] = useState<IPForecastPO | null>(null);
+  const [confirmSaving, setConfirmSaving] = useState(false);
+  async function confirmIpForecastPO() {
+    if (!confirmingPO) return;
+    const po = confirmingPO;
+    // Map procurement material name to IP movement material name
+    const ipMat = PROC_TO_IP_MAT[po.material] ?? po.material;
+    const isRaw = RAW_MATS.includes(po.material);
+    const cpu = po.qty > 0 ? (po.matCost + po.freight) / po.qty : 0;
+    // Estimate receive date (1st of receive month)
+    const estRecv = po.mRecv ? `${po.mRecv}-01` : null;
+    // Estimate payment date (1st of pay month)
+    const estPay = po.mPay ? `${po.mPay}-01` : null;
+
+    const payload: any = {
+      movement_date: po.mBuy ? `${po.mBuy}-01` : ymd(),
+      material: ipMat,
+      vendor: null,
+      type: "In",
+      quantity: po.qty,
+      unit: isRaw ? "lbs" : "units",
+      lot_number: null,
+      concept: "Procurement",
+      notes: `Confirmed from Forecast PO #${po.id}`,
+      warehouse: "Heinlein",
+      total_price: po.matCost || null,
+      shipping_price: po.freight || null,
+      other_costs: null,
+      price_per_unit: po.qty > 0 ? po.matCost / po.qty : null,
+      cogs_per_unit: cpu || null,
+      estimated_receive_date: estRecv,
+      estimated_payment_date: estPay,
+    };
+
+    setConfirmSaving(true);
+    const { error } = await supabase.from("ip_movements").insert(payload);
+    setConfirmSaving(false);
+    if (error) { toast.error("Failed to create IP movement: " + error.message); return; }
+    toast.success(`✅ PO #${po.id} confirmed → IP movement created for ${po.qty.toLocaleString()} ${isRaw?"lbs":"units"} of ${ipMat}`);
+    // Remove from forecast
+    setIpForecastPOs(prev => prev.filter(p => p.id !== po.id));
+    setConfirmingPO(null);
+    onAdded(); // Refresh IP movements
+  }
+
   function updateIpForecastPO(id: number, field: string, value: any) {
     setIpForecastPOs(prev => prev.map(p => {
       if (p.id !== id) return p;
@@ -4300,7 +4351,10 @@ function ProcurementTab({ movements, orders, baseline, ipMovements }: { movement
                       <td className="px-3 py-1.5"><input type="month" value={po.mRecv} onChange={e => updateIpForecastPO(po.id, "mRecv", e.target.value)} className={`${inp} w-36`} /></td>
                       <td className="px-3 py-1.5"><input type="month" value={po.mPay} onChange={e => updateIpForecastPO(po.id, "mPay", e.target.value)} className={`${inp} w-36`} /></td>
                       <td className="px-3 py-1.5">
-                        <button onClick={() => removeIpForecastPO(po.id)} className="rounded bg-red-600 px-2 py-0.5 text-[10px] font-semibold text-white">✕</button>
+                        <div className="flex gap-1">
+                          <button onClick={() => setConfirmingPO(po)} className="rounded bg-emerald-600 px-2 py-0.5 text-[10px] font-semibold text-white" title="Confirm PO → create real IP movement">✓</button>
+                          <button onClick={() => removeIpForecastPO(po.id)} className="rounded bg-red-600 px-2 py-0.5 text-[10px] font-semibold text-white" title="Delete forecast PO">✕</button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -4320,6 +4374,69 @@ function ProcurementTab({ movements, orders, baseline, ipMovements }: { movement
               )}
             </table>
           </div>
+
+          {/* ── Confirm PO modal ── */}
+          {confirmingPO && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setConfirmingPO(null)}>
+              <div className="rounded-2xl border border-border bg-card shadow-2xl w-[480px] max-w-[90vw]" onClick={e => e.stopPropagation()}>
+                <div className="px-5 py-4 border-b border-border" style={{backgroundColor:"#1C2340",borderRadius:"16px 16px 0 0"}}>
+                  <p className="text-sm font-bold text-white">✅ Confirm PO #{confirmingPO.id} → Create IP Movement</p>
+                  <p className="text-xs text-white/60 mt-1">Review and adjust values before confirming. This creates a real IP movement (ordered, not yet received).</p>
+                </div>
+                <div className="p-5 space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Material</label>
+                      <select value={confirmingPO.material} onChange={e => setConfirmingPO({...confirmingPO, material: e.target.value})} className={inp}>
+                        {RAW_MATS.map(m => <option key={m} value={m}>{m}</option>)}
+                      </select>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Quantity ({RAW_MATS.includes(confirmingPO.material) ? "lbs" : "units"})</label>
+                      <input type="number" value={confirmingPO.qty || ""} onChange={e => setConfirmingPO({...confirmingPO, qty: Number(e.target.value)||0})} className={`${inp} text-right`} />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Material Cost ($)</label>
+                      <input type="number" value={confirmingPO.matCost || ""} onChange={e => setConfirmingPO({...confirmingPO, matCost: Number(e.target.value)||0})} className={`${inp} text-right`} />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Freight ($)</label>
+                      <input type="number" value={confirmingPO.freight || ""} onChange={e => setConfirmingPO({...confirmingPO, freight: Number(e.target.value)||0})} className={`${inp} text-right`} />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Buy Date (order date)</label>
+                      <input type="month" value={confirmingPO.mBuy} onChange={e => setConfirmingPO({...confirmingPO, mBuy: e.target.value})} className={inp} />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Est. Receive Date</label>
+                      <input type="month" value={confirmingPO.mRecv} onChange={e => setConfirmingPO({...confirmingPO, mRecv: e.target.value})} className={inp} />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Est. Payment Date</label>
+                      <input type="month" value={confirmingPO.mPay} onChange={e => setConfirmingPO({...confirmingPO, mPay: e.target.value})} className={inp} />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">$/unit (all-in)</label>
+                      <p className="font-mono text-sm font-bold" style={{color:"#7C3AED", padding:"4px 8px"}}>
+                        {confirmingPO.qty > 0 ? `$${((confirmingPO.matCost + confirmingPO.freight) / confirmingPO.qty).toFixed(4)}` : "—"}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-2 text-xs text-emerald-800">
+                    <strong>IP movement material name:</strong> {PROC_TO_IP_MAT[confirmingPO.material] ?? confirmingPO.material}<br/>
+                    <strong>Will create:</strong> In · Procurement · {confirmingPO.qty.toLocaleString()} {RAW_MATS.includes(confirmingPO.material) ? "lbs" : "units"} · ${(confirmingPO.matCost + confirmingPO.freight).toLocaleString()} total · Ordered (not received, not paid)
+                  </div>
+                </div>
+                <div className="px-5 py-3 border-t border-border flex justify-end gap-2">
+                  <button onClick={() => setConfirmingPO(null)} className="rounded-lg border border-border px-4 py-1.5 text-xs font-semibold text-muted-foreground hover:bg-muted">Cancel</button>
+                  <button onClick={confirmIpForecastPO} disabled={confirmSaving || confirmingPO.qty <= 0}
+                    className="rounded-lg px-4 py-1.5 text-xs font-semibold text-white disabled:opacity-50" style={{backgroundColor:"#16a34a"}}>
+                    {confirmSaving ? "Creating…" : "✅ Confirm & Create IP Movement"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
         );
       })()}
@@ -4705,7 +4822,7 @@ function OperationsPage() {
       {tab === "ipsummary"   && <IPSummaryTab movements={ipMovements} />}
       {tab === "ip"          && <IPInputTab movements={ipMovements} loading={loadingIP} onAdded={reload} />}
       {tab === "production"  && <ProductionTab fpMovements={fpMovements} ipMovements={ipMovements} onAdded={reload} />}
-      {tab === "procurement" && <ProcurementTab movements={fpMovements} orders={orders} baseline={baseline} ipMovements={ipMovements} />}
+      {tab === "procurement" && <ProcurementTab movements={fpMovements} orders={orders} baseline={baseline} ipMovements={ipMovements} onAdded={reload} />}
     </div>
   );
 }
