@@ -51,7 +51,7 @@ export function RunwayTab() {
   const cashCanvas = useRef<HTMLCanvasElement>(null);
 
   const totals = useMemo(() => {
-    const t = { ingreso: 0, ingresoProj: 0, deduccion: 0, deduccionProj: 0, logistica: 0, logisticaProj: 0, cogs: 0, cogsProj: 0, fijo: 0, blando: 0 };
+    const t = { ingreso: 0, ingresoProj: 0, deduccion: 0, deduccionProj: 0, logistica: 0, logisticaProj: 0, cogs: 0, cogsProj: 0, expenses: 0 };
     for (const p of periods) {
       t.ingreso += p.ingresoDefinido + p.ingresoEstimado;
       t.ingresoProj += p.ingresoProyectado;
@@ -61,8 +61,8 @@ export function RunwayTab() {
       t.logisticaProj += p.logisticaProyectado;
       t.cogs += p.cogsDefinido;
       t.cogsProj += p.cogsProyectado;
-      t.fijo += p.fijo;
-      t.blando += p.blando;
+      t.expenses += p.expenses;
+      
     }
     return t;
   }, [periods]);
@@ -77,7 +77,7 @@ export function RunwayTab() {
       const key = `${p.start.getFullYear()}-${p.start.getMonth()}`;
       const label = p.start.toLocaleDateString("en-US", { month: "short", year: "2-digit" });
       const iReal = p.ingresoDefinido + p.ingresoEstimado;
-      const gReal = p.deduccionDefinido + p.deduccionEstimado + p.logisticaDefinido + p.logisticaEstimado + p.cogsDefinido + p.fijo + p.blando + p.eventos;
+      const gReal = p.deduccionDefinido + p.deduccionEstimado + p.logisticaDefinido + p.logisticaEstimado + p.cogsDefinido + p.expenses + p.eventos;
       const iProj = p.ingresoProyectado;
       const gProj = p.deduccionProyectado + p.logisticaProyectado + p.cogsProyectado;
       if (!map[key]) map[key] = { label, ingresoReal: 0, ingresoProj: 0, gastoReal: 0, gastoProj: 0, cashEnd: 0, order: p.start.getTime() };
@@ -174,8 +174,7 @@ export function RunwayTab() {
         <KPI label="Collections (Projected)" value={fmt(totals.ingresoProj)} />
         <KPI label="IP & Production (Confirmed)" value={fmt(totals.cogs)} negative />
         <KPI label="IP & Production (Projected)" value={fmt(totals.cogsProj)} negative />
-        <KPI label="Total Fixed" value={fmt(totals.fijo)} negative />
-        <KPI label="Total Soft Costs" value={fmt(totals.blando)} negative />
+        <KPI label="Total Expenses" value={fmt(totals.expenses)} negative />
         <KPI label="Projected Ending Cash" value={fmt(cashEndFinal)} />
         <KPI label="Minimum Projected Cash" value={fmt(cashMin)} negative={cashMin < 0} />
       </div>
@@ -199,8 +198,8 @@ export function RunwayTab() {
             <tr>
               <th className="px-3 py-2 bg-white" colSpan={2} />
               <th colSpan={5} className="text-center text-white font-bold text-sm py-1.5" style={{ backgroundColor: "#2E7D4F" }}>COLLECTIONS</th>
-              <th colSpan={8} className="text-center text-white font-bold text-sm py-1.5" style={{ backgroundColor: "#A3224A" }}>EXPENSES</th>
-              <th className="px-3 py-2 bg-white" colSpan={3} />
+              <th colSpan={7} className="text-center text-white font-bold text-sm py-1.5" style={{ backgroundColor: "#A3224A" }}>EXPENSES</th>
+              <th className="px-3 py-2 bg-white" colSpan={2} />
             </tr>
             <tr>
               <th className="px-3 py-1 bg-white" colSpan={2} />
@@ -208,9 +207,9 @@ export function RunwayTab() {
               <th colSpan={2} className="text-center text-[10px] font-bold py-1" style={{ backgroundColor: "#FBE1E7", color: "#1C2340" }}>Deductions</th>
               <th colSpan={2} className="text-center text-[10px] font-bold py-1" style={{ backgroundColor: "#FDEBD3", color: "#1C2340" }}>Logistics</th>
               <th colSpan={2} className="text-center text-[10px] font-bold py-1" style={{ backgroundColor: "#E2E7F5", color: "#1C2340" }}>IP &amp; Production</th>
-              <th colSpan={2} className="text-center text-[10px] font-bold py-1" style={{ backgroundColor: "#EDEAE3", color: "#1C2340" }}>Expenses</th>
+              <th colSpan={1} className="text-center text-[10px] font-bold py-1" style={{ backgroundColor: "#EDEAE3", color: "#1C2340" }}>Expenses</th>
               <th className="text-center text-[10px] font-bold py-1" style={{ backgroundColor: "#FFF6D6", color: "#1C2340" }}>Events</th>
-              <th className="px-3 py-1 bg-white" colSpan={3} />
+              <th className="px-3 py-1 bg-white" colSpan={2} />
             </tr>
             <tr className="bg-muted/50 border-b border-border">
               <th className="text-left px-3 py-2 text-[10px] uppercase text-muted-foreground">Week</th>
@@ -224,8 +223,7 @@ export function RunwayTab() {
               <th className="text-right px-2 py-2 text-[10px]" style={{ color: "#7C3AED" }}>Projected</th>
               <th className="text-right px-2 py-2 text-[10px]">Confirmed</th>
               <th className="text-right px-2 py-2 text-[10px]" style={{ color: "#7C3AED" }}>Projected</th>
-              <th className="text-right px-2 py-2 text-[10px]">Fixed</th>
-              <th className="text-right px-2 py-2 text-[10px]">Soft</th>
+              <th className="text-right px-2 py-2 text-[10px]">Expenses</th>
               <th className="text-right px-2 py-2 text-[10px]">Special</th>
               <th className="text-right px-2 py-2 text-[10px] uppercase text-muted-foreground">Weekly Net</th>
               <th className="text-right px-2 py-2 text-[10px] uppercase text-muted-foreground">Ending Cash</th>
@@ -250,8 +248,7 @@ export function RunwayTab() {
                 <td className="text-right px-2 py-1.5 font-mono">{fmtOrBlank(p.cogsDefinido)}</td>
                 <td className="text-right px-2 py-1.5 font-mono" style={{ color: "#7C3AED" }}>{fmtOrBlank(p.cogsProyectado)}</td>
                 {/* Expenses */}
-                <td className="text-right px-2 py-1.5 font-mono">{fmtOrBlank(p.fijo)}</td>
-                <td className="text-right px-2 py-1.5 font-mono">{fmtOrBlank(p.blando)}</td>
+                <td className="text-right px-2 py-1.5 font-mono">{fmtOrBlank(p.expenses)}</td>
                 <td className="text-right px-2 py-1.5 font-mono">{fmtOrBlank(p.eventos)}</td>
                 {/* Weekly Net: Real portion + Projected portion */}
                 <td className="text-right px-2 py-1.5 font-mono font-semibold whitespace-nowrap">
@@ -276,8 +273,7 @@ export function RunwayTab() {
               <td className="text-right px-2 py-2 font-mono" style={{ color: "#7C3AED" }}>{fmt(periods.reduce((s, p) => s + p.logisticaProyectado, 0))}</td>
               <td className="text-right px-2 py-2 font-mono">{fmt(periods.reduce((s, p) => s + p.cogsDefinido, 0))}</td>
               <td className="text-right px-2 py-2 font-mono" style={{ color: "#7C3AED" }}>{fmt(periods.reduce((s, p) => s + p.cogsProyectado, 0))}</td>
-              <td className="text-right px-2 py-2 font-mono">{fmt(periods.reduce((s, p) => s + p.fijo, 0))}</td>
-              <td className="text-right px-2 py-2 font-mono">{fmt(periods.reduce((s, p) => s + p.blando, 0))}</td>
+              <td className="text-right px-2 py-2 font-mono">{fmt(periods.reduce((s, p) => s + p.expenses, 0))}</td>
               <td className="text-right px-2 py-2 font-mono">{fmt(periods.reduce((s, p) => s + p.eventos, 0))}</td>
               <td className="text-right px-2 py-2 font-mono">{fmt(periods.reduce((s, p) => s + p.neto, 0))}</td>
               <td className="text-right px-2 py-2 font-mono">{fmt(cashEndFinal)}</td>
