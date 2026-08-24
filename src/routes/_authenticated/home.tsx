@@ -43,16 +43,21 @@ const C_REPLAN = "#111827";  // replan (Sales normal scenario + committed sets) 
 
 // ─── Grouped bar chart: actual / budget / open ───────────────────────────────
 // Drawn in a large coordinate space (1000 wide) so labels stay crisp when scaled.
-function GroupedBarChart({ data, height = 300, highlightIndex, actualLabel = "Invoiced sales", budgetLabel = "Budget · Pessimistic (Best Estimate)" }: {
+function GroupedBarChart({ data, height = 300, highlightIndex, stackOpenAtHighlight = false, actualLabel = "Invoiced sales", budgetLabel = "Budget · Pessimistic (Best Estimate)" }: {
   data: { label: string; actual: number; budget: number; open?: number; replan?: number }[];
   height?: number;
   highlightIndex?: number;
+  stackOpenAtHighlight?: boolean;
   actualLabel?: string;
   budgetLabel?: string;
 }) {
   const hasOpen = data.some(d => (d.open ?? 0) > 0);
   const hasReplan = data.some(d => (d.replan ?? 0) > 0);
-  const rawMax = Math.max(...data.flatMap(d => [d.actual, d.budget, d.open ?? 0, d.replan ?? 0]), 1);
+  const rawMax = Math.max(...data.flatMap((d, i) => {
+    const vals = [d.actual, d.budget, d.open ?? 0, d.replan ?? 0];
+    if (stackOpenAtHighlight && i === highlightIndex) vals.push(d.actual + (d.open ?? 0));
+    return vals;
+  }), 1);
   // round axis max up to a nice number
   const step = Math.pow(10, Math.floor(Math.log10(rawMax))) / 2;
   const max = Math.ceil(rawMax / step) * step;
@@ -87,26 +92,47 @@ function GroupedBarChart({ data, height = 300, highlightIndex, actualLabel = "In
         {data.map((d, i) => {
           const gx = axisW + i * colW + (colW - groupW) / 2;
           const isHi = highlightIndex === i;
+          const doStack = stackOpenAtHighlight && isHi;
           const bars = [
             { v: d.actual, c: C_ACTUAL },
             { v: d.budget, c: C_BUDGET },
             ...(hasOpen ? [{ v: d.open ?? 0, c: C_OPEN }] : []),
             ...(hasReplan ? [{ v: d.replan ?? 0, c: C_REPLAN }] : []),
           ];
+          const openVal = d.open ?? 0;
+          const actualH = (d.actual / max) * height;
+          const openH = (openVal / max) * height;
           return (
             <g key={d.label}>
               {bars.map((b, bi) => {
                 if (b.v <= 0) return null;
+                // At highlighted month: skip the open bar in its normal slot (it's stacked)
+                if (doStack && b.c === C_OPEN) return null;
                 const h = (b.v / max) * height;
                 const x = gx + bi * (barW + gap);
                 return (
                   <g key={bi}>
                     <rect x={x} y={top + height - h} width={barW} height={h} rx={2} fill={b.c} />
-                    <text x={x + barW / 2} y={top + height - h - 7} textAnchor="middle" fontSize={12}
-                      fill="#475569" fontFamily="ui-monospace, monospace">{fmt$(b.v)}</text>
+                    {/* For stacked month: show actual label between green & orange */}
+                    {doStack && b.c === C_ACTUAL && openVal > 0 ? (
+                      <text x={x + barW / 2} y={top + height - h + 14} textAnchor="middle" fontSize={11}
+                        fill="#fff" fontWeight={600} fontFamily="ui-monospace, monospace">{fmt$(b.v)}</text>
+                    ) : (
+                      <text x={x + barW / 2} y={top + height - h - 7} textAnchor="middle" fontSize={12}
+                        fill="#475569" fontFamily="ui-monospace, monospace">{fmt$(b.v)}</text>
+                    )}
                   </g>
                 );
               })}
+              {/* Stacked open bar on top of actual */}
+              {doStack && openVal > 0 && (
+                <g>
+                  <rect x={gx} y={top + height - actualH - openH} width={barW} height={openH}
+                    rx={2} fill={C_OPEN} />
+                  <text x={gx + barW / 2} y={top + height - actualH - openH - 7} textAnchor="middle"
+                    fontSize={12} fill="#475569" fontFamily="ui-monospace, monospace">{fmt$(openVal)}</text>
+                </g>
+              )}
               <text x={gx + groupW / 2} y={top + height + 21} textAnchor="middle"
                 fontSize={14} fill={isHi ? "#1C2340" : "#64748B"} fontWeight={isHi ? 700 : 400}>
                 {d.label}
@@ -391,23 +417,29 @@ function HomePage() {
     const byMonth: Record<number, number> = {};
     for (const o of invoiced) {
       if (!o.invoice_date || !o.invoice_date.startsWith("2026")) continue;
-      const m = parseInt(o.invoice_date.slice(5, 7));
-      byMonth[m] = (byMonth[m] ?? 0) + (Number(o.gross_sales) || 0);
+      const mn = parseInt(o.invoice_date.slice(5, 7));
+      byMonth[mn] = (byMonth[mn] ?? 0) + (Number(o.gross_sales) || 0);
     }
-    // Open orders = everything not yet invoiced, bucketed by expected ship date (fallback PO date)
+    // Open orders bucketed by expected ship date (for non-current months)
     const openByMonth: Record<number, number> = {};
+    // ALL open orders total (for current month — stacked on invoiced)
+    let allOpenTotal = 0;
     for (const o of orders) {
       if (o.status === "Invoiced") continue;
+      allOpenTotal += Number(o.gross_sales) || 0;
       const d = o.ship_est_date || o.po_date;
       if (!d || !d.startsWith("2026")) continue;
       const mn = parseInt(d.slice(5, 7));
       openByMonth[mn] = (openByMonth[mn] ?? 0) + (Number(o.gross_sales) || 0);
     }
+    const curMonth0 = today.getMonth(); // 0-based
     return MONTHS.map((label, i) => ({
       label,
       actual: Math.round(byMonth[i + 1] ?? 0),
       budget: Math.round(effBudget[i + 1] ?? 0),
-      open: Math.round(openByMonth[i + 1] ?? 0),
+      open: i === curMonth0
+        ? Math.round(allOpenTotal)
+        : Math.round(openByMonth[i + 1] ?? 0),
       replan: Math.round(replan2026[i + 1] ?? 0),
     }));
   }, [invoiced, orders, effBudget, replan2026]);
@@ -587,7 +619,7 @@ function HomePage() {
               <h3 className="text-sm font-semibold" style={{ color: "#1C2340" }}>Monthly Sales · Invoiced vs Best Estimate vs Open vs REPLAN 2026</h3>
               <span className="text-xs text-muted-foreground">$ USD · gross sales</span>
             </div>
-            <GroupedBarChart data={monthlySales} height={320} highlightIndex={today.getMonth()} />
+            <GroupedBarChart data={monthlySales} height={320} highlightIndex={today.getMonth()} stackOpenAtHighlight />
           </div>
 
           {/* Sales by Quarter */}
