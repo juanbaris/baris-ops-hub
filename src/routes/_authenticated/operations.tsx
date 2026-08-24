@@ -93,7 +93,7 @@ function calcStockFromBaseline(
 import { FPSummaryTab } from "@/components/fp/fp-summary-tab";
 import { LotMasterTab } from "@/components/fp/lot-master-tab";
 
-type OpsTab = "stock" | "fp" | "ip" | "production" | "cogs" | "procurement" | "summary" | "lots" | "ipsummary";
+type OpsTab = "stock" | "fp" | "ip" | "production" | "procurement" | "summary" | "lots" | "ipsummary";
 
 function ymd(d = new Date()) { return d.toISOString().slice(0,10); }
 // ─── FP Stock Tab ─────────────────────────────────────────────────────────────
@@ -2950,6 +2950,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements }: { movement
     });
   };
   const resetIngInv = (mat: string) => setIngInvOverride(prev => { const n = {...prev}; delete n[mat]; return n; });
+  const resetAllIngInv = () => { setIngInvOverride({}); toast.success("Stock reset to IP Summary values"); };
   // ── Payment terms per material (drives Shopping "Paid by" & Payments timing) ──
   const [payTerms, setPayTerms] = useState<Record<string,PayTerm>>(() => {
     try { const raw = window.localStorage.getItem(PAY_TERM_KEY); if (raw) return JSON.parse(raw); } catch {}
@@ -3285,11 +3286,39 @@ function ProcurementTab({ movements, orders, baseline, ipMovements }: { movement
   // Tolling per case
   const tollingPerCase = (prodCosts.tolling_per_unit ?? 0) * UNITS_PER_CASE_BOM;
 
+  // Build IP ordered items (not yet received) from IP movements with estimated receive dates
+  const ipOrderedAsPOs = useMemo(() => {
+    const items: IPForecastPO[] = [];
+    let nextId = -1;
+    for (const m of (ipMovements ?? [])) {
+      const proc = IP_TO_PROC_MAT[(m as any).material];
+      if (!proc) continue;
+      const received = (m as any).received ?? false;
+      if (m.type === "In" && !received) {
+        const q = Number(m.quantity || 0);
+        if (q <= 0) continue;
+        const d = new Date(m.movement_date);
+        const mk = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+        items.push({
+          id: nextId--,
+          material: proc, qty: q,
+          matCost: q * (ingPrices[proc] ?? 0), freight: 0,
+          mBuy: mk, mRecv: mk,
+          mPay: "9999-12", // won't affect payments calculation
+        });
+      }
+    }
+    return items;
+  }, [ipMovements, ingPrices]);
+
+  // Combine all POs for FIFO simulation: ordered (real) + forecast
+  const allPOsForFifo = useMemo(() => [...ipOrderedAsPOs, ...ipForecastPOs], [ipOrderedAsPOs, ipForecastPOs]);
+
   const fifoResults = useMemo(() => runFifoForecast(
-    ipStartForForecast, fpStartForForecast, ipForecastPOs,
+    ipStartForForecast, fpStartForForecast, allPOsForFifo,
     prodPlanForForecast, salesFcstForForecast, bomQty,
     tollingPerCase, ALL_INGS, SKUS as unknown as string[],
-  ), [ipStartForForecast, fpStartForForecast, ipForecastPOs, prodPlanForForecast, salesFcstForForecast, bomQty, tollingPerCase]);
+  ), [ipStartForForecast, fpStartForForecast, allPOsForFifo, prodPlanForForecast, salesFcstForForecast, bomQty, tollingPerCase]);
 
   // Shopping list: PO forecast totals per material
   const poForecastByMat = useMemo(() => {
@@ -3828,8 +3857,9 @@ function ProcurementTab({ movements, orders, baseline, ipMovements }: { movement
       {/* ── RAW MATERIALS ── */}
       {procTab==="raw_materials" && (
         <div className="space-y-3">
-          <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-700">
-            💡 Material master — UOM, scrap %, overfill %, lead time, price &amp; current stock. Scrap and overfill inflate purchase quantities in the Shopping List &amp; Payments; lead time drives the "order by" date. Stock feeds the Shopping List. All editable.
+          <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-700 flex items-center justify-between">
+            <span>💡 Material master — scrap %, overfill %, lead time, price &amp; current stock. Stock pulls live from I&amp;P Summary; once you edit a value it stays fixed. All editable.</span>
+            <button onClick={resetAllIngInv} className="rounded border border-blue-300 bg-white px-3 py-1 text-[10px] font-semibold text-blue-700 hover:bg-blue-100 whitespace-nowrap ml-3">↻ Reset stock to IP Summary</button>
           </div>
           <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
             <table className="w-full text-sm min-w-max">
@@ -4154,17 +4184,46 @@ function ProcurementTab({ movements, orders, baseline, ipMovements }: { movement
       })()}
 
       {/* ── IP FORECAST PURCHASES ── */}
-      {procTab==="ip_forecast" && (
+      {procTab==="ip_forecast" && (() => {
+        // Compute "needed" filtered by shopScope (reusing existing state)
+        const scopeLabel = shopScope === "next" ? "Next run" : shopScope === "3m" ? "Next 6 months" : "All 12 months";
+        const scopeRange: [number,number] | null = (() => {
+          if (shopScope === "next") { const idx = totalByMonth.findIndex(t=>t>0); return idx >= 0 ? [idx,idx] : null; }
+          if (shopScope === "3m") return [0, Math.min(5, FORECAST_MONTHS_OPS.length - 1)];
+          return [0, FORECAST_MONTHS_OPS.length - 1];
+        })();
+        const neededFiltered: Record<string, number> = {};
+        if (scopeRange) {
+          for (const [mat, arr] of Object.entries(ingByMonth)) {
+            let s = 0; for (let i = scopeRange[0]; i <= scopeRange[1]; i++) s += arr[i] ?? 0;
+            if (s > 0) neededFiltered[mat] = s;
+          }
+        }
+        const scopeCases = scopeRange ? totalByMonth.slice(scopeRange[0], scopeRange[1]+1).reduce((a,b)=>a+b,0) : 0;
+
+        return (
         <div className="space-y-4">
           {/* Shopping list helper */}
           <div className="rounded-2xl border-2 border-blue-200 bg-blue-50 shadow-sm p-4">
-            <p className="text-sm font-bold text-blue-900 mb-2">🛒 Quick Reference: What you need vs what you have</p>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm font-bold text-blue-900">🛒 What you need vs what you have</p>
+              <div className="flex items-center gap-1">
+                {([["next","Next run"],["3m","6 months"],["all","12 months"]] as const).map(([id,label])=>(
+                  <button key={id}
+                    className={`rounded-full px-3 py-1 text-[10px] font-semibold transition-colors ${shopScope===id?"bg-blue-700 text-white":"bg-white text-blue-700 border border-blue-300 hover:bg-blue-100"}`}
+                    onClick={()=>setShopScope(id as any)}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p className="text-[10px] text-blue-600 mb-2">Scope: <strong>{scopeLabel}</strong> · {scopeCases.toLocaleString()} cases</p>
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
                   <tr className="text-[10px] uppercase tracking-wide text-blue-700 border-b border-blue-200">
                     <th className="px-3 py-2 text-left">Material</th>
-                    <th className="px-3 py-2 text-right">Needed (all prod)</th>
+                    <th className="px-3 py-2 text-right">Needed ({scopeLabel})</th>
                     <th className="px-3 py-2 text-right">IP Stock</th>
                     <th className="px-3 py-2 text-right">IP Ordered</th>
                     <th className="px-3 py-2 text-right" style={{color:"#7C3AED"}}>PO Forecast</th>
@@ -4172,8 +4231,8 @@ function ProcurementTab({ movements, orders, baseline, ipMovements }: { movement
                   </tr>
                 </thead>
                 <tbody>
-                  {RAW_MATS.filter(mat => (ingNeeded[mat] ?? 0) > 0).map(mat => {
-                    const needed = Math.round(ingNeeded[mat] ?? 0);
+                  {RAW_MATS.filter(mat => (neededFiltered[mat] ?? 0) > 0).map(mat => {
+                    const needed = Math.round(neededFiltered[mat] ?? 0);
                     const stock = parseInt(ingInv[mat]) || 0;
                     const ordered = Math.round(ipOrdered[mat] ?? 0);
                     const poFcst = Math.round(poForecastByMat[mat] ?? 0);
@@ -4262,7 +4321,8 @@ function ProcurementTab({ movements, orders, baseline, ipMovements }: { movement
             </table>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* ── IP STOCK FORECAST (FIFO) ── */}
       {procTab==="ip_stock_fcst" && (() => {
@@ -4610,7 +4670,6 @@ function OperationsPage() {
     { id: "ipsummary",   label: "I&P Summary",          emoji: "🧪" },
     { id: "ip",          label: "I&P Movements",        emoji: "🧴" },
     { id: "production",  label: "Production",           emoji: "🏭" },
-    { id: "cogs",        label: "COGS Simulator",       emoji: "💰" },
     { id: "procurement", label: "Procurement Planning", emoji: "📅" },
   ];
 
@@ -4646,7 +4705,6 @@ function OperationsPage() {
       {tab === "ipsummary"   && <IPSummaryTab movements={ipMovements} />}
       {tab === "ip"          && <IPInputTab movements={ipMovements} loading={loadingIP} onAdded={reload} />}
       {tab === "production"  && <ProductionTab fpMovements={fpMovements} ipMovements={ipMovements} onAdded={reload} />}
-      {tab === "cogs"        && <COGSSimulatorTab />}
       {tab === "procurement" && <ProcurementTab movements={fpMovements} orders={orders} baseline={baseline} ipMovements={ipMovements} />}
     </div>
   );
