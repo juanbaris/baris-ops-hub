@@ -110,29 +110,46 @@ function GroupedBarChart({ data, height = 300, highlightIndex, stackOpenAtHighli
                 if (doStack && b.c === C_OPEN) return null;
                 const h = (b.v / max) * height;
                 const x = gx + bi * (barW + gap);
+                // For stacked month: skip the default label on actual — we draw custom labels below
+                const skipLabel = doStack && b.c === C_ACTUAL;
                 return (
                   <g key={bi}>
                     <rect x={x} y={top + height - h} width={barW} height={h} rx={2} fill={b.c} />
-                    {/* For stacked month: show actual label between green & orange */}
-                    {doStack && b.c === C_ACTUAL && openVal > 0 ? (
-                      <text x={x + barW / 2} y={top + height - h + 14} textAnchor="middle" fontSize={11}
-                        fill="#fff" fontWeight={600} fontFamily="ui-monospace, monospace">{fmt$(b.v)}</text>
-                    ) : (
+                    {!skipLabel && (
                       <text x={x + barW / 2} y={top + height - h - 7} textAnchor="middle" fontSize={12}
                         fill="#475569" fontFamily="ui-monospace, monospace">{fmt$(b.v)}</text>
                     )}
                   </g>
                 );
               })}
-              {/* Stacked open bar on top of actual */}
-              {doStack && openVal > 0 && (
-                <g>
-                  <rect x={gx} y={top + height - actualH - openH} width={barW} height={openH}
-                    rx={2} fill={C_OPEN} />
-                  <text x={gx + barW / 2} y={top + height - actualH - openH - 7} textAnchor="middle"
-                    fontSize={12} fill="#475569" fontFamily="ui-monospace, monospace">{fmt$(openVal)}</text>
-                </g>
-              )}
+              {/* Stacked open bar on top of actual + custom labels */}
+              {doStack && (() => {
+                const x = gx; // same x as actual bar
+                return (
+                  <g>
+                    {/* Orange open bar stacked on green */}
+                    {openVal > 0 && (
+                      <rect x={x} y={top + height - actualH - openH} width={barW} height={openH}
+                        rx={2} fill={C_OPEN} />
+                    )}
+                    {/* Open value label above the stack */}
+                    {openVal > 0 && (
+                      <text x={x + barW / 2} y={top + height - actualH - openH - 8} textAnchor="middle"
+                        fontSize={12} fill={C_OPEN} fontWeight={700} fontFamily="ui-monospace, monospace">
+                        {fmt$(openVal)}
+                      </text>
+                    )}
+                    {/* Actual value label — positioned at the junction between green & orange */}
+                    {d.actual > 0 && (
+                      <text x={x + barW / 2} y={top + height - actualH - (openVal > 0 ? 2 : 8)} textAnchor="middle"
+                        fontSize={11} fill="#1C2340" fontWeight={700} fontFamily="ui-monospace, monospace"
+                        dominantBaseline={openVal > 0 ? "hanging" : "auto"}>
+                        {fmt$(d.actual)}
+                      </text>
+                    )}
+                  </g>
+                );
+              })()}
               <text x={gx + groupW / 2} y={top + height + 21} textAnchor="middle"
                 fontSize={14} fill={isHi ? "#1C2340" : "#64748B"} fontWeight={isHi ? 700 : 400}>
                 {d.label}
@@ -420,26 +437,18 @@ function HomePage() {
       const mn = parseInt(o.invoice_date.slice(5, 7));
       byMonth[mn] = (byMonth[mn] ?? 0) + (Number(o.gross_sales) || 0);
     }
-    // Open orders bucketed by expected ship date (for non-current months)
-    const openByMonth: Record<number, number> = {};
-    // ALL open orders total (for current month — stacked on invoiced)
+    // ALL open orders total — shown stacked on current month only
     let allOpenTotal = 0;
     for (const o of orders) {
       if (o.status === "Invoiced") continue;
       allOpenTotal += Number(o.gross_sales) || 0;
-      const d = o.ship_est_date || o.po_date;
-      if (!d || !d.startsWith("2026")) continue;
-      const mn = parseInt(d.slice(5, 7));
-      openByMonth[mn] = (openByMonth[mn] ?? 0) + (Number(o.gross_sales) || 0);
     }
     const curMonth0 = today.getMonth(); // 0-based
     return MONTHS.map((label, i) => ({
       label,
       actual: Math.round(byMonth[i + 1] ?? 0),
       budget: Math.round(effBudget[i + 1] ?? 0),
-      open: i === curMonth0
-        ? Math.round(allOpenTotal)
-        : Math.round(openByMonth[i + 1] ?? 0),
+      open: i === curMonth0 ? Math.round(allOpenTotal) : 0,
       replan: Math.round(replan2026[i + 1] ?? 0),
     }));
   }, [invoiced, orders, effBudget, replan2026]);
