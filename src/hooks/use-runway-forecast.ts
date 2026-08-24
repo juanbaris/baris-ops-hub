@@ -83,8 +83,7 @@ export type RunwayPeriod = {
   cogsDefinido: number;
   cogsProyectado: number;
   // Expenses
-  fijo: number;
-  blando: number;
+  expenses: number;
   eventos: number;
   // Nets
   netoReal: number;
@@ -284,7 +283,7 @@ export function useRunwayForecast(nWeeks = 20, scenario: Scenario = "Normal") {
       deduccionDefinido: 0, deduccionEstimado: 0, deduccionProyectado: 0,
       logisticaDefinido: 0, logisticaEstimado: 0, logisticaProyectado: 0,
       cogsDefinido: 0, cogsProyectado: 0,
-      fijo: 0, blando: 0, eventos: 0,
+      expenses: 0, eventos: 0,
     }));
 
     // ── Pipeline PO events ──
@@ -391,27 +390,28 @@ export function useRunwayForecast(nWeeks = 20, scenario: Scenario = "Normal") {
       buckets[i].logisticaProyectado = overlapCases > 0 ? -Math.round(overlapCases * settings.logistics_fallback_per_case) : 0;
     }
 
-    // ── Fixed costs: day1 / eom of every month touched by the horizon ──
+    // ── Monthly SG&A Expenses: placed at end of each month ──
+    // Reads from the same localStorage source as P&L expense assumptions
+    let monthlyExpenseK = 0;
+    try {
+      const raw = window.localStorage.getItem("baris.finance.expenseK");
+      const exp = raw ? JSON.parse(raw) : null;
+      if (exp) monthlyExpenseK = Object.values(exp as Record<string,number>).reduce((s: number, v: any) => s + Math.abs(Number(v) || 0), 0);
+    } catch {}
+    if (monthlyExpenseK === 0) monthlyExpenseK = 60; // default $60K/month if no overrides
     const horizonStart = periodDefs[0].start;
     const horizonEnd = periodDefs[periodDefs.length - 1].end;
-    const day1Total = fixedCosts.filter((f) => f.timing === "day1").reduce((s, f) => s + Number(f.amount), 0);
-    const eomTotal = fixedCosts.filter((f) => f.timing === "eom").reduce((s, f) => s + Number(f.amount), 0);
     {
       let cursor = firstDayOfMonth(horizonStart);
       while (cursor <= horizonEnd) {
-        const d1 = cursor;
         const eom = lastDayOfMonth(cursor);
-        if (d1 >= horizonStart) { const idx = findPeriodIndex(d1); if (idx != null) buckets[idx].fijo += day1Total; }
-        if (eom >= horizonStart && eom <= horizonEnd) { const idx = findPeriodIndex(eom); if (idx != null) buckets[idx].fijo += eomTotal; }
+        if (eom >= horizonStart && eom <= horizonEnd) {
+          const idx = findPeriodIndex(eom);
+          if (idx != null) buckets[idx].expenses = -(monthlyExpenseK * 1000); // $K → $, negative = outflow
+        }
         cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
       }
     }
-
-    // ── Blando: prorated weekly for weeks, prorated by day-count for the gap ──
-    const weeklyBlando = settings.blando_monthly / 4.345;
-    for (let i = 1; i < periodDefs.length; i++) buckets[i].blando = weeklyBlando;
-    const gapDays = Math.round((periodDefs[0].end.getTime() - periodDefs[0].start.getTime()) / MS_DAY) + 1;
-    buckets[0].blando = (settings.blando_monthly / 30) * gapDays;
 
     // ── Special events ──
     for (const ev of events) {
@@ -427,7 +427,7 @@ export function useRunwayForecast(nWeeks = 20, scenario: Scenario = "Normal") {
     for (let i = 0; i < periodDefs.length; i++) {
       const b = buckets[i];
       const netoReal = b.ingresoDefinido + b.ingresoEstimado + b.deduccionDefinido + b.deduccionEstimado
-        + b.logisticaDefinido + b.logisticaEstimado + b.cogsDefinido + b.fijo + b.blando + b.eventos;
+        + b.logisticaDefinido + b.logisticaEstimado + b.cogsDefinido + b.expenses + b.eventos;
       const netoProyectado = b.ingresoProyectado + b.deduccionProyectado + b.logisticaProyectado + b.cogsProyectado;
       const neto = netoReal + netoProyectado;
       const cashStart = cash;
