@@ -7,6 +7,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import LogisticsForecastTab, { ForecastRateCards, SpendByMonthChart } from "./logistics-forecast-tab";
 import { useLogisticsForecast } from "@/hooks/use-logistics-forecast";
+import InvoicesTab from "./invoices-tab";
 import {
   calcLogistics, norm, PALLET_COLS,
   type Accessorial, type DcMapping, type KeheRate, type LineageTariff, type LogisticsCost,
@@ -122,7 +123,7 @@ function TextInput({ value, onSave, width = "w-48", placeholder }: { value: stri
 
 // ─── main ─────────────────────────────────────────────────────────────────────
 export default function LogisticsTab({ orders }: { orders: Order[] }) {
-  const [sub, setSub] = useState<"pipeline" | "rates" | "dashboard" | "forecast">("pipeline");
+  const [sub, setSub] = useState<"pipeline" | "rates" | "dashboard" | "forecast" | "invoices">("pipeline");
   const [book, setBook] = useState<RateBook>({ mapping: [], tariffs: [], surcharges: null, kehe: [], accessorial: null });
   const [loading, setLoading] = useState(true);
 
@@ -150,6 +151,7 @@ export default function LogisticsTab({ orders }: { orders: Order[] }) {
 
   const subTabs = [
     { id: "pipeline", label: "Pipeline" },
+    { id: "invoices", label: "Facturas" },
     { id: "rates", label: "Rate Cards" },
     { id: "dashboard", label: "Dashboard" },
     { id: "forecast", label: "Logistics Forecast" },
@@ -169,6 +171,7 @@ export default function LogisticsTab({ orders }: { orders: Order[] }) {
 
       {loading ? <p className="p-8 text-center text-muted-foreground">Loading rates…</p>
         : sub === "pipeline" ? <PipelineView priced={priced} />
+        : sub === "invoices" ? <InvoicesTab orders={orders} />
         : sub === "rates" ? <RateCards book={book} orders={orders} reload={reload} priced={priced} />
         : sub === "forecast" ? <LogisticsForecastTab priced={priced} />
         : <DashboardView priced={priced} />}
