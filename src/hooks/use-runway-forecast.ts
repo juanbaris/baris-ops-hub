@@ -356,34 +356,35 @@ export function useRunwayForecast(nWeeks = 20, scenario: Scenario = "Normal") {
     // Approach: compute projected PER MONTH first, then distribute to weeks pro-rata.
     const forecastByMonth: Record<string, { revenue: number; cases: number }> = {};
     for (const fr of salesForecast) {
-      forecastByMonth[`${fr.year}-${fr.month}`] = { revenue: fr.revenue, cases: fr.totalCases };
+      forecastByMonth[mk2(fr.year, fr.month)] = { revenue: fr.revenue, cases: fr.totalCases };
     }
 
+    // Helper: zero-padded month key for correct string comparison
+    const mk2 = (y: number, m: number) => `${y}-${String(m).padStart(2, "0")}`;
+
     // Group confirmed+estimated revenue by their SALES month (= collection month - 1)
-    // We use the pipeline's invoice/ship date (not collection date) as the sales month
     const pipelineByMonth: Record<string, number> = {};
     for (const o of orders) {
       const shipOrInv = o.ship_est_date || o.invoice_date || o.po_date;
       if (!shipOrInv) continue;
       const d = parseDate(shipOrInv);
       if (!d) continue;
-      const mk = `${d.getFullYear()}-${d.getMonth() + 1}`;
+      const mk = mk2(d.getFullYear(), d.getMonth() + 1);
       pipelineByMonth[mk] = (pipelineByMonth[mk] ?? 0) + Number(o.gross_sales ?? 0);
     }
 
     // For each forecast month, compute how much projected collections to show
     const projByCollectionMonth: Record<string, { rev: number; cases: number }> = {};
     const now = new Date();
-    const currentSalesMonth = `${now.getFullYear()}-${now.getMonth() + 1}`;
+    const currentSalesMonth = mk2(now.getFullYear(), now.getMonth() + 1);
 
     for (const fr of salesForecast) {
-      const salesMk = `${fr.year}-${fr.month}`;
+      const salesMk = mk2(fr.year, fr.month);
       const collMonth = new Date(fr.year, fr.month, 1); // collection = sales month + 1
-      const collMk = `${collMonth.getFullYear()}-${collMonth.getMonth() + 1}`;
+      const collMk = mk2(collMonth.getFullYear(), collMonth.getMonth() + 1);
       const fcRev = fr.revenue;
       const fcCases = fr.totalCases;
 
-      // Is this sales month in the past, current, or future?
       const isPast = salesMk < currentSalesMonth;
       const isCurrent = salesMk === currentSalesMonth;
 
@@ -408,7 +409,7 @@ export function useRunwayForecast(nWeeks = 20, scenario: Scenario = "Normal") {
       const days = Math.round((p.end.getTime() - p.start.getTime()) / MS_DAY) + 1;
       let d = new Date(p.start);
       for (let j = 0; j < days; j++) {
-        const mk = `${d.getFullYear()}-${d.getMonth() + 1}`;
+        const mk = mk2(d.getFullYear(), d.getMonth() + 1);
         const proj = projByCollectionMonth[mk];
         if (proj && proj.rev > 0) {
           const daysInMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
