@@ -3373,6 +3373,22 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     tollingPerCase, ALL_INGS, SKUS as unknown as string[],
   ), [ipStartForForecast, fpStartForForecast, allPOsForFifo, prodPlanForForecast, salesFcstForForecast, bomQty, tollingPerCase]);
 
+  // ─── Bridge: write FIFO inventory & payments to localStorage for Finance ───
+  useEffect(() => {
+    try {
+      const inv: Record<string, { ip: number; fp: number; total: number }> = {};
+      const pay: Record<string, { ipPurchases: number; tolling: number; total: number }> = {};
+      for (const r of fifoResults) {
+        const ipVal = ALL_INGS.reduce((s, g) => s + (r.ipStock[g]?.value ?? 0), 0);
+        const fpVal = SKUS.reduce((s, sk) => s + (r.fpStock[sk]?.value ?? 0), 0);
+        inv[r.mk] = { ip: Math.round(ipVal), fp: Math.round(fpVal), total: Math.round(ipVal + fpVal) };
+        pay[r.mk] = { ipPurchases: Math.round(r.ipPayments), tolling: Math.round(r.tollPayments), total: Math.round(r.totalPayments) };
+      }
+      window.localStorage.setItem("baris.ops.fifoInventory.v1", JSON.stringify(inv));
+      window.localStorage.setItem("baris.ops.fifoPayments.v1", JSON.stringify(pay));
+    } catch { /* ignore */ }
+  }, [fifoResults]);
+
   // Shopping list: PO forecast totals per material
   const poForecastByMat = useMemo(() => {
     const out: Record<string, number> = {};
