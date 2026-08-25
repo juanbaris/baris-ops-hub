@@ -787,6 +787,123 @@ export type Database = {
         }
         Relationships: []
       }
+      logistics_invoice_orders: {
+        Row: {
+          allocated_amount: number
+          created_at: string
+          id: string
+          invoice_id: string
+          order_id: string | null
+          po_number: string | null
+        }
+        Insert: {
+          allocated_amount?: number
+          created_at?: string
+          id?: string
+          invoice_id: string
+          order_id?: string | null
+          po_number?: string | null
+        }
+        Update: {
+          allocated_amount?: number
+          created_at?: string
+          id?: string
+          invoice_id?: string
+          order_id?: string | null
+          po_number?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "logistics_invoice_orders_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "logistics_invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "logistics_invoice_orders_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "customer_orders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      logistics_invoices: {
+        Row: {
+          bol: string | null
+          canonical_dc: string | null
+          carrier: string
+          cases: number | null
+          category: string
+          charges: Json | null
+          created_at: string
+          detention: number | null
+          freight_base: number | null
+          fuel: number | null
+          id: string
+          invoice_date: string
+          invoice_number: string
+          is_supplemental: boolean
+          lumper: number | null
+          pallets: number | null
+          pdf_path: string | null
+          po_ref: string | null
+          status: string
+          total_charged: number
+          updated_at: string
+          weight_lb: number | null
+        }
+        Insert: {
+          bol?: string | null
+          canonical_dc?: string | null
+          carrier: string
+          cases?: number | null
+          category: string
+          charges?: Json | null
+          created_at?: string
+          detention?: number | null
+          freight_base?: number | null
+          fuel?: number | null
+          id?: string
+          invoice_date: string
+          invoice_number: string
+          is_supplemental?: boolean
+          lumper?: number | null
+          pallets?: number | null
+          pdf_path?: string | null
+          po_ref?: string | null
+          status?: string
+          total_charged?: number
+          updated_at?: string
+          weight_lb?: number | null
+        }
+        Update: {
+          bol?: string | null
+          canonical_dc?: string | null
+          carrier?: string
+          cases?: number | null
+          category?: string
+          charges?: Json | null
+          created_at?: string
+          detention?: number | null
+          freight_base?: number | null
+          fuel?: number | null
+          id?: string
+          invoice_date?: string
+          invoice_number?: string
+          is_supplemental?: boolean
+          lumper?: number | null
+          pallets?: number | null
+          pdf_path?: string | null
+          po_ref?: string | null
+          status?: string
+          total_charged?: number
+          updated_at?: string
+          weight_lb?: number | null
+        }
+        Relationships: []
+      }
       logistics_kehe_rate: {
         Row: {
           canonical_dc: string
@@ -891,6 +1008,30 @@ export type Database = {
           plt_8?: number
           plt_9?: number
           state?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      logistics_storage_rates: {
+        Row: {
+          created_at: string
+          id: string
+          receipt_per_pallet: number
+          renewal_per_pallet_month: number
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          receipt_per_pallet?: number
+          renewal_per_pallet_month?: number
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          receipt_per_pallet?: number
+          renewal_per_pallet_month?: number
           updated_at?: string
         }
         Relationships: []

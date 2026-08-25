@@ -17,9 +17,10 @@ import type { Database } from "@/integrations/supabase/types";
 import { totalCasesOf } from "./rates";
 import {
   buildSupplyChainSeries, forecastByMonth, CATEGORY_LABEL,
-  type InvoiceCategory, type NewInvoiceInput,
+  type InvoiceCategory,
 } from "./invoices";
-import { useLogisticsInvoices } from "@/hooks/use-logistics-invoices";
+import { useLogisticsInvoices, type NewInvoiceInput } from "@/hooks/use-logistics-invoices";
+
 import { useSalesForecast } from "@/hooks/use-sales-forecast";
 
 type Order = Database["public"]["Tables"]["customer_orders"]["Row"];
@@ -94,8 +95,9 @@ function FacturasPanel({ orders }: { orders: Order[] }) {
   const isStorage = form.category.startsWith("storage");
 
   function set<K extends keyof NewInvoiceInput>(k: K, v: NewInvoiceInput[K]) {
-    setForm(f => ({ ...f, [k]: v }));
+    setForm((f: NewInvoiceInput) => ({ ...f, [k]: v }));
   }
+
   const num = (s: string): number | null => (s.trim() === "" ? null : Number(s));
 
   async function save() {
