@@ -347,47 +347,81 @@ export function useRunwayForecast(nWeeks = 20, scenario: Scenario = "Normal") {
     }
 
     // ── Projected revenue / deductions / logistics from Sales Forecast ──
-    // Projected starts from the LAST week that has estimated (pipeline) data —
-    // before that, the pipeline already covers the forecast. Once estimated runs out,
-    // projected fills the gap.
-    // Timing: Sales Forecast = what's SOLD in month M; collection ~30d later (month M+1).
-    let projectedStartIdx = periodDefs.length; // default: no projected at all
-    for (let i = periodDefs.length - 1; i >= 0; i--) {
-      if (buckets[i].ingresoEstimado > 0) { projectedStartIdx = i; break; }
-    }
-
-    // Build monthly forecast map: year-month → { revenue, cases, daysInMonth }
-    const forecastByMonth: Record<string, { revenue: number; cases: number; daysInMonth: number }> = {};
+    // Rules:
+    //   1. Sales Forecast = what's SOLD in month M; collection happens in month M+1 (~30d terms).
+    //   2. Past months (where all weeks have actuals): Projected = $0
+    //   3. Current month: Projected = max(0, Forecast(sales_month) - Confirmed - Estimated)
+    //   4. Future months: Projected = full forecast (no pipeline yet)
+    //
+    // Approach: compute projected PER MONTH first, then distribute to weeks pro-rata.
+    const forecastByMonth: Record<string, { revenue: number; cases: number }> = {};
     for (const fr of salesForecast) {
-      const daysInMonth = new Date(fr.year, fr.month, 0).getDate();
-      forecastByMonth[`${fr.year}-${fr.month}`] = { revenue: fr.revenue, cases: fr.totalCases, daysInMonth };
+      forecastByMonth[`${fr.year}-${fr.month}`] = { revenue: fr.revenue, cases: fr.totalCases };
     }
-    // For each period from projectedStartIdx onward, compute projected share
-    for (let i = projectedStartIdx; i < periodDefs.length; i++) {
-      const p = periodDefs[i];
 
+    // Group confirmed+estimated revenue by their SALES month (= collection month - 1)
+    // We use the pipeline's invoice/ship date (not collection date) as the sales month
+    const pipelineByMonth: Record<string, number> = {};
+    for (const o of orders) {
+      const shipOrInv = o.ship_est_date || o.invoice_date || o.po_date;
+      if (!shipOrInv) continue;
+      const d = parseDate(shipOrInv);
+      if (!d) continue;
+      const mk = `${d.getFullYear()}-${d.getMonth() + 1}`;
+      pipelineByMonth[mk] = (pipelineByMonth[mk] ?? 0) + Number(o.gross_sales ?? 0);
+    }
+
+    // For each forecast month, compute how much projected collections to show
+    const projByCollectionMonth: Record<string, { rev: number; cases: number }> = {};
+    const now = new Date();
+    const currentSalesMonth = `${now.getFullYear()}-${now.getMonth() + 1}`;
+
+    for (const fr of salesForecast) {
+      const salesMk = `${fr.year}-${fr.month}`;
+      const collMonth = new Date(fr.year, fr.month, 1); // collection = sales month + 1
+      const collMk = `${collMonth.getFullYear()}-${collMonth.getMonth() + 1}`;
+      const fcRev = fr.revenue;
+      const fcCases = fr.totalCases;
+
+      // Is this sales month in the past, current, or future?
+      const isPast = salesMk < currentSalesMonth;
+      const isCurrent = salesMk === currentSalesMonth;
+
+      if (isPast) {
+        // Pipeline already covers it
+        projByCollectionMonth[collMk] = { rev: 0, cases: 0 };
+      } else if (isCurrent) {
+        // Current month: subtract what's already in the pipeline
+        const pipeline = pipelineByMonth[salesMk] ?? 0;
+        const gap = Math.max(0, fcRev - pipeline);
+        projByCollectionMonth[collMk] = { rev: gap, cases: fcRev > 0 ? fcCases * (gap / fcRev) : 0 };
+      } else {
+        // Future: full forecast
+        projByCollectionMonth[collMk] = { rev: fcRev, cases: fcCases };
+      }
+    }
+
+    // Distribute projected collections to weekly periods (pro-rata by days in month)
+    for (let i = 0; i < periodDefs.length; i++) {
+      const p = periodDefs[i];
       let rawRev = 0, rawCases = 0;
       const days = Math.round((p.end.getTime() - p.start.getTime()) / MS_DAY) + 1;
       let d = new Date(p.start);
       for (let j = 0; j < days; j++) {
-        // Shift back 1 month: collection in month M ← sales from month M-1
-        const salesMonth = new Date(d.getFullYear(), d.getMonth() - 1, 1);
-        const mk = `${salesMonth.getFullYear()}-${salesMonth.getMonth() + 1}`;
-        const fm = forecastByMonth[mk];
-        if (fm && fm.daysInMonth > 0) {
-          rawRev += fm.revenue / fm.daysInMonth;
-          rawCases += fm.cases / fm.daysInMonth;
+        const mk = `${d.getFullYear()}-${d.getMonth() + 1}`;
+        const proj = projByCollectionMonth[mk];
+        if (proj && proj.rev > 0) {
+          const daysInMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+          rawRev += proj.rev / daysInMonth;
+          rawCases += proj.cases / daysInMonth;
         }
         d = addDays(d, 1);
       }
-      // Overlap: projected = max(0, forecast - confirmed - estimated)
-      const overlapRev = Math.max(0, rawRev - buckets[i].ingresoDefinido - buckets[i].ingresoEstimado);
-      buckets[i].ingresoProyectado = Math.round(overlapRev);
-      // Deductions: % of projected revenue (blended rate)
-      buckets[i].deduccionProyectado = overlapRev > 0 ? -Math.round(overlapRev * ded.blend) : 0;
-      // Logistics: projected cases × fallback rate
-      const overlapCases = rawRev > 0 ? rawCases * (overlapRev / rawRev) : 0;
-      buckets[i].logisticaProyectado = overlapCases > 0 ? -Math.round(overlapCases * settings.logistics_fallback_per_case) : 0;
+      if (rawRev > 0) {
+        buckets[i].ingresoProyectado = Math.round(rawRev);
+        buckets[i].deduccionProyectado = -Math.round(rawRev * ded.blend);
+        buckets[i].logisticaProyectado = -Math.round(rawCases * settings.logistics_fallback_per_case);
+      }
     }
 
     // ── Monthly SG&A Expenses: placed at end of each month ──
