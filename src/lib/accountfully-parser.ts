@@ -303,11 +303,8 @@ function parseBs(pages: { items: TI[]; pageNum: number }[]): Record<string, numb
   const bs: Record<string, number> = {};
   const ccAccum: Record<string, number> = {};
 
-  // Find the Balance Sheet page
+  // Process ALL BS pages (already filtered to BS section by the caller)
   for (const pg of pages) {
-    const text = pg.items.map(it => it.text).join(" ");
-    if (!text.includes("Balance Sheet") || !text.includes("ASSETS")) continue;
-
     const rows = groupRows(pg.items);
     for (const row of rows) {
       const fullText = row.map(it => it.text).join(" ");
