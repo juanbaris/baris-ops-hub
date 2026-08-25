@@ -432,7 +432,7 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
           const patch: Record<string, any> = { updated_at: new Date().toISOString() };
           if (form.expiry) patch.expiry_date = form.expiry;
           if (form.cogs_per_case) { patch.cogs_per_case = Number(form.cogs_per_case); patch.cogs_status = "confirmed"; }
-          await supabase.from("lot_master").update(patch).eq("id", (existing as any).id);
+          await supabase.from("lot_master").update(patch as never).eq("id", (existing as any).id);
         } else {
           await supabase.from("lot_master").insert({
             lot_number: lotNo, warehouse: form.warehouse, sku: form.sku,
