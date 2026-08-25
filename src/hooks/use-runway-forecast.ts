@@ -354,13 +354,14 @@ export function useRunwayForecast(nWeeks = 20, scenario: Scenario = "Normal") {
     //   4. Future months: Projected = full forecast (no pipeline yet)
     //
     // Approach: compute projected PER MONTH first, then distribute to weeks pro-rata.
+    // Helper: zero-padded month key for correct string comparison
+    const mk2 = (y: number, m: number) => `${y}-${String(m).padStart(2, "0")}`;
+
     const forecastByMonth: Record<string, { revenue: number; cases: number }> = {};
     for (const fr of salesForecast) {
       forecastByMonth[mk2(fr.year, fr.month)] = { revenue: fr.totalCases * PRICE_PER_CASE, cases: fr.totalCases };
     }
 
-    // Helper: zero-padded month key for correct string comparison
-    const mk2 = (y: number, m: number) => `${y}-${String(m).padStart(2, "0")}`;
 
     // Group confirmed+estimated revenue by their SALES month (= collection month - 1)
     const pipelineByMonth: Record<string, number> = {};
