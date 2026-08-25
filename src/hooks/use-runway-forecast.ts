@@ -123,7 +123,7 @@ export function useRunwayForecast(nWeeks = 20, scenario: Scenario = "Normal") {
   // ── Sales Forecast (projected revenue by month) ──
   const { state: salesState } = useSalesForecast();
   const salesForecast = useMemo(() => {
-    const s = salesState as ForecastState;
+    const s = salesState as ForecastState & Record<string, any>;
     return calcForecast(
       scenario,
       s.velActive ?? [], s.velNew ?? [],
