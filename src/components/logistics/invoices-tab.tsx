@@ -95,8 +95,9 @@ function FacturasPanel({ orders }: { orders: Order[] }) {
   const isStorage = form.category.startsWith("storage");
 
   function set<K extends keyof NewInvoiceInput>(k: K, v: NewInvoiceInput[K]) {
-    setForm(f => ({ ...f, [k]: v }));
+    setForm((f: NewInvoiceInput) => ({ ...f, [k]: v }));
   }
+
   const num = (s: string): number | null => (s.trim() === "" ? null : Number(s));
 
   async function save() {
