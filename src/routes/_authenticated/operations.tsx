@@ -432,7 +432,7 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
           const patch: Record<string, any> = { updated_at: new Date().toISOString() };
           if (form.expiry) patch.expiry_date = form.expiry;
           if (form.cogs_per_case) { patch.cogs_per_case = Number(form.cogs_per_case); patch.cogs_status = "confirmed"; }
-          await supabase.from("lot_master").update(patch as never).eq("id", (existing as any).id);
+          await supabase.from("lot_master").update(patch).eq("id", (existing as any).id);
         } else {
           await supabase.from("lot_master").insert({
             lot_number: lotNo, warehouse: form.warehouse, sku: form.sku,
@@ -3291,17 +3291,19 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     return out;
   }, [ingInv, ingPrices]);
 
-  // Build FP starting stock from lot master + FP movements (bySku)
+  // Build FP starting stock: bySku (lot master stock) + WIP (in production now)
+  // This matches what the Schedule uses as starting point: stock + WIP
   const fpStartForForecast = useMemo(() => {
     const out: Record<string, { cases: number; totalValue: number }> = {};
     for (const sku of SKUS) {
-      const cases = bySku[sku] ?? 0;
-      // Estimate total value from lots if available, else use COGS avg
+      const stock = bySku[sku] ?? 0;
+      const wipCases = wipBySku[sku] ?? 0;
+      const cases = stock + wipCases;
       const avgCogs = cogs[sku]?.per_case ?? 0;
       out[sku] = { cases, totalValue: cases * avgCogs };
     }
     return out;
-  }, [bySku, cogs]);
+  }, [bySku, wipBySku, cogs]);
 
   // Build production plan from schedule for FIFO simulation
   const prodPlanForForecast = useMemo(() => {
