@@ -1166,21 +1166,23 @@ function buildFinanceForecast(
   })();
   const accruedFwd = latestBsIdx>=0 ? Number(bsL['accrued_liabilities'] ?? 0)/1000 : 10.34;
 
-  // ── Inventory model (forecast months only) ──
-  // Finished Goods: falls with each month's sales; receives the December production run.
-  // Raw Materials: built up over Oct–Nov ahead of the run, converts to FG in December.
-  // Capped so total inventory never exceeds ~$800K (no over-stocking).
+  // ── Inventory model: reads from FIFO forecast (Operations bridge) when available ──
+  // Falls back to simple model if FIFO data not present.
+  let fifoInv: Record<string, { ip: number; fp: number; total: number }> | null = null;
+  try {
+    const raw = window.localStorage.getItem("baris.ops.fifoInventory.v1");
+    if (raw) fifoInv = JSON.parse(raw);
+  } catch { /* ignore */ }
+
+  // Fallback: simple FG model (used only when FIFO bridge is empty)
   const DEC_RUN_CASES = 30000;
-  const decRunK = DEC_RUN_CASES * cogsPerCaseK;            // value produced in Dec (RM→FG)
+  const decRunK = DEC_RUN_CASES * cogsPerCaseK;
   const FG_FLOOR = 60;
   const INV_CAP = 800;
-  // RM ramp targets relative to base (build mostly in Nov).
   const rmTarget = (i: number) => {
     const base = fwd.rmBase;
-    if (i <= 8) return base;                    // Jul–Sep: steady
-    if (i === 9) return base + decRunK * 0.25;  // Oct: light buying
-    if (i === 10) return base + decRunK * 0.75; // Nov: heavy build (fully stocked for the run)
-    if (i === 11) return base * 0.6;            // Dec: most RM consumed by production, some left over
+    if (i <= 8) return base; if (i === 9) return base + decRunK * 0.25;
+    if (i === 10) return base + decRunK * 0.75; if (i === 11) return base * 0.6;
     return base;
   };
   const fgAt = (i: number) => {
@@ -1216,13 +1218,23 @@ function buildFinanceForecast(
       const cur = netOf(fcGrossByMonth[i] ?? 0);
       const prev = netOf(grossK(i-1));
       ar = cur * mixKU + (cur + prev) * mixRF;
-      fg = fgAt(i);
-      let rmv = rmTarget(i);
-      // Total inventory is capped at ~$800K (never over-stock). If FG + RM would exceed it,
-      // trim raw materials so the split stays consistent with the shown total.
-      if (fg + rmv > INV_CAP) rmv = Math.max(0, INV_CAP - fg);
-      rm = rmv;
-      inv = fg + rmv;
+
+      // Inventory: use FIFO bridge from Operations if available
+      const periodKey = PERIODS[i]; // e.g. "2026-08"
+      const fifoMonth = fifoInv?.[periodKey];
+      if (fifoMonth) {
+        // FIFO bridge: real inventory from lot-level FIFO simulation ($K)
+        fg = fifoMonth.fp / 1000;   // FP stock value → Finished Goods
+        rm = fifoMonth.ip / 1000;   // IP stock value → Raw Materials
+        inv = fifoMonth.total / 1000;
+      } else {
+        // Fallback: simple model
+        fg = fgAt(i);
+        let rmv = rmTarget(i);
+        if (fg + rmv > INV_CAP) rmv = Math.max(0, INV_CAP - fg);
+        rm = rmv;
+        inv = fg + rmv;
+      }
       // Apply manual inventory adjustment ($K: positive = more inventory, less cash via balancing)
       const adjK = invAdjust?.[i] ?? 0;
       if (adjK) { fg! += adjK; inv! += adjK; }
