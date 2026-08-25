@@ -356,7 +356,7 @@ export function useRunwayForecast(nWeeks = 20, scenario: Scenario = "Normal") {
     // Approach: compute projected PER MONTH first, then distribute to weeks pro-rata.
     const forecastByMonth: Record<string, { revenue: number; cases: number }> = {};
     for (const fr of salesForecast) {
-      forecastByMonth[mk2(fr.year, fr.month)] = { revenue: fr.revenue, cases: fr.totalCases };
+      forecastByMonth[mk2(fr.year, fr.month)] = { revenue: fr.totalCases * PRICE_PER_CASE, cases: fr.totalCases };
     }
 
     // Helper: zero-padded month key for correct string comparison
@@ -382,7 +382,7 @@ export function useRunwayForecast(nWeeks = 20, scenario: Scenario = "Normal") {
       const salesMk = mk2(fr.year, fr.month);
       const collMonth = new Date(fr.year, fr.month, 1); // collection = sales month + 1
       const collMk = mk2(collMonth.getFullYear(), collMonth.getMonth() + 1);
-      const fcRev = fr.revenue;
+      const fcRev = fr.totalCases * PRICE_PER_CASE;
       const fcCases = fr.totalCases;
 
       const isPast = salesMk < currentSalesMonth;
