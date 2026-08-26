@@ -17,10 +17,9 @@ import type { Database } from "@/integrations/supabase/types";
 import { totalCasesOf } from "./rates";
 import {
   buildSupplyChainSeries, forecastByMonth, CATEGORY_LABEL,
-  type InvoiceCategory,
+  type InvoiceCategory, type NewInvoiceInput,
 } from "./invoices";
-import { useLogisticsInvoices, type NewInvoiceInput } from "@/hooks/use-logistics-invoices";
-
+import { useLogisticsInvoices } from "@/hooks/use-logistics-invoices";
 import { useSalesForecast } from "@/hooks/use-sales-forecast";
 
 type Order = Database["public"]["Tables"]["customer_orders"]["Row"];
@@ -84,6 +83,7 @@ function FacturasPanel({ orders }: { orders: Order[] }) {
   const [form, setForm] = useState<NewInvoiceInput>(BLANK);
   const [file, setFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
+  const [reading, setReading] = useState(false);
   const [q, setQ] = useState("");
   const [catFilter, setCatFilter] = useState<string>("all");
 
@@ -95,10 +95,55 @@ function FacturasPanel({ orders }: { orders: Order[] }) {
   const isStorage = form.category.startsWith("storage");
 
   function set<K extends keyof NewInvoiceInput>(k: K, v: NewInvoiceInput[K]) {
-    setForm((f: NewInvoiceInput) => ({ ...f, [k]: v }));
+    setForm(f => ({ ...f, [k]: v }));
   }
-
   const num = (s: string): number | null => (s.trim() === "" ? null : Number(s));
+
+  // Sube el PDF y deja que la IA (server route /api/parse-logistics-invoice) complete los campos.
+  async function handlePdf(f: File | null) {
+    setFile(f);
+    if (!f) return;
+    setReading(true);
+    try {
+      const base64 = await new Promise<string>((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res((r.result as string).split(",")[1]);
+        r.onerror = rej;
+        r.readAsDataURL(f);
+      });
+      const resp = await fetch("/api/parse-logistics-invoice", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileBase64: base64, mediaType: f.type || "application/pdf" }),
+      });
+      if (!resp.ok) { toast.error("No se pudo leer la factura — completá a mano"); return; }
+      const d = await resp.json();
+      setForm(prev => ({
+        ...prev,
+        invoice_number: d.invoice_number || prev.invoice_number,
+        invoice_date: d.invoice_date || prev.invoice_date,
+        carrier: d.carrier || prev.carrier,
+        category: d.category || prev.category,
+        canonical_dc: d.canonical_dc ?? prev.canonical_dc,
+        cases: d.cases ?? prev.cases,
+        pallets: d.pallets ?? prev.pallets,
+        weight_lb: d.weight_lb ?? prev.weight_lb,
+        freight_base: d.freight_base ?? prev.freight_base,
+        fuel: d.fuel ?? prev.fuel,
+        detention: d.detention ?? prev.detention,
+        lumper: d.lumper ?? prev.lumper,
+        total_charged: d.total_charged || prev.total_charged,
+        bol: d.bol ?? prev.bol,
+        po_ref: d.po_ref ?? prev.po_ref,
+        is_supplemental: d.is_supplemental ?? prev.is_supplemental,
+      }));
+      toast.success("Factura leída — revisá y confirmá");
+    } catch {
+      toast.error("No se pudo leer la factura");
+    } finally {
+      setReading(false);
+    }
+  }
 
   async function save() {
     if (!form.invoice_number.trim()) return toast.error("Falta el N° de factura");
@@ -138,7 +183,20 @@ function FacturasPanel({ orders }: { orders: Order[] }) {
         <div className="mb-3 flex items-center gap-2">
           <Upload className="h-4 w-4" style={{ color: BURGUNDY }} />
           <h3 className="text-sm font-semibold" style={{ color: NAVY }}>Cargar factura</h3>
-          <span className="text-xs text-muted-foreground">— confirmá los datos antes de guardar</span>
+          <span className="text-xs text-muted-foreground">— subí el PDF, la IA completa los campos y vos confirmás</span>
+        </div>
+
+        {/* Zona de subida — la IA lee y completa el formulario */}
+        <div className="mb-4 flex items-center gap-3 rounded-xl border border-dashed border-border bg-muted/30 p-3">
+          <label className="cursor-pointer rounded-lg px-3 py-2 text-sm font-semibold text-white shadow-sm"
+            style={{ backgroundColor: NAVY }}>
+            {reading ? "Leyendo factura…" : "Subir PDF y leer con IA"}
+            <input type="file" accept="application/pdf,image/*" className="hidden" disabled={reading}
+              onChange={e => handlePdf(e.target.files?.[0] ?? null)} />
+          </label>
+          <span className="text-xs text-muted-foreground">
+            {file ? file.name : "PDF o imagen de la factura (Lineage o KeHE). La IA completa los campos de abajo."}
+          </span>
         </div>
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -214,10 +272,6 @@ function FacturasPanel({ orders }: { orders: Order[] }) {
             <input className={`${inputCls} border-[#15803D] bg-[#15803D]/5 font-mono font-bold`}
               inputMode="decimal" value={form.total_charged || ""}
               onChange={e => set("total_charged", Number(e.target.value) || 0)} />
-          </Field>
-          <Field label="PDF (opcional)">
-            <input type="file" accept="application/pdf" className="text-xs"
-              onChange={e => setFile(e.target.files?.[0] ?? null)} />
           </Field>
         </div>
 
