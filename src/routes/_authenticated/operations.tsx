@@ -3542,11 +3542,8 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     try { window.localStorage.setItem("baris.runway.procPayments", JSON.stringify(rows)); } catch {}
   },[payments]);
 
-  // Shadow PROC_SKUS with dynamic version that includes committed new SKUs
-  // eslint-disable-next-line @typescript-eslint/no-shadow
-  const PROC_SKUS = dynamicProcSkus;
 
-  const totalByMonth = FORECAST_MONTHS_OPS.map((_,i)=>PROC_SKUS.reduce((s,sku)=>s+(plan[sku]?.[i]??0),0));
+  const totalByMonth = FORECAST_MONTHS_OPS.map((_,i)=>dynamicProcSkus.reduce((s,sku)=>s+(plan[sku]?.[i]??0),0));
   const nextRunIdx = totalByMonth.findIndex(t=>t>0);
   const shopRange = useMemo(()=>{
     if(nextRunIdx<0) return null;
@@ -3565,7 +3562,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   },[ingByMonth,shopRange]);
   const shopCasesWindow = shopRange
     ? totalByMonth.slice(shopRange[0],shopRange[1]+1).reduce((a,b)=>a+b,0) : 0;
-  const totalProduce = PROC_SKUS.reduce((s,sku)=>s+(plan[sku]??[]).reduce((a,b)=>a+b,0),0);
+  const totalProduce = dynamicProcSkus.reduce((s,sku)=>s+(plan[sku]??[]).reduce((a,b)=>a+b,0),0);
   const weightedCOGS = SKUS.reduce((s,sku)=>s+(cogs[sku]?.per_case??0)*(SKU_MIX_PCT[sku]??0),0);
 
   // ─── NEW: compute WoH coverage per SKU when manual overrides exist ───
@@ -3616,7 +3613,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   // Build production plan from schedule for FIFO simulation
   const prodPlanForForecast = useMemo(() => {
     const out: { sku: string; cases: number; month: string }[] = [];
-    for (const sku of PROC_SKUS) {
+    for (const sku of dynamicProcSkus) {
       for (let i = 0; i < FORECAST_MONTHS_OPS.length; i++) {
         const cases = plan[sku]?.[i] ?? 0;
         if (cases > 0) {
@@ -3776,7 +3773,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                 </tr>
               </thead>
               <tbody>
-                {PROC_SKUS.map(sku=>{
+                {dynamicProcSkus.map(sku=>{
                   const SK: Record<string,string>={XD:"xd_cases",PW:"pw_cases",HM:"hm_cases",WM:"wm_cases",WD:"wd_cases",Matcha:"matcha_cases"};
                   const comm=orders.filter(o=>COMMITTED_STATUSES.includes(o.status)).reduce((s,o)=>s+(Number(o[SK[sku]])||0),0);
                   const avail=Math.max(0,(bySku[sku]??0)-comm);
@@ -3880,7 +3877,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                 </tr>
               </thead>
               <tbody>
-                {PROC_SKUS.map(sku=>(
+                {dynamicProcSkus.map(sku=>(
                   <tr key={sku} className="border-t border-border/60">
                     <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{sku}</td>
                     {(stockProj[sku]??[]).map((stock,i)=>{
@@ -3940,18 +3937,18 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                 <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
                   <th className="px-4 py-2.5 text-left sticky left-0 bg-muted/20">Material</th>
                   <th className="px-2 py-2.5 text-center">UOM</th>
-                  {PROC_SKUS.map(s=><th key={s} className="px-3 py-2.5 text-center" title={PROC_SKU_LABEL[s]}>{s}</th>)}
+                  {dynamicProcSkus.map(s=><th key={s} className="px-3 py-2.5 text-center" title={PROC_SKU_LABEL[s]}>{s}</th>)}
                   <th className="px-4 py-2.5 text-right">$/unit</th>
                 </tr>
               </thead>
               <tbody>
-                {allMaterialsList.filter(mat=>PROC_SKUS.some(sku=>(bomQty[sku]?.[mat]??0)>0) || extraMaterials.includes(mat)).map(mat=>{
+                {allMaterialsList.filter(mat=>dynamicProcSkus.some(sku=>(bomQty[sku]?.[mat]??0)>0) || extraMaterials.includes(mat)).map(mat=>{
                   const raw=isRawMat(mat) || extraMaterials.includes(mat);
                   return (
                     <tr key={mat} className="border-t border-border/60 hover:bg-muted/20">
                       <td className="px-4 py-1.5 font-medium sticky left-0 bg-card">{mat}</td>
                       <td className="px-2 py-1.5 text-center text-[10px] text-muted-foreground">{raw?"lbs":"units"}</td>
-                      {PROC_SKUS.map(sku=>{
+                      {dynamicProcSkus.map(sku=>{
                         const qty=bomQty[sku]?.[mat]??0;
                         const rawTotal=[...RAW_MATS,...extraMaterials].reduce((s,m)=>s+(bomQty[sku]?.[m]??0),0);
                         const pct = raw && rawTotal>0 ? (qty/rawTotal)*100 : 0;
@@ -3978,7 +3975,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                 <tfoot>
                   <tr className="border-t border-border bg-muted/10">
                     <td className="px-4 py-1.5 text-[10px] uppercase tracking-wide text-muted-foreground" colSpan={2}>Σ % (raw)</td>
-                    {PROC_SKUS.map(sku=>{
+                    {dynamicProcSkus.map(sku=>{
                       const rawTotal=[...RAW_MATS,...extraMaterials].reduce((s,m)=>s+(bomQty[sku]?.[m]??0),0);
                       const sum=rawTotal>0?100:0;
                       return <td key={sku} className={`px-2 py-1.5 text-center font-mono text-[10px] ${sum>0?"text-emerald-600":"text-muted-foreground"}`}>{sum?sum.toFixed(0)+"%":"—"}</td>;
@@ -4018,7 +4015,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                 </tr>
               </thead>
               <tbody>
-                {PROC_SKUS.map(sku=>{
+                {dynamicProcSkus.map(sku=>{
                   const c=cogs[sku]; if(!c) return null;
                   return (
                     <tr key={sku} className="border-t border-border/60 hover:bg-muted/20">
