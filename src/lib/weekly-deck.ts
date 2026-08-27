@@ -78,9 +78,13 @@ export async function generateWeeklyDeck(opts: {
       bars.forEach(b => {
         const h = (b.v / max) * plotH;
         s.addShape(pptx.ShapeType.rect, { x: bx, y: base - h, w: barW, h, fill: { color: b.c } });
+        const insideBar = stacked && b.c === GREEN && (d.open ?? 0) > 0;
         s.addText(fmtK(b.v), {
-          x: bx - 0.18, y: base - h - 0.22, w: barW + 0.36, h: 0.2, align: "center", valign: "bottom",
-          fontSize: 6.5, color: b.c === GREEN ? "4D7A1F" : b.c === NAVY_BLACK ? NAVY_BLACK : "6B7280",
+          x: insideBar ? bx - 0.14 : bx - 0.18, y: insideBar ? base - h + 0.02 : base - h - 0.22,
+          w: insideBar ? barW + 0.28 : barW + 0.36, h: 0.2,
+          align: "center", valign: insideBar ? "top" : "bottom",
+          fontSize: 6.5, bold: insideBar,
+          color: insideBar ? "FFFFFF" : b.c === GREEN ? "4D7A1F" : b.c === NAVY_BLACK ? NAVY_BLACK : "6B7280",
           fontFace: "Arial", margin: 0,
         });
         bx += barW + 0.03;
