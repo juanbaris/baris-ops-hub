@@ -4459,10 +4459,10 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
 
       {/* ── IP FORECAST PURCHASES ── */}
       {procTab==="ip_forecast" && (() => {
-        // Compute "needed" filtered by shopScope (reusing existing state)
-        const scopeLabel = shopScope === "next" ? "Next run" : shopScope === "3m" ? "Next 6 months" : "All 12 months";
+        // Compute "needed" filtered by shopScope
+        const scopeLabel = shopScope === "next" ? "Next run" : shopScope === "3m" ? "6 months" : "12 months";
         const scopeRange: [number,number] | null = (() => {
-          if (shopScope === "next") { const idx = totalByMonth.findIndex(t=>t>0); return idx >= 0 ? [idx,idx] : null; }
+          if (shopScope === "next") { const idx = totalByMonth.findIndex(t=>t>0); return idx >= 0 ? [idx,idx] : [0,0]; }
           if (shopScope === "3m") return [0, Math.min(5, FORECAST_MONTHS_OPS.length - 1)];
           return [0, FORECAST_MONTHS_OPS.length - 1];
         })();
@@ -4470,17 +4470,22 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
         if (scopeRange) {
           for (const [mat, arr] of Object.entries(ingByMonth)) {
             let s = 0; for (let i = scopeRange[0]; i <= scopeRange[1]; i++) s += arr[i] ?? 0;
-            if (s > 0) neededFiltered[mat] = s;
+            neededFiltered[mat] = s;
           }
         }
         const scopeCases = scopeRange ? totalByMonth.slice(scopeRange[0], scopeRange[1]+1).reduce((a,b)=>a+b,0) : 0;
+        // All raw materials to show (hardcoded + extras)
+        const rawMatsToShow = [...RAW_MATS, ...extraMaterials];
 
         return (
         <div className="space-y-4">
           {/* Shopping list helper */}
           <div className="rounded-2xl border-2 border-blue-200 bg-blue-50 shadow-sm p-4">
             <div className="flex items-center justify-between mb-2">
-              <p className="text-sm font-bold text-blue-900">🛒 What you need vs what you have</p>
+              <div>
+                <p className="text-sm font-bold text-blue-900">🛒 What you need vs what you have</p>
+                <p className="text-[10px] text-blue-600">Scope: <strong>{scopeLabel}</strong> · {scopeCases.toLocaleString()} cases to produce</p>
+              </div>
               <div className="flex items-center gap-1">
                 {([["next","Next run"],["3m","6 months"],["all","12 months"]] as const).map(([id,label])=>(
                   <button key={id}
@@ -4491,35 +4496,37 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                 ))}
               </div>
             </div>
-            <p className="text-[10px] text-blue-600 mb-2">Scope: <strong>{scopeLabel}</strong> · {scopeCases.toLocaleString()} cases</p>
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
-                  <tr className="text-[10px] uppercase tracking-wide text-blue-700 border-b border-blue-200">
+                  <tr className="text-[10px] uppercase tracking-wide text-blue-700 border-b-2 border-blue-200">
                     <th className="px-3 py-2 text-left">Material</th>
-                    <th className="px-3 py-2 text-right">Needed ({scopeLabel})</th>
+                    <th className="px-3 py-2 text-right">Needed</th>
                     <th className="px-3 py-2 text-right">IP Stock</th>
                     <th className="px-3 py-2 text-right">IP Ordered</th>
                     <th className="px-3 py-2 text-right" style={{color:"#7C3AED"}}>PO Forecast</th>
-                    <th className="px-3 py-2 text-right font-bold">To Acquire</th>
+                    <th className="px-3 py-2 text-right">Have (total)</th>
+                    <th className="px-3 py-2 text-right font-bold">Balance</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {RAW_MATS.filter(mat => (neededFiltered[mat] ?? 0) > 0).map(mat => {
+                  {rawMatsToShow.map(mat => {
                     const needed = Math.round(neededFiltered[mat] ?? 0);
                     const stock = parseInt(ingInv[mat]) || 0;
                     const ordered = Math.round(ipOrdered[mat] ?? 0);
                     const poFcst = Math.round(poForecastByMat[mat] ?? 0);
-                    const toAcq = Math.max(0, needed - stock - ordered - poFcst);
+                    const have = stock + ordered + poFcst;
+                    const balance = have - needed; // positive = surplus, negative = deficit
                     return (
                       <tr key={mat} className="border-t border-blue-100">
                         <td className="px-3 py-1.5 font-semibold text-blue-900">{mat}</td>
-                        <td className="px-3 py-1.5 text-right font-mono">{needed.toLocaleString()}</td>
+                        <td className="px-3 py-1.5 text-right font-mono">{needed > 0 ? needed.toLocaleString() : "—"}</td>
                         <td className="px-3 py-1.5 text-right font-mono">{stock > 0 ? stock.toLocaleString() : "—"}</td>
                         <td className="px-3 py-1.5 text-right font-mono text-emerald-700">{ordered > 0 ? ordered.toLocaleString() : "—"}</td>
                         <td className="px-3 py-1.5 text-right font-mono" style={{color:"#7C3AED"}}>{poFcst > 0 ? poFcst.toLocaleString() : "—"}</td>
-                        <td className={`px-3 py-1.5 text-right font-mono font-bold ${toAcq > 0 ? "text-orange-600" : "text-emerald-600"}`}>
-                          {toAcq > 0 ? toAcq.toLocaleString() : "✓"}
+                        <td className="px-3 py-1.5 text-right font-mono">{have > 0 ? have.toLocaleString() : "—"}</td>
+                        <td className={`px-3 py-1.5 text-right font-mono font-bold ${needed === 0 ? "text-muted-foreground" : balance >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                          {needed === 0 ? "—" : balance >= 0 ? `✓ (+${balance.toLocaleString()})` : balance.toLocaleString()}
                         </td>
                       </tr>
                     );
