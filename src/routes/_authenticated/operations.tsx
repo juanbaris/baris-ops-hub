@@ -2896,13 +2896,14 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   // Load published prices from Supabase on mount
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.from("ops_published").select("value").eq("key", "ingredient_prices").maybeSingle();
-      if (data?.value && typeof data.value === "object" && Object.keys(data.value).length > 0) {
-        const pub = data.value as Record<string, number>;
-        setIngPricesPublished(pub);
-        // If no local draft exists, use published
-        try { if (!window.localStorage.getItem("baris.ops.ingPrices.v2")) setIngPrices(prev => ({...prev, ...pub})); } catch {}
-      }
+      try {
+        const { data } = await supabase.from("ops_published").select("value").eq("key", "ingredient_prices").maybeSingle();
+        if (data?.value && typeof data.value === "object" && Object.keys(data.value).length > 0) {
+          const pub = data.value as Record<string, number>;
+          setIngPricesPublished(pub);
+          try { if (!window.localStorage.getItem("baris.ops.ingPrices.v2")) setIngPrices(prev => ({...prev, ...pub})); } catch {}
+        }
+      } catch (e) { console.error("Failed to load published prices:", e); }
     })();
   }, []);
   async function publishIngPrices() {
@@ -2925,11 +2926,13 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   useEffect(() => { try { window.localStorage.setItem("baris.ops.prodCosts.v2", JSON.stringify(prodCosts)); } catch {} }, [prodCosts]);
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.from("ops_published").select("value").eq("key", "production_costs").maybeSingle();
-      if (data?.value && typeof data.value === "object" && Object.keys(data.value).length > 0) {
-        const pub = data.value as Record<string, number>;
-        try { if (!window.localStorage.getItem("baris.ops.prodCosts.v2")) setProdCosts(prev => ({...prev, ...pub})); } catch {}
-      }
+      try {
+        const { data } = await supabase.from("ops_published").select("value").eq("key", "production_costs").maybeSingle();
+        if (data?.value && typeof data.value === "object" && Object.keys(data.value).length > 0) {
+          const pub = data.value as Record<string, number>;
+          try { if (!window.localStorage.getItem("baris.ops.prodCosts.v2")) setProdCosts(prev => ({...prev, ...pub})); } catch {}
+        }
+      } catch (e) { console.error("Failed to load published costs:", e); }
     })();
   }, []);
   // ── Current raw-material stock: defaults live from I&P Summary (net on-hand), editable override ──
@@ -2994,16 +2997,18 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   const [bomFromDb, setBomFromDb] = useState(false);
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.from("ops_bom").select("*");
-      if (data && data.length > 0) {
-        const bom: Record<string, Record<string, number>> = JSON.parse(JSON.stringify(BOM_QTY));
-        for (const row of data) {
-          if (!bom[row.sku]) bom[row.sku] = {};
-          bom[row.sku][row.material] = Number(row.qty_per_case) || 0;
+      try {
+        const { data } = await supabase.from("ops_bom").select("*");
+        if (data && data.length > 0) {
+          const bom: Record<string, Record<string, number>> = JSON.parse(JSON.stringify(BOM_QTY));
+          for (const row of data) {
+            if (!bom[row.sku]) bom[row.sku] = {};
+            bom[row.sku][row.material] = Number(row.qty_per_case) || 0;
+          }
+          setBomQty(bom);
+          setBomFromDb(true);
         }
-        setBomQty(bom);
-        setBomFromDb(true);
-      }
+      } catch (e) { console.error("Failed to load BOM:", e); }
     })();
   }, []);
   function setBomQtyCell(sku:string, mat:string, val:number){
@@ -3045,8 +3050,9 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   const [rmLoaded, setRmLoaded] = useState(false);
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.from("ops_raw_materials").select("*").order("sort_order");
-      if (data && data.length > 0) {
+      try {
+        const { data } = await supabase.from("ops_raw_materials").select("*").order("sort_order");
+        if (data && data.length > 0) {
         setDbMaterials(data as any);
         // Merge DB values into state
         const sc: Record<string,number> = {...DEFAULT_SCRAP};
@@ -3064,6 +3070,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
         setLeadTimes(prev => ({...prev, ...lt}));
         setPayTerms(prev => ({...prev, ...pt}));
       }
+      } catch (e) { console.error("Failed to load raw materials:", e); }
       setRmLoaded(true);
     })();
   }, []);
@@ -3213,31 +3220,30 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   // On mount: load from Supabase first, then check for unsaved localStorage draft
   useEffect(() => {
     (async () => {
-      let base = Object.fromEntries(SKUS.map(s=>[s, FORECAST_MONTHS_OPS.map(()=>0)]));
-      // 1. Load published version from Supabase
-      const { data } = await supabase.from("ops_published").select("value").eq("key", "production_plan").maybeSingle();
-      if (data?.value && typeof data.value === "object" && Object.keys(data.value).length > 0) {
-        base = {...base, ...(data.value as Record<string, number[]>)};
-      }
-      // 2. Check if there's an unsaved local draft (marked by a flag)
-      const hasDraft = window.localStorage.getItem("baris.ops.prodPlanDraft") === "true";
-      if (hasDraft) {
-        try {
-          const raw = window.localStorage.getItem(MANUAL_PROD_KEY);
-          if (raw) {
-            const local = JSON.parse(raw);
-            const localHasData = Object.values(local).some((arr: any) => Array.isArray(arr) && arr.some((v: number) => v > 0));
-            if (localHasData) {
-              setManualProd({...base, ...local});
-              setProdPlanDirty(true);
-              setProdPlanLoaded(true);
-              return;
+      try {
+        let base = Object.fromEntries(SKUS.map(s=>[s, FORECAST_MONTHS_OPS.map(()=>0)]));
+        const { data } = await supabase.from("ops_published").select("value").eq("key", "production_plan").maybeSingle();
+        if (data?.value && typeof data.value === "object" && Object.keys(data.value).length > 0) {
+          base = {...base, ...(data.value as Record<string, number[]>)};
+        }
+        const hasDraft = window.localStorage.getItem("baris.ops.prodPlanDraft") === "true";
+        if (hasDraft) {
+          try {
+            const raw = window.localStorage.getItem(MANUAL_PROD_KEY);
+            if (raw) {
+              const local = JSON.parse(raw);
+              const localHasData = Object.values(local).some((arr: any) => Array.isArray(arr) && arr.some((v: number) => v > 0));
+              if (localHasData) {
+                setManualProd({...base, ...local});
+                setProdPlanDirty(true);
+                setProdPlanLoaded(true);
+                return;
+              }
             }
-          }
-        } catch {}
-      }
-      // No draft: use published
-      setManualProd(base);
+          } catch {}
+        }
+        setManualProd(base);
+      } catch (e) { console.error("Failed to load production plan:", e); }
       setProdPlanLoaded(true);
     })();
   }, []);
@@ -3269,12 +3275,14 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   const [ipPoLoading, setIpPoLoading] = useState(true);
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.from("ops_forecast_po").select("*").order("id");
-      if (data) setIpForecastPOs(data.map((r: any) => ({
-        id: r.id, material: r.material, qty: Number(r.qty) || 0,
-        matCost: Number(r.mat_cost) || 0, freight: Number(r.freight) || 0,
-        mBuy: r.month_buy ?? "", mRecv: r.month_receive ?? "", mPay: r.month_pay ?? "",
-      })));
+      try {
+        const { data } = await supabase.from("ops_forecast_po").select("*").order("id");
+        if (data) setIpForecastPOs(data.map((r: any) => ({
+          id: r.id, material: r.material, qty: Number(r.qty) || 0,
+          matCost: Number(r.mat_cost) || 0, freight: Number(r.freight) || 0,
+          mBuy: r.month_buy ?? "", mRecv: r.month_receive ?? "", mPay: r.month_pay ?? "",
+        })));
+      } catch (e) { console.error("Failed to load forecast POs:", e); }
       setIpPoLoading(false);
     })();
   }, []);
@@ -3380,12 +3388,14 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   // ─── WIP "In production now" (Supabase: ops_wip) ───
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.from("ops_wip").select("*");
-      if (data && data.length > 0) {
-        const w: Record<string, { cases: string; due: string }> = {};
-        for (const r of data) w[r.sku] = { cases: String(r.cases ?? ""), due: r.due_date ?? "" };
-        setWip(prev => ({ ...prev, ...w }));
-      }
+      try {
+        const { data } = await supabase.from("ops_wip").select("*");
+        if (data && data.length > 0) {
+          const w: Record<string, { cases: string; due: string }> = {};
+          for (const r of data) w[r.sku] = { cases: String(r.cases ?? ""), due: r.due_date ?? "" };
+          setWip(prev => ({ ...prev, ...w }));
+        }
+      } catch (e) { console.error("Failed to load WIP:", e); }
     })();
   }, []);
   function updateWip(sku:string, patch:Partial<{cases:string;due:string}>){
