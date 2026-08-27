@@ -1,10 +1,12 @@
 // ─── Core constants ──────────────────────────────────────────────────────────
-const WEEKS_PER_MONTH = 4.345;
-const UNITS_PER_CASE = 8;
-const PRICE_PER_CASE = 36.96;
+export const WEEKS_PER_MONTH = 4.345;
+export const UNITS_PER_CASE = 8;
+export const PRICE_PER_CASE = 36.96;
+export const IMPLIED_ANNUAL_2026 = 55000;
+export const GROWTH = 1.0;
 
 export type Scenario = "Pessimistic" | "Normal" | "Optimistic";
-const SCENARIO_ANNUAL_CASES: Record<Scenario, number> = {
+export const SCENARIO_ANNUAL_CASES: Record<Scenario, number> = {
   Pessimistic: 36000, Normal: 55000, Optimistic: 77000,
 };
 
