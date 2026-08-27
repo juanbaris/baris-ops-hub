@@ -1,7 +1,7 @@
 import PptxGenJS from "pptxgenjs";
 import { buildGrids, SH_PRODUCTS, type SHRec } from "@/lib/stock-health";
 
-export type MonthPoint = { label: string; actual: number; budget: number; open?: number };
+export type MonthPoint = { label: string; actual: number; budget: number; open?: number; replan?: number };
 export type QuarterPoint = { label: string; actual: number; budget: number };
 export type DistSegment = { label: string; value: number; color: string };
 
