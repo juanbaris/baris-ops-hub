@@ -2897,7 +2897,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   useEffect(() => {
     (async () => {
       try {
-        const { data } = await supabase.from("ops_published" as any).select("value").eq("key", "ingredient_prices").maybeSingle();
+        const { data } = await (supabase.from("ops_published" as any) as any).select("value").eq("key", "ingredient_prices").maybeSingle();
         if (data?.value && typeof data.value === "object" && Object.keys(data.value).length > 0) {
           const pub = data.value as Record<string, number>;
           setIngPricesPublished(pub);
@@ -2927,7 +2927,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   useEffect(() => {
     (async () => {
       try {
-        const { data } = await supabase.from("ops_published" as any).select("value").eq("key", "production_costs").maybeSingle();
+        const { data } = await (supabase.from("ops_published" as any) as any).select("value").eq("key", "production_costs").maybeSingle();
         if (data?.value && typeof data.value === "object" && Object.keys(data.value).length > 0) {
           const pub = data.value as Record<string, number>;
           try { if (!window.localStorage.getItem("baris.ops.prodCosts.v2")) setProdCosts(prev => ({...prev, ...pub})); } catch {}
@@ -2998,7 +2998,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   useEffect(() => {
     (async () => {
       try {
-        const { data } = await supabase.from("ops_bom" as any).select("*");
+        const { data } = await (supabase.from("ops_bom" as any) as any).select("*");
         if (data && data.length > 0) {
           const bom: Record<string, Record<string, number>> = JSON.parse(JSON.stringify(BOM_QTY));
           for (const row of data) {
@@ -3148,7 +3148,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     });
     if (e1) { toast.error("Failed to rename: " + e1.message); return; }
     // Update BOM references
-    const { data: bomRows } = await supabase.from("ops_bom" as any).select("*").eq("material", oldName);
+    const { data: bomRows } = await (supabase.from("ops_bom" as any) as any).select("*").eq("material", oldName);
     if (bomRows && bomRows.length > 0) {
       for (const row of bomRows) {
         await supabase.from("ops_bom" as any).upsert({ sku: row.sku, material: newName, qty_per_case: row.qty_per_case }, { onConflict: "sku,material" });
@@ -3222,7 +3222,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     (async () => {
       try {
         let base = Object.fromEntries(SKUS.map(s=>[s, FORECAST_MONTHS_OPS.map(()=>0)]));
-        const { data } = await supabase.from("ops_published" as any).select("value").eq("key", "production_plan").maybeSingle();
+        const { data } = await (supabase.from("ops_published" as any) as any).select("value").eq("key", "production_plan").maybeSingle();
         if (data?.value && typeof data.value === "object" && Object.keys(data.value).length > 0) {
           base = {...base, ...(data.value as Record<string, number[]>)};
         }
@@ -3389,7 +3389,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   useEffect(() => {
     (async () => {
       try {
-        const { data } = await supabase.from("ops_wip" as any).select("*");
+        const { data } = await (supabase.from("ops_wip" as any) as any).select("*");
         if (data && data.length > 0) {
           const w: Record<string, { cases: string; due: string }> = {};
           for (const r of data) w[r.sku] = { cases: String(r.cases ?? ""), due: r.due_date ?? "" };
