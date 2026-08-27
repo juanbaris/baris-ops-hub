@@ -10,7 +10,7 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.5"
+    PostgrestVersion: "14.17"
   }
   public: {
     Tables: {
@@ -1078,6 +1078,150 @@ export type Database = {
           sku?: string
           updated_at?: string | null
           warehouse?: string | null
+        }
+        Relationships: []
+      }
+      ops_bom: {
+        Row: {
+          material: string
+          qty_per_case: number | null
+          sku: string
+        }
+        Insert: {
+          material: string
+          qty_per_case?: number | null
+          sku: string
+        }
+        Update: {
+          material?: string
+          qty_per_case?: number | null
+          sku?: string
+        }
+        Relationships: []
+      }
+      ops_forecast_po: {
+        Row: {
+          created_at: string | null
+          created_by: string | null
+          freight: number | null
+          id: number
+          mat_cost: number | null
+          material: string
+          month_buy: string | null
+          month_pay: string | null
+          month_receive: string | null
+          qty: number | null
+        }
+        Insert: {
+          created_at?: string | null
+          created_by?: string | null
+          freight?: number | null
+          id?: number
+          mat_cost?: number | null
+          material: string
+          month_buy?: string | null
+          month_pay?: string | null
+          month_receive?: string | null
+          qty?: number | null
+        }
+        Update: {
+          created_at?: string | null
+          created_by?: string | null
+          freight?: number | null
+          id?: number
+          mat_cost?: number | null
+          material?: string
+          month_buy?: string | null
+          month_pay?: string | null
+          month_receive?: string | null
+          qty?: number | null
+        }
+        Relationships: []
+      }
+      ops_published: {
+        Row: {
+          key: string
+          published_at: string | null
+          published_by: string | null
+          value: Json
+        }
+        Insert: {
+          key: string
+          published_at?: string | null
+          published_by?: string | null
+          value?: Json
+        }
+        Update: {
+          key?: string
+          published_at?: string | null
+          published_by?: string | null
+          value?: Json
+        }
+        Relationships: []
+      }
+      ops_raw_materials: {
+        Row: {
+          active: boolean | null
+          default_price: number | null
+          display_name: string | null
+          lead_time_weeks: number | null
+          material: string
+          overfill_pct: number | null
+          pack_size: number | null
+          payment_terms: string | null
+          scrap_pct: number | null
+          sort_order: number | null
+          unit: string | null
+        }
+        Insert: {
+          active?: boolean | null
+          default_price?: number | null
+          display_name?: string | null
+          lead_time_weeks?: number | null
+          material: string
+          overfill_pct?: number | null
+          pack_size?: number | null
+          payment_terms?: string | null
+          scrap_pct?: number | null
+          sort_order?: number | null
+          unit?: string | null
+        }
+        Update: {
+          active?: boolean | null
+          default_price?: number | null
+          display_name?: string | null
+          lead_time_weeks?: number | null
+          material?: string
+          overfill_pct?: number | null
+          pack_size?: number | null
+          payment_terms?: string | null
+          scrap_pct?: number | null
+          sort_order?: number | null
+          unit?: string | null
+        }
+        Relationships: []
+      }
+      ops_wip: {
+        Row: {
+          cases: number | null
+          due_date: string | null
+          sku: string
+          updated_at: string | null
+          updated_by: string | null
+        }
+        Insert: {
+          cases?: number | null
+          due_date?: string | null
+          sku: string
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Update: {
+          cases?: number | null
+          due_date?: string | null
+          sku?: string
+          updated_at?: string | null
+          updated_by?: string | null
         }
         Relationships: []
       }

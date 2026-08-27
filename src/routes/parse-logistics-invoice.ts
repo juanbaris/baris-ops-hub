@@ -76,7 +76,7 @@ RULES (very important):
 
 Return numbers as plain numbers (no "$" or commas). Use null (not 0) when a field is genuinely absent, except total_charged which must be a number.`;
 
-export const Route = createFileRoute("/api/parse-logistics-invoice")({
+export const Route = createFileRoute("/parse-logistics-invoice")({
   server: {
     handlers: {
       POST: async ({ request }) => {
