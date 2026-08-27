@@ -2882,12 +2882,53 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   useEffect(()=>{ try { window.localStorage.setItem("baris.ops.safetyWoh.v1", String(safetyWoh)); } catch {} },[safetyWoh]);
   useEffect(()=>{ try { window.localStorage.setItem("baris.ops.minRun.v1", String(minRun)); } catch {} },[minRun]);
   useEffect(()=>{ try { window.localStorage.setItem("baris.ops.freqMonths.v1", String(freqMonths)); } catch {} },[freqMonths]);
-  const [ingPrices,  setIngPrices]  = useState<Record<string,number>>(()=>{
+  // ─── Ingredient Prices: draft in localStorage, publish to Supabase ───
+  const [ingPrices, setIngPrices] = useState<Record<string,number>>(() => {
     try { const raw = window.localStorage.getItem("baris.ops.ingPrices.v2"); if (raw) return {...DEFAULT_ING_PRICES, ...JSON.parse(raw)}; } catch {}
     return {...DEFAULT_ING_PRICES};
   });
-  useEffect(()=>{ try { window.localStorage.setItem("baris.ops.ingPrices.v2", JSON.stringify(ingPrices)); } catch {} },[ingPrices]);
-  const [prodCosts,  setProdCosts]  = useState({...DEFAULT_PROD_COSTS});
+  const [ingPricesPublished, setIngPricesPublished] = useState<Record<string,number>>({});
+  const [ingPricesDirty, setIngPricesDirty] = useState(false);
+  useEffect(() => { try { window.localStorage.setItem("baris.ops.ingPrices.v2", JSON.stringify(ingPrices)); } catch {} }, [ingPrices]);
+  // Load published prices from Supabase on mount
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.from("ops_published").select("value").eq("key", "ingredient_prices").single();
+      if (data?.value && typeof data.value === "object" && Object.keys(data.value).length > 0) {
+        const pub = data.value as Record<string, number>;
+        setIngPricesPublished(pub);
+        // If no local draft exists, use published
+        try { if (!window.localStorage.getItem("baris.ops.ingPrices.v2")) setIngPrices(prev => ({...prev, ...pub})); } catch {}
+      }
+    })();
+  }, []);
+  async function publishIngPrices() {
+    const { error } = await supabase.from("ops_published").upsert({ key: "ingredient_prices", value: ingPrices, published_at: new Date().toISOString() });
+    if (error) { toast.error("Failed to publish prices: " + error.message); return; }
+    setIngPricesPublished(ingPrices); setIngPricesDirty(false);
+    toast.success("✅ Ingredient prices published for all users");
+  }
+  function handleIngPriceChange(mat: string, val: number) {
+    setIngPrices(p => ({...p, [mat]: val}));
+    setIngPricesDirty(true);
+  }
+
+  // ─── Production Costs: draft in localStorage, publish to Supabase ───
+  const [prodCosts, setProdCosts] = useState(() => {
+    try { const raw = window.localStorage.getItem("baris.ops.prodCosts.v2"); if (raw) return {...DEFAULT_PROD_COSTS, ...JSON.parse(raw)}; } catch {}
+    return {...DEFAULT_PROD_COSTS};
+  });
+  const [prodCostsDirty, setProdCostsDirty] = useState(false);
+  useEffect(() => { try { window.localStorage.setItem("baris.ops.prodCosts.v2", JSON.stringify(prodCosts)); } catch {} }, [prodCosts]);
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.from("ops_published").select("value").eq("key", "production_costs").single();
+      if (data?.value && typeof data.value === "object" && Object.keys(data.value).length > 0) {
+        const pub = data.value as Record<string, number>;
+        try { if (!window.localStorage.getItem("baris.ops.prodCosts.v2")) setProdCosts(prev => ({...prev, ...pub})); } catch {}
+      }
+    })();
+  }, []);
   // ── Current raw-material stock: defaults live from I&P Summary (net on-hand), editable override ──
   // From I&P: stock = only RECEIVED purchases minus consumption; ordered = In not yet received.
   const { ipOnHand, ipOrdered } = useMemo(() => {
@@ -2932,21 +2973,35 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   const resetIngInv = (mat: string) => setIngInvOverride(prev => { const n = {...prev}; delete n[mat]; return n; });
   const resetAllIngInv = () => { setIngInvOverride({}); toast.success("Stock reset to IP Summary values"); };
   // ── Payment terms per material (drives Shopping "Paid by" & Payments timing) ──
-  const [payTerms, setPayTerms] = useState<Record<string,PayTerm>>(() => {
-    try { const raw = window.localStorage.getItem(PAY_TERM_KEY); if (raw) return JSON.parse(raw); } catch {}
-    return Object.fromEntries(ALL_INGS.map(k=>[k,"lead" as PayTerm]));
-  });
-  useEffect(()=>{ try { window.localStorage.setItem(PAY_TERM_KEY, JSON.stringify(payTerms)); } catch {} },[payTerms]);
-  // ─── Editable BOM — stored as QTY PER CASE (lbs raw / units packaging); % is a synced view ───
-  const [bomQty, setBomQty] = useState<Record<string, Record<string, number>>>(
-    () => {
-      try { const raw = window.localStorage.getItem(BOM_PCT_KEY); if (raw) return JSON.parse(raw); } catch {}
-      return JSON.parse(JSON.stringify(BOM_QTY));
-    }
+  const [payTerms, setPayTerms] = useState<Record<string,PayTerm>>(() =>
+    Object.fromEntries(ALL_INGS.map(k=>[k,"lead" as PayTerm]))
   );
-  useEffect(()=>{ try { window.localStorage.setItem(BOM_PCT_KEY, JSON.stringify(bomQty)); } catch {} },[bomQty]);
+  // ─── Editable BOM — Supabase: ops_bom. Falls back to hardcoded BOM_QTY. ───
+  const [bomQty, setBomQty] = useState<Record<string, Record<string, number>>>(
+    () => JSON.parse(JSON.stringify(BOM_QTY))
+  );
+  const [bomFromDb, setBomFromDb] = useState(false);
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.from("ops_bom").select("*");
+      if (data && data.length > 0) {
+        const bom: Record<string, Record<string, number>> = JSON.parse(JSON.stringify(BOM_QTY));
+        for (const row of data) {
+          if (!bom[row.sku]) bom[row.sku] = {};
+          bom[row.sku][row.material] = Number(row.qty_per_case) || 0;
+        }
+        setBomQty(bom);
+        setBomFromDb(true);
+      }
+    })();
+  }, []);
   function setBomQtyCell(sku:string, mat:string, val:number){
     setBomQty(prev=>({...prev,[sku]:{...(prev[sku]??{}),[mat]:val}}));
+    // Save to Supabase
+    supabase.from("ops_bom").upsert(
+      { sku, material: mat, qty_per_case: val },
+      { onConflict: "sku,material" }
+    ).then(({ error }) => { if (error) console.error("BOM save error:", error); });
   }
   // Editing the % re-derives qty using the SKU's current total raw lbs as basis
   function setBomPctCell(sku:string, mat:string, pct:number){
@@ -2954,28 +3009,148 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       const row=prev[sku]??{};
       const rawTotal=RAW_MATS.reduce((s,m)=>s+(row[m]??0),0);
       const basis = rawTotal>0 ? rawTotal : LBS_PER_CASE_BOM;
-      return {...prev,[sku]:{...row,[mat]:(pct/100)*basis}};
+      const newVal = (pct/100)*basis;
+      // Save to Supabase
+      supabase.from("ops_bom").upsert({ sku, material: mat, qty_per_case: newVal }, { onConflict: "sku,material" })
+        .then(({ error }) => { if (error) console.error("BOM save error:", error); });
+      return {...prev,[sku]:{...row,[mat]:newVal}};
     });
   }
-  function resetBom(){ setBomQty(JSON.parse(JSON.stringify(BOM_QTY))); toast.success("BOM reset to default"); }
-  // ─── Editable material master: scrap %, overfill %, lead weeks (per material) ───
-  const [matScrap, setMatScrap] = useState<Record<string,number>>(()=>{
-    try { const raw = window.localStorage.getItem("baris.ops.matScrap.v1"); if (raw) return {...DEFAULT_SCRAP, ...JSON.parse(raw)}; } catch {}
-    return {...DEFAULT_SCRAP};
-  });
-  useEffect(()=>{ try { window.localStorage.setItem("baris.ops.matScrap.v1", JSON.stringify(matScrap)); } catch {} },[matScrap]);
-  const [matOverfill, setMatOverfill] = useState<Record<string,number>>(()=>{
-    try { const raw = window.localStorage.getItem("baris.ops.matOverfill.v1"); if (raw) return {...DEFAULT_OVERFILL, ...JSON.parse(raw)}; } catch {}
-    return {...DEFAULT_OVERFILL};
-  });
-  useEffect(()=>{ try { window.localStorage.setItem("baris.ops.matOverfill.v1", JSON.stringify(matOverfill)); } catch {} },[matOverfill]);
-  const [leadTimes, setLeadTimes] = useState<Record<string,number>>(
-    () => {
-      try { const raw = window.localStorage.getItem(LEAD_KEY); if (raw) return {...DEFAULT_LEAD_MAT, ...JSON.parse(raw)}; } catch {}
-      return {...DEFAULT_LEAD_MAT};
+  async function resetBom(){
+    const defaults = JSON.parse(JSON.stringify(BOM_QTY));
+    setBomQty(defaults);
+    // Overwrite all BOM rows in Supabase
+    const rows: {sku:string;material:string;qty_per_case:number}[] = [];
+    for (const [sku, mats] of Object.entries(defaults)) {
+      for (const [mat, qty] of Object.entries(mats as Record<string,number>)) {
+        rows.push({ sku, material: mat, qty_per_case: qty });
+      }
     }
-  );
-  useEffect(()=>{ try { window.localStorage.setItem(LEAD_KEY, JSON.stringify(leadTimes)); } catch {} },[leadTimes]);
+    if (rows.length > 0) await supabase.from("ops_bom").upsert(rows, { onConflict: "sku,material" });
+    toast.success("BOM reset to defaults (Supabase updated)");
+  }
+  // ─── Editable material master: scrap %, overfill %, lead weeks, payment terms (Supabase: ops_raw_materials) ───
+  const [dbMaterials, setDbMaterials] = useState<{material:string;scrap_pct:number;overfill_pct:number;lead_time_weeks:number;payment_terms:string;default_price:number;unit:string;active:boolean;sort_order:number}[]>([]);
+  const [rmLoaded, setRmLoaded] = useState(false);
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.from("ops_raw_materials").select("*").order("sort_order");
+      if (data && data.length > 0) {
+        setDbMaterials(data as any);
+        // Merge DB values into state
+        const sc: Record<string,number> = {...DEFAULT_SCRAP};
+        const ov: Record<string,number> = {...DEFAULT_OVERFILL};
+        const lt: Record<string,number> = {...DEFAULT_LEAD_MAT};
+        const pt: Record<string,PayTerm> = {};
+        for (const r of data) {
+          sc[r.material] = Number(r.scrap_pct) || 0;
+          ov[r.material] = Number(r.overfill_pct) || 0;
+          lt[r.material] = Number(r.lead_time_weeks) || 4;
+          pt[r.material] = (r.payment_terms ?? "lead") as PayTerm;
+        }
+        setMatScrap(prev => ({...prev, ...sc}));
+        setMatOverfill(prev => ({...prev, ...ov}));
+        setLeadTimes(prev => ({...prev, ...lt}));
+        setPayTerms(prev => ({...prev, ...pt}));
+      }
+      setRmLoaded(true);
+    })();
+  }, []);
+
+  // Dynamic materials list = hardcoded + any extra from Supabase
+  const extraMaterials = useMemo(() => {
+    const hardcoded = new Set(ALL_INGS);
+    return dbMaterials.filter(m => m.active && !hardcoded.has(m.material)).map(m => m.material);
+  }, [dbMaterials]);
+  const allMaterialsList = useMemo(() => [...ALL_INGS, ...extraMaterials], [extraMaterials]);
+
+  const [matScrap, setMatScrap] = useState<Record<string,number>>(() => ({...DEFAULT_SCRAP}));
+  const [matOverfill, setMatOverfill] = useState<Record<string,number>>(() => ({...DEFAULT_OVERFILL}));
+  const [leadTimes, setLeadTimes] = useState<Record<string,number>>(() => ({...DEFAULT_LEAD_MAT}));
+
+  // Save material setting to Supabase
+  function saveRawMatField(material: string, field: string, value: any) {
+    supabase.from("ops_raw_materials").upsert(
+      { material, [field]: value },
+      { onConflict: "material" }
+    ).then(({ error }) => { if (error) console.error("Raw mat save error:", error); });
+  }
+  function setMatScrapAndSave(mat: string, val: number) {
+    setMatScrap(m => ({...m, [mat]: val}));
+    saveRawMatField(mat, "scrap_pct", val);
+  }
+  function setMatOverfillAndSave(mat: string, val: number) {
+    setMatOverfill(m => ({...m, [mat]: val}));
+    saveRawMatField(mat, "overfill_pct", val);
+  }
+  function setLeadTimeAndSave(mat: string, val: number) {
+    setLeadTimes(l => ({...l, [mat]: val}));
+    saveRawMatField(mat, "lead_time_weeks", val);
+  }
+  function setPayTermAndSave(mat: string, val: PayTerm) {
+    setPayTerms(p => ({...p, [mat]: val}));
+    saveRawMatField(mat, "payment_terms", val);
+  }
+
+  // Add new material
+  const [showAddMat, setShowAddMat] = useState(false);
+  const [newMatName, setNewMatName] = useState("");
+  async function addNewMaterial() {
+    const name = newMatName.trim();
+    if (!name) return;
+    if (allMaterialsList.includes(name)) { toast.error("Material already exists"); return; }
+    const nextOrder = dbMaterials.length > 0 ? Math.max(...dbMaterials.map(m => m.sort_order)) + 1 : 100;
+    const { error } = await supabase.from("ops_raw_materials").insert({
+      material: name, unit: "lbs", scrap_pct: 0, overfill_pct: 0,
+      lead_time_weeks: 4, payment_terms: "lead", default_price: 0, active: true, sort_order: nextOrder,
+    });
+    if (error) { toast.error("Failed to add material: " + error.message); return; }
+    setDbMaterials(prev => [...prev, { material: name, scrap_pct: 0, overfill_pct: 0, lead_time_weeks: 4, payment_terms: "lead", default_price: 0, unit: "lbs", active: true, sort_order: nextOrder }]);
+    setNewMatName(""); setShowAddMat(false);
+    toast.success(`✅ "${name}" added to materials`);
+  }
+
+  // Rename material
+  const [renamingMat, setRenamingMat] = useState<string|null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  async function renameMaterial() {
+    if (!renamingMat || !renameValue.trim()) return;
+    const oldName = renamingMat;
+    const newName = renameValue.trim();
+    if (oldName === newName) { setRenamingMat(null); return; }
+    // Insert new, copy old values
+    const old = dbMaterials.find(m => m.material === oldName);
+    const { error: e1 } = await supabase.from("ops_raw_materials").insert({
+      material: newName, unit: old?.unit ?? "lbs", scrap_pct: old?.scrap_pct ?? 0,
+      overfill_pct: old?.overfill_pct ?? 0, lead_time_weeks: old?.lead_time_weeks ?? 4,
+      payment_terms: old?.payment_terms ?? "lead", default_price: old?.default_price ?? 0,
+      active: true, sort_order: old?.sort_order ?? 100,
+    });
+    if (e1) { toast.error("Failed to rename: " + e1.message); return; }
+    // Deactivate old
+    await supabase.from("ops_raw_materials").update({ active: false }).eq("material", oldName);
+    // Update BOM references
+    const { data: bomRows } = await supabase.from("ops_bom").select("*").eq("material", oldName);
+    if (bomRows && bomRows.length > 0) {
+      for (const row of bomRows) {
+        await supabase.from("ops_bom").upsert({ sku: row.sku, material: newName, qty_per_case: row.qty_per_case }, { onConflict: "sku,material" });
+      }
+      await supabase.from("ops_bom").delete().eq("material", oldName);
+    }
+    // Update local state
+    setDbMaterials(prev => prev.map(m => m.material === oldName ? { ...m, material: newName } : m).filter(m => m.active));
+    setMatScrap(prev => { const n = {...prev}; n[newName] = n[oldName] ?? 0; delete n[oldName]; return n; });
+    setMatOverfill(prev => { const n = {...prev}; n[newName] = n[oldName] ?? 0; delete n[oldName]; return n; });
+    setLeadTimes(prev => { const n = {...prev}; n[newName] = n[oldName] ?? 4; delete n[oldName]; return n; });
+    setPayTerms(prev => { const n = {...prev}; n[newName] = (n[oldName] ?? "lead") as PayTerm; delete n[oldName]; return n; });
+    setBomQty(prev => {
+      const out = {...prev};
+      for (const sku of Object.keys(out)) { if (out[sku][oldName] != null) { out[sku][newName] = out[sku][oldName]; delete out[sku][oldName]; } }
+      return out;
+    });
+    setRenamingMat(null);
+    toast.success(`✅ "${oldName}" renamed to "${newName}"`);
+  }
   const WIP_KEY="baris.ops.wip.v1";
   const [wip, setWip] = useState<Record<string,{cases:string;due:string}>>(
     Object.fromEntries(SKUS.map(s=>[s,{cases:"",due:""}])));
@@ -2997,22 +3172,54 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     }
   );
   const [showSkuMins, setShowSkuMins] = useState(false);
-  // ─── NEW: manual production overrides ───
+  // ─── Production Plan: draft in localStorage, publish to Supabase ───
   const [manualProd, setManualProd] = useState<Record<string,number[]>>(
     () => {
       try { const raw = window.localStorage.getItem(MANUAL_PROD_KEY); if (raw) return JSON.parse(raw); } catch {}
       return Object.fromEntries(SKUS.map(s=>[s, FORECAST_MONTHS_OPS.map(()=>0)]));
     }
   );
+  const [prodPlanDirty, setProdPlanDirty] = useState(false);
 
   // Persist per-SKU mins
   useEffect(()=>{
     try { window.localStorage.setItem(SKU_MINS_KEY, JSON.stringify(skuMinRuns)); } catch {}
   },[skuMinRuns]);
-  // Persist manual overrides
+  // Persist manual overrides (draft)
   useEffect(()=>{
     try { window.localStorage.setItem(MANUAL_PROD_KEY, JSON.stringify(manualProd)); } catch {}
   },[manualProd]);
+  // Load published plan from Supabase on mount (used as initial if no local draft)
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.from("ops_published").select("value").eq("key", "production_plan").single();
+      if (data?.value && typeof data.value === "object" && Object.keys(data.value).length > 0) {
+        const pub = data.value as Record<string, number[]>;
+        // Only use published if there's no localStorage draft
+        try {
+          if (!window.localStorage.getItem(MANUAL_PROD_KEY)) {
+            setManualProd(prev => ({...prev, ...pub}));
+          }
+        } catch {}
+      }
+    })();
+  }, []);
+  async function publishProdPlan() {
+    const { error } = await supabase.from("ops_published").upsert({
+      key: "production_plan", value: manualProd, published_at: new Date().toISOString(),
+    });
+    if (error) { toast.error("Failed to publish plan: " + error.message); return; }
+    setProdPlanDirty(false);
+    toast.success("✅ Production plan published for all users");
+  }
+  async function publishProdCosts() {
+    const { error } = await supabase.from("ops_published").upsert({
+      key: "production_costs", value: prodCosts, published_at: new Date().toISOString(),
+    });
+    if (error) { toast.error("Failed to publish costs: " + error.message); return; }
+    setProdCostsDirty(false);
+    toast.success("✅ Production costs published for all users");
+  }
 
   // ─── IP Forecast Purchase Orders (Supabase: ops_forecast_po) ───
   const [ipForecastPOs, setIpForecastPOs] = useState<IPForecastPO[]>([]);
@@ -3158,6 +3365,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       arr[monthIdx]=val;
       return {...prev,[sku]:arr};
     });
+    setProdPlanDirty(true);
   }
   function clearAllManual(){
     setManualProd(Object.fromEntries(SKUS.map(s=>[s, FORECAST_MONTHS_OPS.map(()=>0)])));
@@ -3425,6 +3633,11 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
           </div>
           <div className="flex gap-6 items-center">
             <button onClick={clearAllManual} className="rounded border border-border px-3 py-1 text-[10px] text-muted-foreground hover:bg-muted">↺ Clear all</button>
+            {prodPlanDirty && (
+              <button onClick={publishProdPlan} className="rounded-lg px-4 py-1.5 text-[10px] font-semibold text-white animate-pulse" style={{backgroundColor:"#16a34a"}}>
+                📤 Publish plan for all
+              </button>
+            )}
             <div className="text-center"><p className="text-[10px] text-muted-foreground uppercase tracking-wide">Total to produce</p>
               <p className="text-xl font-bold font-mono" style={{color:"#A3224A"}}>{totalProduce.toLocaleString()} cases</p></div>
             <div><p className="text-[10px] text-muted-foreground uppercase tracking-wide">COGS ponderado</p>
@@ -3656,7 +3869,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                       })}
                       <td className="px-4 py-1.5 text-right">
                         <input type="number" step="0.001" value={ingPrices[mat]??0}
-                          onChange={e=>setIngPrices(p=>({...p,[mat]:parseFloat(e.target.value)||0}))}
+                          onChange={e=>handleIngPriceChange(mat, parseFloat(e.target.value)||0)}
                           className={`${inp} w-20 text-right`}/>
                       </td>
                     </tr>
@@ -3847,9 +4060,47 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       {procTab==="raw_materials" && (
         <div className="space-y-3">
           <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-700 flex items-center justify-between">
-            <span>💡 Material master — scrap %, overfill %, lead time, price &amp; current stock. Stock pulls live from I&amp;P Summary; once you edit a value it stays fixed. All editable.</span>
-            <button onClick={resetAllIngInv} className="rounded border border-blue-300 bg-white px-3 py-1 text-[10px] font-semibold text-blue-700 hover:bg-blue-100 whitespace-nowrap ml-3">↻ Reset stock to IP Summary</button>
+            <span>💡 Material master — shared across all users (Supabase). Click a name to rename. Add new materials below.</span>
+            <div className="flex gap-2 flex-wrap">
+              <button onClick={resetAllIngInv} className="rounded border border-blue-300 bg-white px-3 py-1 text-[10px] font-semibold text-blue-700 hover:bg-blue-100 whitespace-nowrap">↻ Reset stock to IP Summary</button>
+              {ingPricesDirty && (
+                <button onClick={publishIngPrices} className="rounded px-3 py-1 text-[10px] font-semibold text-white whitespace-nowrap" style={{backgroundColor:"#16a34a"}}>
+                  📤 Publish prices
+                </button>
+              )}
+              {prodCostsDirty && (
+                <button onClick={publishProdCosts} className="rounded px-3 py-1 text-[10px] font-semibold text-white whitespace-nowrap" style={{backgroundColor:"#16a34a"}}>
+                  📤 Publish costs
+                </button>
+              )}
+              <button onClick={() => setShowAddMat(true)} className="rounded px-3 py-1 text-[10px] font-semibold text-white whitespace-nowrap" style={{backgroundColor:"#A3224A"}}>+ Add material</button>
+            </div>
           </div>
+
+          {/* Add material form */}
+          {showAddMat && (
+            <div className="rounded-xl border-2 border-emerald-300 bg-emerald-50 px-4 py-3 flex items-center gap-3">
+              <span className="text-xs font-semibold text-emerald-800">New material:</span>
+              <input type="text" value={newMatName} onChange={e => setNewMatName(e.target.value)}
+                placeholder="e.g. Strawberry" className={`${inp} w-48`}
+                onKeyDown={e => { if (e.key === "Enter") addNewMaterial(); }} autoFocus />
+              <button onClick={addNewMaterial} className="rounded bg-emerald-600 px-3 py-1 text-[10px] font-semibold text-white">Add</button>
+              <button onClick={() => { setShowAddMat(false); setNewMatName(""); }} className="rounded border border-border px-3 py-1 text-[10px] text-muted-foreground">Cancel</button>
+            </div>
+          )}
+
+          {/* Rename modal */}
+          {renamingMat && (
+            <div className="rounded-xl border-2 border-amber-300 bg-amber-50 px-4 py-3 flex items-center gap-3">
+              <span className="text-xs font-semibold text-amber-800">Rename "{renamingMat}" to:</span>
+              <input type="text" value={renameValue} onChange={e => setRenameValue(e.target.value)}
+                className={`${inp} w-48`} onKeyDown={e => { if (e.key === "Enter") renameMaterial(); }} autoFocus />
+              <button onClick={renameMaterial} className="rounded bg-amber-600 px-3 py-1 text-[10px] font-semibold text-white">Rename</button>
+              <button onClick={() => setRenamingMat(null)} className="rounded border border-border px-3 py-1 text-[10px] text-muted-foreground">Cancel</button>
+              <span className="text-[10px] text-amber-600">⚠ Also updates BOM references</span>
+            </div>
+          )}
+
           <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
             <table className="w-full text-sm min-w-max">
               <thead>
@@ -3869,33 +4120,39 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                 </tr>
               </thead>
               <tbody>
-                {ALL_INGS.map(ing=>{
+                {allMaterialsList.map(ing=>{
                   const inv=parseInt(ingInv[ing])||0;
                   const price=ingPrices[ing]??0;
-                  const raw=isRawMat(ing);
+                  const raw=isRawMat(ing) || extraMaterials.includes(ing);
                   const sc=matScrap[ing]??0, ov=matOverfill[ing]??0;
                   const factor=(1+sc/100)*(1+ov/100);
+                  const isExtra = extraMaterials.includes(ing);
                   return (
                     <tr key={ing} className="border-t border-border/60 hover:bg-muted/20">
-                      <td className="px-4 py-2 font-medium sticky left-0 bg-card">{ing}</td>
+                      <td className="px-4 py-2 font-medium sticky left-0 bg-card">
+                        <button onClick={() => { setRenamingMat(ing); setRenameValue(ing); }}
+                          className="text-left hover:underline hover:text-blue-600 transition-colors"
+                          title="Click to rename">{ing}</button>
+                        {isExtra && <span className="ml-1 rounded px-1.5 py-0.5 text-[9px] font-semibold bg-emerald-100 text-emerald-700">NEW</span>}
+                      </td>
                       <td className="px-3 py-2 text-center text-[10px] text-muted-foreground">{raw?"Raw":"Pack"}</td>
                       <td className="px-3 py-2 text-center text-[10px] text-muted-foreground">{raw?"lbs":"units"}</td>
                       <td className="px-3 py-2 text-center">
                         <input type="number" min={0} step={1} value={sc}
-                          onChange={e=>setMatScrap(m=>({...m,[ing]:parseFloat(e.target.value)||0}))} className={`${inp} w-14 text-center`}/>
+                          onChange={e=>setMatScrapAndSave(ing, parseFloat(e.target.value)||0)} className={`${inp} w-14 text-center`}/>
                       </td>
                       <td className="px-3 py-2 text-center">
                         <input type="number" min={0} step={1} value={ov}
-                          onChange={e=>setMatOverfill(m=>({...m,[ing]:parseFloat(e.target.value)||0}))} className={`${inp} w-14 text-center`}/>
+                          onChange={e=>setMatOverfillAndSave(ing, parseFloat(e.target.value)||0)} className={`${inp} w-14 text-center`}/>
                       </td>
                       <td className="px-3 py-2 text-center font-mono text-[11px] text-muted-foreground">{factor.toFixed(3)}</td>
                       <td className="px-3 py-2 text-center">
                         <input type="number" min={0} step={1} value={leadTimes[ing]??DEFAULT_LEAD_WEEKS}
-                          onChange={e=>setLeadTimes(l=>({...l,[ing]:parseInt(e.target.value)||0}))} className={`${inp} w-14 text-center`}/>
+                          onChange={e=>setLeadTimeAndSave(ing, parseInt(e.target.value)||0)} className={`${inp} w-14 text-center`}/>
                       </td>
                       <td className="px-3 py-2 text-center">
-                        <select value={payTerms[ing]??"lead"} onChange={e=>setPayTerms(p=>({...p,[ing]:e.target.value as PayTerm}))}
-                          className={`${inp} text-[11px]`} title="When this material is paid, relative to ordering/receiving">
+                        <select value={payTerms[ing]??"lead"} onChange={e=>setPayTermAndSave(ing, e.target.value as PayTerm)}
+                          className={`${inp} text-[11px]`}>
                           <option value="t0">On order (t=0)</option>
                           <option value="lead">On arrival (t=lead)</option>
                           <option value="lead1m">30d after receipt</option>
@@ -3904,7 +4161,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                       <td className="px-3 py-2 text-right font-mono text-muted-foreground">{(ING_PACK_SIZES[ing]??0).toLocaleString()}</td>
                       <td className="px-3 py-2 text-right">
                         <input type="number" step="0.001" value={price}
-                          onChange={e=>setIngPrices(p=>({...p,[ing]:parseFloat(e.target.value)||0}))} className={`${inp} w-20 text-right`}/>
+                          onChange={e=>handleIngPriceChange(ing, parseFloat(e.target.value)||0)} className={`${inp} w-20 text-right`}/>
                       </td>
                       <td className="px-3 py-2 text-right">
                         <div className="flex items-center justify-end gap-1">
@@ -3925,8 +4182,8 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
               <tfoot>
                 <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
                   <td className="px-4 py-2 font-semibold text-xs sticky left-0" style={{backgroundColor:"#1C2340"}} colSpan={10}>TOTAL INVENTORY VALUE</td>
-                  <td className="px-3 py-2 text-right font-mono">{ALL_INGS.reduce((s,ing)=>s+(parseInt(ingInv[ing])||0),0).toLocaleString()}</td>
-                  <td className="px-3 py-2 text-right font-mono font-bold text-emerald-400">${Math.round(ALL_INGS.reduce((s,ing)=>{const inv=parseInt(ingInv[ing])||0;return s+inv*(ingPrices[ing]??0);},0)).toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right font-mono">{allMaterialsList.reduce((s,ing)=>s+(parseInt(ingInv[ing])||0),0).toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right font-mono font-bold text-emerald-400">${Math.round(allMaterialsList.reduce((s,ing)=>{const inv=parseInt(ingInv[ing])||0;return s+inv*(ingPrices[ing]??0);},0)).toLocaleString()}</td>
                 </tr>
               </tfoot>
             </table>
