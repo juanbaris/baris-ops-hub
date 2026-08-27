@@ -13,6 +13,7 @@ import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiProcessPoRouteImport } from './routes/api/process-po'
+import { Route as ApiParseLogisticsInvoiceRouteImport } from './routes/api/parse-logistics-invoice'
 import { Route as ApiAiSearchRouteImport } from './routes/api/ai-search'
 import { Route as AuthenticatedSystemRouteImport } from './routes/_authenticated/system'
 import { Route as AuthenticatedSalesRouteImport } from './routes/_authenticated/sales'
@@ -43,6 +44,11 @@ const IndexRoute = IndexRouteImport.update({
 const ApiProcessPoRoute = ApiProcessPoRouteImport.update({
   id: '/api/process-po',
   path: '/api/process-po',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiParseLogisticsInvoiceRoute = ApiParseLogisticsInvoiceRouteImport.update({
+  id: '/api/parse-logistics-invoice',
+  path: '/api/parse-logistics-invoice',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiAiSearchRoute = ApiAiSearchRouteImport.update({
@@ -124,6 +130,7 @@ export interface FileRoutesByFullPath {
   '/system': typeof AuthenticatedSystemRoute
   '/api/ai-search': typeof ApiAiSearchRoute
   '/api/process-po': typeof ApiProcessPoRoute
+  '/api/parse-logistics-invoice': typeof ApiParseLogisticsInvoiceRoute
   '/api/public/seed-users': typeof ApiPublicSeedUsersRoute
 }
 export interface FileRoutesByTo {
@@ -141,6 +148,7 @@ export interface FileRoutesByTo {
   '/system': typeof AuthenticatedSystemRoute
   '/api/ai-search': typeof ApiAiSearchRoute
   '/api/process-po': typeof ApiProcessPoRoute
+  '/api/parse-logistics-invoice': typeof ApiParseLogisticsInvoiceRoute
   '/api/public/seed-users': typeof ApiPublicSeedUsersRoute
 }
 export interface FileRoutesById {
@@ -160,6 +168,7 @@ export interface FileRoutesById {
   '/_authenticated/system': typeof AuthenticatedSystemRoute
   '/api/ai-search': typeof ApiAiSearchRoute
   '/api/process-po': typeof ApiProcessPoRoute
+  '/api/parse-logistics-invoice': typeof ApiParseLogisticsInvoiceRoute
   '/api/public/seed-users': typeof ApiPublicSeedUsersRoute
 }
 export interface FileRouteTypes {
@@ -179,6 +188,7 @@ export interface FileRouteTypes {
     | '/system'
     | '/api/ai-search'
     | '/api/process-po'
+    | '/api/parse-logistics-invoice'
     | '/api/public/seed-users'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -196,6 +206,7 @@ export interface FileRouteTypes {
     | '/system'
     | '/api/ai-search'
     | '/api/process-po'
+    | '/api/parse-logistics-invoice'
     | '/api/public/seed-users'
   id:
     | '__root__'
@@ -214,6 +225,7 @@ export interface FileRouteTypes {
     | '/_authenticated/system'
     | '/api/ai-search'
     | '/api/process-po'
+    | '/api/parse-logistics-invoice'
     | '/api/public/seed-users'
   fileRoutesById: FileRoutesById
 }
@@ -223,6 +235,7 @@ export interface RootRouteChildren {
   AuthRoute: typeof AuthRoute
   ApiAiSearchRoute: typeof ApiAiSearchRoute
   ApiProcessPoRoute: typeof ApiProcessPoRoute
+  ApiParseLogisticsInvoiceRoute: typeof ApiParseLogisticsInvoiceRoute
   ApiPublicSeedUsersRoute: typeof ApiPublicSeedUsersRoute
 }
 
@@ -254,6 +267,13 @@ declare module '@tanstack/react-router' {
       path: '/api/process-po'
       fullPath: '/api/process-po'
       preLoaderRoute: typeof ApiProcessPoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/parse-logistics-invoice': {
+      id: '/api/parse-logistics-invoice'
+      path: '/api/parse-logistics-invoice'
+      fullPath: '/api/parse-logistics-invoice'
+      preLoaderRoute: typeof ApiParseLogisticsInvoiceRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/ai-search': {
@@ -378,6 +398,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthRoute: AuthRoute,
   ApiAiSearchRoute: ApiAiSearchRoute,
   ApiProcessPoRoute: ApiProcessPoRoute,
+  ApiParseLogisticsInvoiceRoute: ApiParseLogisticsInvoiceRoute,
   ApiPublicSeedUsersRoute: ApiPublicSeedUsersRoute,
 }
 export const routeTree = rootRouteImport
