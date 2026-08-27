@@ -432,7 +432,7 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
           const patch: Record<string, any> = { updated_at: new Date().toISOString() };
           if (form.expiry) patch.expiry_date = form.expiry;
           if (form.cogs_per_case) { patch.cogs_per_case = Number(form.cogs_per_case); patch.cogs_status = "confirmed"; }
-          await supabase.from("lot_master").update(patch).eq("id", (existing as any).id);
+          await supabase.from("lot_master").update(patch as any).eq("id", (existing as any).id);
         } else {
           await supabase.from("lot_master").insert({
             lot_number: lotNo, warehouse: form.warehouse, sku: form.sku,
@@ -2930,7 +2930,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
         const { data } = await (supabase.from("ops_published" as any) as any).select("value").eq("key", "production_costs").maybeSingle();
         if (data?.value && typeof data.value === "object" && Object.keys(data.value).length > 0) {
           const pub = data.value as Record<string, number>;
-          try { if (!window.localStorage.getItem("baris.ops.prodCosts.v2")) setProdCosts(prev => ({...prev, ...pub})); } catch {}
+          try { if (!window.localStorage.getItem("baris.ops.prodCosts.v2")) setProdCosts((prev: any) => ({...prev, ...pub})); } catch {}
         }
       } catch (e) { console.error("Failed to load published costs:", e); }
     })();
@@ -3051,7 +3051,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   useEffect(() => {
     (async () => {
       try {
-        const { data } = await supabase.from("ops_raw_materials" as any).select("*").order("sort_order");
+        const { data } = await (supabase.from("ops_raw_materials" as any) as any).select("*").order("sort_order");
         if (data && data.length > 0) {
         setDbMaterials(data as any);
         // Merge DB values into state
@@ -3296,7 +3296,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     const rcvKey = `${rcvD.getFullYear()}-${String(rcvD.getMonth()+1).padStart(2,"0")}`;
     const payD = new Date(rcvD); payD.setMonth(payD.getMonth() + 1);
     const payKey = `${payD.getFullYear()}-${String(payD.getMonth()+1).padStart(2,"0")}`;
-    const { data, error } = await supabase.from("ops_forecast_po" as any)
+    const { data, error }: any = await (supabase.from("ops_forecast_po" as any) as any)
       .insert({ material: firstRawMat, qty: 0, mat_cost: 0, freight: 0, month_buy: buyKey, month_receive: rcvKey, month_pay: payKey })
       .select().single();
     if (error) { toast.error("Failed to add PO: " + error.message); return; }
@@ -3991,7 +3991,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
             <p className="text-xs font-semibold text-muted-foreground mb-3 uppercase tracking-wide">Heinlein tolling ($/unit)</p>
             <div className="w-40">
               <input type="number" step="0.001" value={prodCosts.tolling_per_unit}
-                onChange={e=>setProdCosts(c=>({...c,tolling_per_unit:parseFloat(e.target.value)||0}))}
+                onChange={e=>setProdCosts((c: any)=>({...c,tolling_per_unit:parseFloat(e.target.value)||0}))}
                 className={`${inp} w-full`}/>
             </div>
             <p className="text-[11px] text-muted-foreground mt-2">Packaging (cups, lids, sealers, cases) now lives in the BOM above with its own price. COGS below applies each material's scrap % + overfill % from Raw Materials.</p>
