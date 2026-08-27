@@ -2804,7 +2804,7 @@ function calcCOGSFull(prices: Record<string,number>, costs: typeof DEFAULT_PROD_
       const price=prices[mat]??0;
       const factor=(1+(matScrap[mat]??0)/100)*(1+(matOverfill[mat]??0)/100);
       const cost=qty*price*factor;   // per case
-      if (isRawMat(mat)) {
+      if (isRawMat(mat) || !mat.startsWith("Cup") && !mat.startsWith("Lid") && !mat.startsWith("Sealer") && !mat.startsWith("Master")) {
         if (mat==="IQF Raspberries") rasp+=cost;
         else if (mat.startsWith("Choc")) choc+=cost;
         else other+=cost;
@@ -3070,7 +3070,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     const hardcoded = new Set(ALL_INGS);
     return dbMaterials.filter(m => m.active && !hardcoded.has(m.material)).map(m => m.material);
   }, [dbMaterials]);
-  const allMaterialsList = useMemo(() => [...ALL_INGS, ...extraMaterials], [extraMaterials]);
+  const allMaterialsList = useMemo(() => [...RAW_MATS, ...extraMaterials, ...PACK_MATS], [extraMaterials]);
 
   const [matScrap, setMatScrap] = useState<Record<string,number>>(() => ({...DEFAULT_SCRAP}));
   const [matOverfill, setMatOverfill] = useState<Record<string,number>>(() => ({...DEFAULT_OVERFILL}));
@@ -3871,7 +3871,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
               </thead>
               <tbody>
                 {allMaterialsList.filter(mat=>PROC_SKUS.some(sku=>(bomQty[sku]?.[mat]??0)>0) || extraMaterials.includes(mat)).map(mat=>{
-                  const raw=isRawMat(mat);
+                  const raw=isRawMat(mat) || extraMaterials.includes(mat);
                   return (
                     <tr key={mat} className="border-t border-border/60 hover:bg-muted/20">
                       <td className="px-4 py-1.5 font-medium sticky left-0 bg-card">{mat}</td>
