@@ -605,6 +605,7 @@ function HomePage() {
                   year: today.getFullYear(),
                   asOf: today.toISOString().slice(0, 10),
                   stockHealth: shRecords,
+                  highlightIndex: today.getMonth(),
                 });
                 toast.success("PowerPoint generated");
               } catch (e) {

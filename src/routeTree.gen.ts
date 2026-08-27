@@ -9,11 +9,11 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as ParseLogisticsInvoiceRouteImport } from './routes/parse-logistics-invoice'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiProcessPoRouteImport } from './routes/api/process-po'
-import { Route as ApiParseLogisticsInvoiceRouteImport } from './routes/api/parse-logistics-invoice'
 import { Route as ApiAiSearchRouteImport } from './routes/api/ai-search'
 import { Route as AuthenticatedSystemRouteImport } from './routes/_authenticated/system'
 import { Route as AuthenticatedSalesRouteImport } from './routes/_authenticated/sales'
@@ -27,6 +27,11 @@ import { Route as AuthenticatedFinanceRouteImport } from './routes/_authenticate
 import { Route as AuthenticatedAccountingRouteImport } from './routes/_authenticated/Accounting'
 import { Route as ApiPublicSeedUsersRouteImport } from './routes/api/public/seed-users'
 
+const ParseLogisticsInvoiceRoute = ParseLogisticsInvoiceRouteImport.update({
+  id: '/parse-logistics-invoice',
+  path: '/parse-logistics-invoice',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthRoute = AuthRouteImport.update({
   id: '/auth',
   path: '/auth',
@@ -44,11 +49,6 @@ const IndexRoute = IndexRouteImport.update({
 const ApiProcessPoRoute = ApiProcessPoRouteImport.update({
   id: '/api/process-po',
   path: '/api/process-po',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiParseLogisticsInvoiceRoute = ApiParseLogisticsInvoiceRouteImport.update({
-  id: '/api/parse-logistics-invoice',
-  path: '/api/parse-logistics-invoice',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiAiSearchRoute = ApiAiSearchRouteImport.update({
@@ -118,6 +118,7 @@ const ApiPublicSeedUsersRoute = ApiPublicSeedUsersRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
+  '/parse-logistics-invoice': typeof ParseLogisticsInvoiceRoute
   '/Accounting': typeof AuthenticatedAccountingRoute
   '/finance': typeof AuthenticatedFinanceRoute
   '/fp-movements': typeof AuthenticatedFpMovementsRoute
@@ -130,12 +131,12 @@ export interface FileRoutesByFullPath {
   '/system': typeof AuthenticatedSystemRoute
   '/api/ai-search': typeof ApiAiSearchRoute
   '/api/process-po': typeof ApiProcessPoRoute
-  '/api/parse-logistics-invoice': typeof ApiParseLogisticsInvoiceRoute
   '/api/public/seed-users': typeof ApiPublicSeedUsersRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
+  '/parse-logistics-invoice': typeof ParseLogisticsInvoiceRoute
   '/Accounting': typeof AuthenticatedAccountingRoute
   '/finance': typeof AuthenticatedFinanceRoute
   '/fp-movements': typeof AuthenticatedFpMovementsRoute
@@ -148,7 +149,6 @@ export interface FileRoutesByTo {
   '/system': typeof AuthenticatedSystemRoute
   '/api/ai-search': typeof ApiAiSearchRoute
   '/api/process-po': typeof ApiProcessPoRoute
-  '/api/parse-logistics-invoice': typeof ApiParseLogisticsInvoiceRoute
   '/api/public/seed-users': typeof ApiPublicSeedUsersRoute
 }
 export interface FileRoutesById {
@@ -156,6 +156,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
+  '/parse-logistics-invoice': typeof ParseLogisticsInvoiceRoute
   '/_authenticated/Accounting': typeof AuthenticatedAccountingRoute
   '/_authenticated/finance': typeof AuthenticatedFinanceRoute
   '/_authenticated/fp-movements': typeof AuthenticatedFpMovementsRoute
@@ -168,7 +169,6 @@ export interface FileRoutesById {
   '/_authenticated/system': typeof AuthenticatedSystemRoute
   '/api/ai-search': typeof ApiAiSearchRoute
   '/api/process-po': typeof ApiProcessPoRoute
-  '/api/parse-logistics-invoice': typeof ApiParseLogisticsInvoiceRoute
   '/api/public/seed-users': typeof ApiPublicSeedUsersRoute
 }
 export interface FileRouteTypes {
@@ -176,6 +176,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/auth'
+    | '/parse-logistics-invoice'
     | '/Accounting'
     | '/finance'
     | '/fp-movements'
@@ -188,12 +189,12 @@ export interface FileRouteTypes {
     | '/system'
     | '/api/ai-search'
     | '/api/process-po'
-    | '/api/parse-logistics-invoice'
     | '/api/public/seed-users'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/auth'
+    | '/parse-logistics-invoice'
     | '/Accounting'
     | '/finance'
     | '/fp-movements'
@@ -206,13 +207,13 @@ export interface FileRouteTypes {
     | '/system'
     | '/api/ai-search'
     | '/api/process-po'
-    | '/api/parse-logistics-invoice'
     | '/api/public/seed-users'
   id:
     | '__root__'
     | '/'
     | '/_authenticated'
     | '/auth'
+    | '/parse-logistics-invoice'
     | '/_authenticated/Accounting'
     | '/_authenticated/finance'
     | '/_authenticated/fp-movements'
@@ -225,7 +226,6 @@ export interface FileRouteTypes {
     | '/_authenticated/system'
     | '/api/ai-search'
     | '/api/process-po'
-    | '/api/parse-logistics-invoice'
     | '/api/public/seed-users'
   fileRoutesById: FileRoutesById
 }
@@ -233,14 +233,21 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
+  ParseLogisticsInvoiceRoute: typeof ParseLogisticsInvoiceRoute
   ApiAiSearchRoute: typeof ApiAiSearchRoute
   ApiProcessPoRoute: typeof ApiProcessPoRoute
-  ApiParseLogisticsInvoiceRoute: typeof ApiParseLogisticsInvoiceRoute
   ApiPublicSeedUsersRoute: typeof ApiPublicSeedUsersRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/parse-logistics-invoice': {
+      id: '/parse-logistics-invoice'
+      path: '/parse-logistics-invoice'
+      fullPath: '/parse-logistics-invoice'
+      preLoaderRoute: typeof ParseLogisticsInvoiceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/auth': {
       id: '/auth'
       path: '/auth'
@@ -267,13 +274,6 @@ declare module '@tanstack/react-router' {
       path: '/api/process-po'
       fullPath: '/api/process-po'
       preLoaderRoute: typeof ApiProcessPoRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/parse-logistics-invoice': {
-      id: '/api/parse-logistics-invoice'
-      path: '/api/parse-logistics-invoice'
-      fullPath: '/api/parse-logistics-invoice'
-      preLoaderRoute: typeof ApiParseLogisticsInvoiceRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/ai-search': {
@@ -396,9 +396,9 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
+  ParseLogisticsInvoiceRoute: ParseLogisticsInvoiceRoute,
   ApiAiSearchRoute: ApiAiSearchRoute,
   ApiProcessPoRoute: ApiProcessPoRoute,
-  ApiParseLogisticsInvoiceRoute: ApiParseLogisticsInvoiceRoute,
   ApiPublicSeedUsersRoute: ApiPublicSeedUsersRoute,
 }
 export const routeTree = rootRouteImport

@@ -1,7 +1,7 @@
 import PptxGenJS from "pptxgenjs";
 import { buildGrids, SH_PRODUCTS, type SHRec } from "@/lib/stock-health";
 
-export type MonthPoint = { label: string; actual: number; budget: number; open?: number };
+export type MonthPoint = { label: string; actual: number; budget: number; open?: number; replan?: number };
 export type QuarterPoint = { label: string; actual: number; budget: number };
 export type DistSegment = { label: string; value: number; color: string };
 
@@ -11,6 +11,7 @@ const BURGUNDY = "A3224A";
 const GREEN = "7EB53F";
 const GRAY = "94A3B8";
 const YELLOW = "F5A623";
+const NAVY_BLACK = "111827";
 
 function titleBar(slide: PptxGenJS.Slide, title: string, subtitle: string) {
   slide.background = { color: CREAM };
@@ -25,31 +26,103 @@ export async function generateWeeklyDeck(opts: {
   year: number;
   asOf: string;
   stockHealth?: SHRec[];
+  highlightIndex?: number;
 }) {
   const pptx = new PptxGenJS();
   pptx.layout = "LAYOUT_16x9";
   pptx.title = `BARIS Weekly Meeting · ${opts.asOf}`;
 
-  // Slide 1 — Monthly sales
-  const s1 = pptx.addSlide();
-  titleBar(s1, "Actual vs. Budget Sales", `Monthly sales — actual, budget & open orders · ${opts.year}`);
-  s1.addChart(
-    pptx.ChartType.bar,
-    [
-      { name: "Actual Sales $", labels: opts.monthly.map(m => m.label), values: opts.monthly.map(m => m.actual) },
-      { name: "Budget Sales $", labels: opts.monthly.map(m => m.label), values: opts.monthly.map(m => m.budget) },
-      { name: "Open Orders $", labels: opts.monthly.map(m => m.label), values: opts.monthly.map(m => m.open ?? 0) },
-    ],
-    {
-      x: 0.5, y: 1.4, w: 9, h: 3.8,
-      barDir: "col", barGrouping: "clustered",
-      chartColors: [GREEN, GRAY, YELLOW],
-      showLegend: true, legendPos: "b", legendFontSize: 11,
-      showValue: true, dataLabelFontSize: 8, dataLabelFormatCode: '$#,##0,"k"',
-      catAxisLabelFontSize: 11, valAxisLabelFontSize: 10, valAxisLabelFormatCode: '$#,##0',
-      valGridLine: { style: "solid", color: "E5E7EB" },
-    },
-  );
+  // Slide 1 — Monthly sales (drawn with shapes so it mirrors the Home chart exactly:
+  // open orders stack on top of the current month's invoiced bar, REPLAN shown in black)
+  {
+    const s = pptx.addSlide();
+    titleBar(s, "Monthly Sales", `Invoiced vs Best Estimate vs Open vs REPLAN · ${opts.year} · $ USD gross sales`);
+
+    const hi = opts.highlightIndex ?? -1;
+    const data = opts.monthly;
+    const hasOpen = data.some(d => (d.open ?? 0) > 0);
+    const hasReplan = data.some(d => (d.replan ?? 0) > 0);
+    const fmtK = (v: number) => `$${Math.round(v / 1000).toLocaleString()}k`;
+
+    const plotX = 1.05, plotW = 8.4, plotTop = 1.75, plotH = 2.75;
+    const base = plotTop + plotH;
+    const max = Math.max(
+      1,
+      ...data.map((d, i) => Math.max(d.actual + (i === hi ? d.open ?? 0 : 0), d.budget, d.replan ?? 0, d.open ?? 0)),
+    ) * 1.12;
+
+    // gridlines + axis labels
+    for (let g = 0; g <= 4; g++) {
+      const y = base - (plotH * g) / 4;
+      s.addShape(pptx.ShapeType.rect, { x: plotX, y, w: plotW, h: 0.005, fill: { color: "E5E7EB" } });
+      s.addText(fmtK((max * g) / 4), {
+        x: plotX - 1.0, y: y - 0.12, w: 0.9, h: 0.24, align: "right", valign: "middle",
+        fontSize: 8, color: "9CA3AF", fontFace: "Arial", margin: 0,
+      });
+    }
+
+    const groupW = plotW / data.length;
+    data.forEach((d, i) => {
+      const stacked = i === hi;
+      const bars: { v: number; c: string }[] = [
+        { v: d.actual, c: GREEN },
+        { v: d.budget, c: GRAY },
+        ...(hasOpen && !stacked ? [{ v: d.open ?? 0, c: YELLOW }] : []),
+        ...(hasReplan ? [{ v: d.replan ?? 0, c: NAVY_BLACK }] : []),
+      ].filter(b => b.v > 0);
+
+      const barW = Math.min(0.17, (groupW * 0.82) / Math.max(1, bars.length));
+      const totalW = barW * bars.length + 0.03 * (bars.length - 1);
+      let bx = plotX + groupW * i + (groupW - totalW) / 2;
+
+      bars.forEach(b => {
+        const h = (b.v / max) * plotH;
+        s.addShape(pptx.ShapeType.rect, { x: bx, y: base - h, w: barW, h, fill: { color: b.c } });
+        const insideBar = stacked && b.c === GREEN && (d.open ?? 0) > 0;
+        s.addText(fmtK(b.v), {
+          x: insideBar ? bx - 0.14 : bx - 0.18, y: insideBar ? base - h + 0.02 : base - h - 0.22,
+          w: insideBar ? barW + 0.28 : barW + 0.36, h: 0.2,
+          align: "center", valign: insideBar ? "top" : "bottom",
+          fontSize: 6.5, bold: insideBar,
+          color: insideBar ? "FFFFFF" : b.c === GREEN ? "4D7A1F" : b.c === NAVY_BLACK ? NAVY_BLACK : "6B7280",
+          fontFace: "Arial", margin: 0,
+        });
+        bx += barW + 0.03;
+
+        // open orders stacked on top of the invoiced bar at the current month
+        if (stacked && b.c === GREEN && (d.open ?? 0) > 0) {
+          const oh = ((d.open ?? 0) / max) * plotH;
+          const ox = bx - barW - 0.03;
+          s.addShape(pptx.ShapeType.rect, { x: ox, y: base - h - oh, w: barW, h: oh, fill: { color: YELLOW } });
+          s.addText(fmtK(d.open ?? 0), {
+            x: ox - 0.18, y: base - h - oh - 0.22, w: barW + 0.36, h: 0.2, align: "center", valign: "bottom",
+            fontSize: 6.5, color: "B26A00", fontFace: "Arial", margin: 0,
+          });
+        }
+      });
+
+      s.addText(d.label, {
+        x: plotX + groupW * i, y: base + 0.06, w: groupW, h: 0.24, align: "center",
+        fontSize: 9, bold: i === hi, color: i === hi ? NAVY : "6B7280", fontFace: "Arial", margin: 0,
+      });
+    });
+
+    // legend
+    const legend: { label: string; color: string }[] = [
+      { label: "Invoiced sales", color: GREEN },
+      { label: "Budget · Pessimistic (Best Estimate)", color: GRAY },
+      ...(hasOpen ? [{ label: "Open orders", color: YELLOW }] : []),
+      ...(hasReplan ? [{ label: "REPLAN · Normal + SET", color: NAVY_BLACK }] : []),
+    ];
+    let lx = plotX;
+    legend.forEach(l => {
+      s.addShape(pptx.ShapeType.rect, { x: lx, y: 4.92, w: 0.14, h: 0.14, fill: { color: l.color } });
+      const w = 0.12 + l.label.length * 0.062;
+      s.addText(l.label, { x: lx + 0.2, y: 4.86, w, h: 0.26, fontSize: 9, color: NAVY, fontFace: "Arial", valign: "middle", margin: 0 });
+      lx += 0.2 + w + 0.18;
+    });
+  }
+
 
   // Slide 2 — Quarters
   const s2 = pptx.addSlide();

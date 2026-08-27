@@ -432,7 +432,7 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
           const patch: Record<string, any> = { updated_at: new Date().toISOString() };
           if (form.expiry) patch.expiry_date = form.expiry;
           if (form.cogs_per_case) { patch.cogs_per_case = Number(form.cogs_per_case); patch.cogs_status = "confirmed"; }
-          await supabase.from("lot_master").update(patch).eq("id", (existing as any).id);
+          await supabase.from("lot_master").update(patch as never).eq("id", (existing as any).id);
         } else {
           await supabase.from("lot_master").insert({
             lot_number: lotNo, warehouse: form.warehouse, sku: form.sku,
@@ -2925,7 +2925,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       const { data } = await supabase.from("ops_published").select("value").eq("key", "production_costs").single();
       if (data?.value && typeof data.value === "object" && Object.keys(data.value).length > 0) {
         const pub = data.value as Record<string, number>;
-        try { if (!window.localStorage.getItem("baris.ops.prodCosts.v2")) setProdCosts(prev => ({...prev, ...pub})); } catch {}
+        try { if (!window.localStorage.getItem("baris.ops.prodCosts.v2")) setProdCosts((prev: Record<string, number>) => ({...prev, ...pub})); } catch {}
       }
     })();
   }, []);
@@ -3079,7 +3079,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   // Save material setting to Supabase
   function saveRawMatField(material: string, field: string, value: any) {
     supabase.from("ops_raw_materials").upsert(
-      { material, [field]: value },
+      { material, [field]: value } as never,
       { onConflict: "material" }
     ).then(({ error }) => { if (error) console.error("Raw mat save error:", error); });
   }
@@ -3923,7 +3923,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
             <p className="text-xs font-semibold text-muted-foreground mb-3 uppercase tracking-wide">Heinlein tolling ($/unit)</p>
             <div className="w-40">
               <input type="number" step="0.001" value={prodCosts.tolling_per_unit}
-                onChange={e=>setProdCosts(c=>({...c,tolling_per_unit:parseFloat(e.target.value)||0}))}
+                onChange={e=>setProdCosts((c: Record<string, number>)=>({...c,tolling_per_unit:parseFloat(e.target.value)||0}))}
                 className={`${inp} w-full`}/>
             </div>
             <p className="text-[11px] text-muted-foreground mt-2">Packaging (cups, lids, sealers, cases) now lives in the BOM above with its own price. COGS below applies each material's scrap % + overfill % from Raw Materials.</p>
