@@ -15,14 +15,16 @@ export function useSalesForecast() {
   const [state, setState] = useState<ForecastState>(() => loadForecastState());
 
   useEffect(() => {
-    // On mount: load from Supabase (source of truth for committed state)
+    // On mount: try loading from Supabase (source of truth for committed state)
     (async () => {
-      const remote = await loadForecastFromSupabase();
-      if (remote) {
-        // Supabase version wins — update both state and localStorage
-        setState(remote);
-        saveForecastState(remote);
-      }
+      try {
+        const remote = await loadForecastFromSupabase();
+        if (remote && remote.committedAt) {
+          // Only use Supabase version if it has committed data
+          setState(remote);
+          saveForecastState(remote);
+        }
+      } catch { /* Supabase unavailable — use localStorage */ }
     })();
     // Subscribe to local changes (same-tab updates)
     setState(loadForecastState());
