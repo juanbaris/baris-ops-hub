@@ -429,12 +429,7 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
         const { data: existing } = await supabase.from("lot_master").select("id")
           .eq("lot_number", lotNo).eq("warehouse", form.warehouse).maybeSingle();
         if (existing) {
-          const patch: {
-            updated_at: string;
-            expiry_date?: string;
-            cogs_per_case?: number;
-            cogs_status?: string;
-          } = { updated_at: new Date().toISOString() };
+          const patch: Record<string, any> = { updated_at: new Date().toISOString() };
           if (form.expiry) patch.expiry_date = form.expiry;
           if (form.cogs_per_case) { patch.cogs_per_case = Number(form.cogs_per_case); patch.cogs_status = "confirmed"; }
           await supabase.from("lot_master").update(patch).eq("id", (existing as any).id);
@@ -2824,18 +2819,18 @@ function calcCOGSFull(prices: Record<string,number>, costs: typeof DEFAULT_PROD_
   }));
 }
 
-/** ─── MODIFIED calcProdSchedule with manual overrides, per-SKU mins, truck opt ── */
+/** ─── Production schedule: purely manual. User enters all production values. ── */
 function calcProdSchedule(
   stockBySku: Record<string,number>,
   orders: any[],
-  safetyWoh: number,
-  minRun: number,
-  freqMonths: number,
+  _safetyWoh: number,
+  _minRun: number,
+  _freqMonths: number,
   FORECAST_SKU_OPS: Record<string,number[]>,
   wipBySku: Record<string,number>,
-  skuMinRuns: Record<string,number>,
+  _skuMinRuns: Record<string,number>,
   manualProd: Record<string,number[]>,
-  optimizeTruck: boolean,
+  _optimizeTruck: boolean,
   bomQty: Record<string, Record<string, number>>,
   matScrap: Record<string,number>,
   matOverfill: Record<string,number>,
@@ -2851,34 +2846,10 @@ function calcProdSchedule(
   for(const sku of PROC_SKUS) {
     let running=Math.max(0,(stockBySku[sku]??0)-(committed[sku]??0))+(wipBySku[sku]??0);
     plan[sku]=[]; stockProj[sku]=[];
-    const skuMin = Math.max(minRun, skuMinRuns[sku] ?? 0);
     for(let i=0;i<FORECAST_MONTHS_OPS.length;i++) {
       const fcst=FORECAST_SKU_OPS[sku]?.[i]??0;
-      const woh=fcst>0?(running/fcst)*4:99;
-      let produce=0;
-      const manualVal = manualProd[sku]?.[i] ?? 0;
-      if (manualVal > 0) {
-        // Manual override takes precedence
-        produce = manualVal;
-      } else {
-        // Auto-planner logic
-        const isWindow=(i%freqMonths)===0;
-        if(isWindow) {
-          let lookahead=running;
-          for(let j=i;j<Math.min(i+freqMonths*2,FORECAST_MONTHS_OPS.length);j++) lookahead-=FORECAST_SKU_OPS[sku]?.[j]??0;
-          if(lookahead<0||woh<safetyWoh) {
-            const demand=FORECAST_MONTHS_OPS.slice(i,i+freqMonths).reduce((s,_,j)=>s+(FORECAST_SKU_OPS[sku]?.[i+j]??0),0);
-            const buf=Math.round((safetyWoh/4)*(fcst||1));
-            const needed=demand+buf-running;
-            if(needed>0) {
-              produce=Math.ceil(needed/skuMin)*skuMin;
-              if (optimizeTruck && produce > 0) {
-                produce = Math.ceil(produce / FULL_TRUCK) * FULL_TRUCK;
-              }
-            }
-          }
-        }
-      }
+      // Purely manual: only produce what the user entered
+      const produce = manualProd[sku]?.[i] ?? 0;
       plan[sku].push(produce);
       running=running+produce-fcst;
       stockProj[sku].push(Math.round(running));
@@ -3415,97 +3386,22 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   return (
     <div className="space-y-4">
       <CommittedRequirements planScenario={planScenario} onPlanScenarioChange={setPlanScenario} forecast={fcstOps} months={FORECAST_MONTHS_OPS} />
-      {/* Controls */}
+
+      {/* Summary bar */}
       <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-        <div className="flex flex-wrap items-center gap-6">
+        <div className="flex flex-wrap items-center gap-6 justify-between">
           <div className="flex items-center gap-2">
-            <label className="text-xs font-semibold text-muted-foreground">Min. safety stock</label>
-            <input type="number" min={1} max={16} value={safetyWoh} onChange={e=>setSafetyWoh(Number(e.target.value))} className={`${inp} w-12 text-center`}/>
-            <span className="text-xs text-muted-foreground">weeks</span>
+            <span className="text-xs text-muted-foreground">🛠️ "In production now" = cases currently being manufactured, counted as available stock.</span>
           </div>
-          <div className="flex items-center gap-2">
-            <label className="text-xs font-semibold text-muted-foreground">Minimum run (global)</label>
-            <input type="number" min={500} step={500} value={minRun} onChange={e=>setMinRun(Number(e.target.value))} className={`${inp} w-20 text-center`}/>
-            <span className="text-xs text-muted-foreground">cases</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <label className="text-xs font-semibold text-muted-foreground">Frequency</label>
-            <select value={freqMonths} onChange={e=>setFreqMonths(Number(e.target.value))} className={`${inp} w-28`}>
-              <option value={1}>Monthly</option><option value={2}>Bimonthly</option>
-              <option value={3}>Quarterly</option><option value={4}>Every 4 months</option><option value={6}>Biannual</option>
-            </select>
-          </div>
-          {/* NEW: Truck optimization toggle */}
-          <div className="flex items-center gap-2">
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input type="checkbox" checked={optimizeTruck} onChange={e=>setOptimizeTruck(e.target.checked)}
-                className="h-4 w-4 accent-emerald-600 cursor-pointer rounded" />
-              <span className="text-xs font-semibold text-muted-foreground">🚛 Full truck</span>
-            </label>
-            <span className="text-[10px] text-muted-foreground">({FULL_TRUCK.toLocaleString()} cases)</span>
-          </div>
-          {/* NEW: Per-SKU mins toggle */}
-          <button onClick={()=>setShowSkuMins(v=>!v)}
-            className={`rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${showSkuMins ? "border-blue-400 bg-blue-50 text-blue-700" : "border-border text-muted-foreground hover:text-foreground"}`}>
-            {showSkuMins ? "▾ SKU mins" : "▸ SKU mins"}
-          </button>
-          <div className="ml-auto flex gap-6 items-center">
-            <button onClick={()=>{
-              setSafetyWoh(6); setMinRun(2000); setFreqMonths(3); setOptimizeTruck(false);
-              setSkuMinRuns(Object.fromEntries(SKUS.map(s=>[s,0])));
-              toast.success("Schedule settings reset to defaults");
-            }} className="rounded border border-border px-3 py-1 text-[10px] text-muted-foreground hover:bg-muted">↺ Reset defaults</button>
+          <div className="flex gap-6 items-center">
+            <button onClick={clearAllManual} className="rounded border border-border px-3 py-1 text-[10px] text-muted-foreground hover:bg-muted">↺ Clear all</button>
             <div className="text-center"><p className="text-[10px] text-muted-foreground uppercase tracking-wide">Total to produce</p>
               <p className="text-xl font-bold font-mono" style={{color:"#A3224A"}}>{totalProduce.toLocaleString()} cases</p></div>
             <div><p className="text-[10px] text-muted-foreground uppercase tracking-wide">COGS ponderado</p>
               <p className="text-xl font-bold font-mono" style={{color:"#1C2340"}}>${weightedCOGS.toFixed(2)}/case</p></div>
           </div>
         </div>
-        {/* Per-SKU minimums panel */}
-        {showSkuMins && (
-          <div className="mt-4 pt-4 border-t border-border">
-            <p className="text-xs font-semibold text-muted-foreground mb-2">Minimum production per SKU (overrides global min when higher)</p>
-            <div className="flex flex-wrap gap-3">
-              {SKUS.map(sku=>(
-                <div key={sku} className="flex items-center gap-1.5">
-                  <span className="text-xs font-semibold w-14" style={{color:"#1C2340"}}>{sku}</span>
-                  <input type="number" min={0} step={500} value={skuMinRuns[sku]||""} placeholder={String(minRun)}
-                    onChange={e=>updateSkuMin(sku, parseInt(e.target.value)||0)}
-                    className={`${inp} w-20 text-center ${(skuMinRuns[sku]??0)>0?"bg-blue-50 border-blue-300":""}`}/>
-                  <span className="text-[10px] text-muted-foreground">cases</span>
-                </div>
-              ))}
-              <button onClick={()=>setSkuMinRuns(Object.fromEntries(SKUS.map(s=>[s,0])))}
-                className="rounded border border-border px-2 py-1 text-[10px] text-muted-foreground hover:bg-muted self-center">
-                Reset all
-              </button>
-            </div>
-          </div>
-        )}
       </div>
-
-      {/* Manual override banner */}
-      {hasAnyManual && (
-        <div className="rounded-xl border-2 border-blue-300 bg-blue-50 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-sm font-bold text-blue-800">✏️ Manual production overrides active</p>
-            <p className="text-xs text-blue-600 mt-0.5">
-              Blue cells = your manual entries. Auto-planner adjusts remaining months around them.
-              {manualCoverage && (
-                <span className="ml-2">
-                  Coverage: {SKUS.filter(s=>(manualProd[s]??[]).some(v=>v>0)).map(s=>
-                    `${s}: ${manualCoverage[s]?.monthsCovered ?? 0} months (${manualCoverage[s]?.woh ?? 0}w end-WoH)`
-                  ).join(" · ")}
-                </span>
-              )}
-            </p>
-          </div>
-          <button onClick={clearAllManual}
-            className="rounded-lg border border-blue-400 px-4 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100">
-            Clear all overrides
-          </button>
-        </div>
-      )}
 
       {/* Sub-tabs */}
       <div className="flex gap-1 overflow-x-auto border-b border-border">
@@ -3521,15 +3417,8 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       {/* ── SCHEDULE ── */}
       {procTab==="schedule" && (
         <div className="space-y-3">
-          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
-            🏭 Yellow cells = auto-planned runs · Frequency: {["","monthly","bimonthly","quarterly","four-monthly","","semiannual"][freqMonths]} · Safety {safetyWoh}w · Global min {minRun.toLocaleString()} cases
-            {optimizeTruck && ` · 🚛 Truck optimization ON (${FULL_TRUCK.toLocaleString()} cases/truck)`}
-          </div>
           <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-700">
-            ✏️ Click any month cell to enter a <strong>manual production override</strong>. Blue cells = manual entries (override auto-planner). Yellow = auto-suggested. The planner recalculates stock, WoH, and materials around your manual values.
-          </div>
-          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs text-emerald-700">
-            🛠️ "In production now" = cases currently being manufactured. They count as available stock. Once the run is finished, log it in Production and clear the cell.
+            ✏️ Enter production quantities per SKU per month. Stock and WoH recalculate automatically.
           </div>
           <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
             <table className="text-xs min-w-max w-full">
@@ -3584,23 +3473,20 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                         const isManual = (manualProd[sku]?.[i] ?? 0) > 0;
                         const isAuto = !isManual && prod > 0;
                         return (
-                          <td key={i} className="px-1 py-1 text-center"
-                            style={isManual?{backgroundColor:"#DBEAFE"}:isAuto?{backgroundColor:"#FEF08A"}:{}}>
+                          <td key={i} className="px-1 py-1 text-center">
                             <input type="number" min={0} step={500}
-                              value={isManual ? (manualProd[sku]?.[i]??0) : (prod > 0 ? prod : "")}
-                              placeholder={prod > 0 && !isManual ? String(prod) : "—"}
+                              value={(manualProd[sku]?.[i] ?? 0) > 0 ? (manualProd[sku]?.[i] ?? 0) : ""}
+                              placeholder="—"
                               onChange={e=>{
                                 const val = parseInt(e.target.value) || 0;
                                 updateManualProd(sku, i, val);
                               }}
                               className={`w-full text-center border rounded px-1 py-1 text-xs font-mono font-semibold focus:outline-none focus:ring-1 focus:ring-primary/30
-                                ${isManual
+                                ${prod > 0
                                   ? "border-blue-400 bg-blue-50 text-blue-900"
-                                  : isAuto
-                                    ? "border-amber-300 bg-amber-50/50 text-amber-900"
-                                    : "border-transparent bg-transparent text-muted-foreground"
+                                  : "border-transparent bg-transparent text-muted-foreground"
                                 }`}
-                              title={isManual ? `Manual override: ${prod.toLocaleString()} cases` : isAuto ? `Auto-suggested: ${prod.toLocaleString()} cases (click to override)` : "No production planned (enter value to override)"}
+                              title={prod > 0 ? `${prod.toLocaleString()} cases` : "No production (enter value)"}
                             />
                           </td>
                         );
@@ -3625,10 +3511,9 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                   </td>
                   <td className="px-3 py-2"></td>
                   {totalByMonth.map((t,i)=>{
-                    const hasManual = SKUS.some(sku=>(manualProd[sku]?.[i]??0)>0);
                     return (
                       <td key={i} className="px-3 py-2 text-center font-mono font-bold"
-                        style={hasManual?{backgroundColor:"rgba(191,219,254,0.3)",color:"#93C5FD"}:t>0?{backgroundColor:"rgba(254,240,138,0.15)",color:"#FDE047"}:{}}>
+                        style={t>0?{backgroundColor:"rgba(191,219,254,0.3)",color:"#93C5FD"}:{}}>
                         {t>0?t.toLocaleString():"—"}
                       </td>
                     );
