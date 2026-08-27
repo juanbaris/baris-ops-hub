@@ -2538,8 +2538,9 @@ const FORECAST_KEYS_OPS = Array.from({ length: 12 }, (_, i) => {
   d.setMonth(d.getMonth() + i);
   return `${d.getFullYear()}-${d.getMonth() + 1}`;
 });
-function buildOpsForecast(bySkuMonthKey: Record<string, Record<string, number>>): Record<string, number[]> {
-  return Object.fromEntries(SKUS.map(sku => [
+function buildOpsForecast(bySkuMonthKey: Record<string, Record<string, number>>, procSkuList?: string[]): Record<string, number[]> {
+  const skuList = procSkuList ?? SKUS;
+  return Object.fromEntries(skuList.map(sku => [
     sku,
     FORECAST_KEYS_OPS.map(k => bySkuMonthKey[sku]?.[k] ?? 0),
   ]));
@@ -2834,7 +2835,9 @@ function calcProdSchedule(
   bomQty: Record<string, Record<string, number>>,
   matScrap: Record<string,number>,
   matOverfill: Record<string,number>,
+  procSkuList?: string[],
 ) {
+  const skuList = procSkuList ?? PROC_SKUS;
   const SK: Record<string,string>={XD:"xd_cases",PW:"pw_cases",HM:"hm_cases",WM:"wm_cases",WD:"wd_cases",Matcha:"matcha_cases"};
   const committed: Record<string,number>={};
   const openOrders = orders.filter(o => COMMITTED_STATUSES.includes(o.status));
@@ -2843,7 +2846,7 @@ function calcProdSchedule(
   const stockProj: Record<string,number[]>={};
   const ingNeeded: Record<string,number>={};
   const ingByMonth: Record<string,number[]>={};
-  for(const sku of PROC_SKUS) {
+  for(const sku of skuList) {
     let running=Math.max(0,(stockBySku[sku]??0)-(committed[sku]??0))+(wipBySku[sku]??0);
     plan[sku]=[]; stockProj[sku]=[];
     for(let i=0;i<FORECAST_MONTHS_OPS.length;i++) {
@@ -3423,16 +3426,45 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   const hasAnyManual = useMemo(()=>PROC_SKUS.some(sku=>(manualProd[sku]??[]).some(v=>v>0)),[manualProd]);
 
   const wipBySku = useMemo(()=>Object.fromEntries(SKUS.map(s=>[s,parseInt(wip[s]?.cases??"")||0])),[wip]);
-  const { bySkuMonthKey } = useSalesForecast();
+  const salesForecastHook = useSalesForecast();
+  const { bySkuMonthKey, production: salesProduction } = salesForecastHook;
   const [planScenario, setPlanScenario] = useState<SalesScenario>("Normal");
-  const planForecast = useMemo(()=>calcForecast(
-    planScenario,
-    DEFAULT_VEL_CHAINS.map(()=>false as boolean), DEFAULT_VEL_CHAINS.map(ch=>ch.velCurrent),
-    NEW_RETAILERS.map(()=>false as boolean), NEW_RETAILERS.map(r=>r.stores),
-    NEW_RETAILERS.map(r=>r.vel), NEW_RETAILERS.map(r=>r.entry),
-  ),[planScenario]);
-  const planSkuByMonthKey = useMemo(()=>skuForecastByMonthKey(planForecast),[planForecast]);
-  const fcstOps = useMemo(()=>buildOpsForecast(planSkuByMonthKey),[planSkuByMonthKey]);
+
+  // Derive dynamic SKU list: base SKUs + committed new SKUs from simulator
+  const committedNewSkus = useMemo(() => {
+    const state = salesForecastHook.state;
+    const newSkus = state.newSkus ?? [];
+    const skuCommitted = state.skuCommitted ?? [];
+    return newSkus.filter((s, i) => s.active && !!skuCommitted[i]).map(s => s.name);
+  }, [salesForecastHook.state]);
+  const dynamicProcSkus = useMemo(() => {
+    const base = [...PROC_SKUS];
+    for (const name of committedNewSkus) {
+      if (!base.includes(name)) base.push(name);
+    }
+    return base;
+  }, [committedNewSkus]);
+
+  // Use committed forecast from Sales (includes new SKUs from simulator)
+  const planSkuByMonthKey = useMemo(() => {
+    const out: Record<string, Record<string, number>> = {};
+    if (salesProduction) {
+      for (const pm of salesProduction) {
+        const mk = `${pm.year}-${String(pm.month).padStart(2, "0")}`;
+        for (const [sku, cases] of Object.entries(pm.skuBreakdown)) {
+          if (!out[sku]) out[sku] = {};
+          out[sku][mk] = cases;
+        }
+        // Add new SKU breakdown
+        for (const ns of pm.newSkuBreakdown) {
+          if (!out[ns.name]) out[ns.name] = {};
+          out[ns.name][mk] = (out[ns.name][mk] ?? 0) + ns.cases;
+        }
+      }
+    }
+    return out;
+  }, [salesProduction]);
+  const fcstOps = useMemo(()=>buildOpsForecast(planSkuByMonthKey, dynamicProcSkus),[planSkuByMonthKey, dynamicProcSkus]);
 
   // Stock from Lot Master (all warehouses) — same source as FP Stock, so Schedule "available"
   // = total stock (Newark + Cold Chain + Linden) − committed, matching FP Stock exactly.
@@ -3456,8 +3488,8 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   },[procLots, movements]);
 
   const {plan,stockProj,ingNeeded,ingByMonth} = useMemo(
-    ()=>calcProdSchedule(bySku,orders,safetyWoh,minRun,freqMonths,fcstOps,wipBySku,skuMinRuns,manualProd,optimizeTruck,bomQty,matScrap,matOverfill),
-    [bySku,orders,safetyWoh,minRun,freqMonths,fcstOps,wipBySku,skuMinRuns,manualProd,optimizeTruck,bomQty,matScrap,matOverfill]
+    ()=>calcProdSchedule(bySku,orders,safetyWoh,minRun,freqMonths,fcstOps,wipBySku,skuMinRuns,manualProd,optimizeTruck,bomQty,matScrap,matOverfill,dynamicProcSkus),
+    [bySku,orders,safetyWoh,minRun,freqMonths,fcstOps,wipBySku,skuMinRuns,manualProd,optimizeTruck,bomQty,matScrap,matOverfill,dynamicProcSkus]
   );
   const cogs = useMemo(()=>calcCOGSFull(ingPrices,prodCosts,matScrap,matOverfill,bomQty),[ingPrices,prodCosts,matScrap,matOverfill,bomQty]);
 
@@ -3499,6 +3531,10 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     }));
     try { window.localStorage.setItem("baris.runway.procPayments", JSON.stringify(rows)); } catch {}
   },[payments]);
+
+  // Shadow PROC_SKUS with dynamic version that includes committed new SKUs
+  // eslint-disable-next-line @typescript-eslint/no-shadow
+  const PROC_SKUS = dynamicProcSkus;
 
   const totalByMonth = FORECAST_MONTHS_OPS.map((_,i)=>PROC_SKUS.reduce((s,sku)=>s+(plan[sku]?.[i]??0),0));
   const nextRunIdx = totalByMonth.findIndex(t=>t>0);
