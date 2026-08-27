@@ -116,7 +116,19 @@ function FacturasPanel({ orders }: { orders: Order[] }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fileBase64: base64, mediaType: f.type || "application/pdf" }),
       });
-      if (!resp.ok) { toast.error("No se pudo leer la factura — completá a mano"); return; }
+      if (!resp.ok) {
+        // Mostrar el error real para poder diagnosticar (API key / ruta 404 / Anthropic).
+        const txt = await resp.text().catch(() => "");
+        let msg = `Error ${resp.status}`;
+        try { msg = JSON.parse(txt).error ?? msg; } catch { if (txt) msg = txt.slice(0, 120); }
+        console.error("parse-logistics-invoice:", resp.status, txt);
+        toast.error(
+          resp.status === 404
+            ? "La ruta /api/parse-logistics-invoice no existe (falta rebuild del router)"
+            : `No se pudo leer: ${msg}`,
+        );
+        return;
+      }
       const d = await resp.json();
       setForm(prev => ({
         ...prev,
