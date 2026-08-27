@@ -432,7 +432,7 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
           const patch: Record<string, any> = { updated_at: new Date().toISOString() };
           if (form.expiry) patch.expiry_date = form.expiry;
           if (form.cogs_per_case) { patch.cogs_per_case = Number(form.cogs_per_case); patch.cogs_status = "confirmed"; }
-          await supabase.from("lot_master").update(patch).eq("id", (existing as any).id);
+          await supabase.from("lot_master").update(patch as any).eq("id", (existing as any).id);
         } else {
           await supabase.from("lot_master").insert({
             lot_number: lotNo, warehouse: form.warehouse, sku: form.sku,
@@ -2897,7 +2897,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   useEffect(() => {
     (async () => {
       try {
-        const { data } = await supabase.from("ops_published" as any).select("value").eq("key", "ingredient_prices").maybeSingle();
+        const { data } = await (supabase.from("ops_published" as any) as any).select("value").eq("key", "ingredient_prices").maybeSingle();
         if (data?.value && typeof data.value === "object" && Object.keys(data.value).length > 0) {
           const pub = data.value as Record<string, number>;
           setIngPricesPublished(pub);
@@ -2927,10 +2927,10 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   useEffect(() => {
     (async () => {
       try {
-        const { data } = await supabase.from("ops_published" as any).select("value").eq("key", "production_costs").maybeSingle();
+        const { data } = await (supabase.from("ops_published" as any) as any).select("value").eq("key", "production_costs").maybeSingle();
         if (data?.value && typeof data.value === "object" && Object.keys(data.value).length > 0) {
           const pub = data.value as Record<string, number>;
-          try { if (!window.localStorage.getItem("baris.ops.prodCosts.v2")) setProdCosts(prev => ({...prev, ...pub})); } catch {}
+          try { if (!window.localStorage.getItem("baris.ops.prodCosts.v2")) setProdCosts((prev: any) => ({...prev, ...pub})); } catch {}
         }
       } catch (e) { console.error("Failed to load published costs:", e); }
     })();
@@ -2998,7 +2998,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   useEffect(() => {
     (async () => {
       try {
-        const { data } = await supabase.from("ops_bom" as any).select("*");
+        const { data } = await (supabase.from("ops_bom" as any) as any).select("*");
         if (data && data.length > 0) {
           const bom: Record<string, Record<string, number>> = JSON.parse(JSON.stringify(BOM_QTY));
           for (const row of data) {
@@ -3051,7 +3051,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   useEffect(() => {
     (async () => {
       try {
-        const { data } = await supabase.from("ops_raw_materials" as any).select("*").order("sort_order");
+        const { data } = await (supabase.from("ops_raw_materials" as any) as any).select("*").order("sort_order");
         if (data && data.length > 0) {
         setDbMaterials(data as any);
         // Merge DB values into state
@@ -3148,7 +3148,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     });
     if (e1) { toast.error("Failed to rename: " + e1.message); return; }
     // Update BOM references
-    const { data: bomRows } = await supabase.from("ops_bom" as any).select("*").eq("material", oldName);
+    const { data: bomRows } = await (supabase.from("ops_bom" as any) as any).select("*").eq("material", oldName);
     if (bomRows && bomRows.length > 0) {
       for (const row of bomRows) {
         await supabase.from("ops_bom" as any).upsert({ sku: row.sku, material: newName, qty_per_case: row.qty_per_case }, { onConflict: "sku,material" });
@@ -3222,7 +3222,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     (async () => {
       try {
         let base = Object.fromEntries(SKUS.map(s=>[s, FORECAST_MONTHS_OPS.map(()=>0)]));
-        const { data } = await supabase.from("ops_published" as any).select("value").eq("key", "production_plan").maybeSingle();
+        const { data } = await (supabase.from("ops_published" as any) as any).select("value").eq("key", "production_plan").maybeSingle();
         if (data?.value && typeof data.value === "object" && Object.keys(data.value).length > 0) {
           base = {...base, ...(data.value as Record<string, number[]>)};
         }
@@ -3296,7 +3296,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     const rcvKey = `${rcvD.getFullYear()}-${String(rcvD.getMonth()+1).padStart(2,"0")}`;
     const payD = new Date(rcvD); payD.setMonth(payD.getMonth() + 1);
     const payKey = `${payD.getFullYear()}-${String(payD.getMonth()+1).padStart(2,"0")}`;
-    const { data, error } = await supabase.from("ops_forecast_po" as any)
+    const { data, error }: any = await (supabase.from("ops_forecast_po" as any) as any)
       .insert({ material: firstRawMat, qty: 0, mat_cost: 0, freight: 0, month_buy: buyKey, month_receive: rcvKey, month_pay: payKey })
       .select().single();
     if (error) { toast.error("Failed to add PO: " + error.message); return; }
@@ -3389,7 +3389,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   useEffect(() => {
     (async () => {
       try {
-        const { data } = await supabase.from("ops_wip" as any).select("*");
+        const { data } = await (supabase.from("ops_wip" as any) as any).select("*");
         if (data && data.length > 0) {
           const w: Record<string, { cases: string; due: string }> = {};
           for (const r of data) w[r.sku] = { cases: String(r.cases ?? ""), due: r.due_date ?? "" };
@@ -3542,11 +3542,8 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     try { window.localStorage.setItem("baris.runway.procPayments", JSON.stringify(rows)); } catch {}
   },[payments]);
 
-  // Shadow PROC_SKUS with dynamic version that includes committed new SKUs
-  // eslint-disable-next-line @typescript-eslint/no-shadow
-  const PROC_SKUS = dynamicProcSkus;
 
-  const totalByMonth = FORECAST_MONTHS_OPS.map((_,i)=>PROC_SKUS.reduce((s,sku)=>s+(plan[sku]?.[i]??0),0));
+  const totalByMonth = FORECAST_MONTHS_OPS.map((_,i)=>dynamicProcSkus.reduce((s,sku)=>s+(plan[sku]?.[i]??0),0));
   const nextRunIdx = totalByMonth.findIndex(t=>t>0);
   const shopRange = useMemo(()=>{
     if(nextRunIdx<0) return null;
@@ -3565,7 +3562,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   },[ingByMonth,shopRange]);
   const shopCasesWindow = shopRange
     ? totalByMonth.slice(shopRange[0],shopRange[1]+1).reduce((a,b)=>a+b,0) : 0;
-  const totalProduce = PROC_SKUS.reduce((s,sku)=>s+(plan[sku]??[]).reduce((a,b)=>a+b,0),0);
+  const totalProduce = dynamicProcSkus.reduce((s,sku)=>s+(plan[sku]??[]).reduce((a,b)=>a+b,0),0);
   const weightedCOGS = SKUS.reduce((s,sku)=>s+(cogs[sku]?.per_case??0)*(SKU_MIX_PCT[sku]??0),0);
 
   // ─── NEW: compute WoH coverage per SKU when manual overrides exist ───
@@ -3616,7 +3613,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   // Build production plan from schedule for FIFO simulation
   const prodPlanForForecast = useMemo(() => {
     const out: { sku: string; cases: number; month: string }[] = [];
-    for (const sku of PROC_SKUS) {
+    for (const sku of dynamicProcSkus) {
       for (let i = 0; i < FORECAST_MONTHS_OPS.length; i++) {
         const cases = plan[sku]?.[i] ?? 0;
         if (cases > 0) {
@@ -3776,7 +3773,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                 </tr>
               </thead>
               <tbody>
-                {PROC_SKUS.map(sku=>{
+                {dynamicProcSkus.map(sku=>{
                   const SK: Record<string,string>={XD:"xd_cases",PW:"pw_cases",HM:"hm_cases",WM:"wm_cases",WD:"wd_cases",Matcha:"matcha_cases"};
                   const comm=orders.filter(o=>COMMITTED_STATUSES.includes(o.status)).reduce((s,o)=>s+(Number(o[SK[sku]])||0),0);
                   const avail=Math.max(0,(bySku[sku]??0)-comm);
@@ -3880,7 +3877,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                 </tr>
               </thead>
               <tbody>
-                {PROC_SKUS.map(sku=>(
+                {dynamicProcSkus.map(sku=>(
                   <tr key={sku} className="border-t border-border/60">
                     <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{sku}</td>
                     {(stockProj[sku]??[]).map((stock,i)=>{
@@ -3940,18 +3937,18 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                 <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
                   <th className="px-4 py-2.5 text-left sticky left-0 bg-muted/20">Material</th>
                   <th className="px-2 py-2.5 text-center">UOM</th>
-                  {PROC_SKUS.map(s=><th key={s} className="px-3 py-2.5 text-center" title={PROC_SKU_LABEL[s]}>{s}</th>)}
+                  {dynamicProcSkus.map(s=><th key={s} className="px-3 py-2.5 text-center" title={PROC_SKU_LABEL[s]}>{s}</th>)}
                   <th className="px-4 py-2.5 text-right">$/unit</th>
                 </tr>
               </thead>
               <tbody>
-                {allMaterialsList.filter(mat=>PROC_SKUS.some(sku=>(bomQty[sku]?.[mat]??0)>0) || extraMaterials.includes(mat)).map(mat=>{
+                {allMaterialsList.filter(mat=>dynamicProcSkus.some(sku=>(bomQty[sku]?.[mat]??0)>0) || extraMaterials.includes(mat)).map(mat=>{
                   const raw=isRawMat(mat) || extraMaterials.includes(mat);
                   return (
                     <tr key={mat} className="border-t border-border/60 hover:bg-muted/20">
                       <td className="px-4 py-1.5 font-medium sticky left-0 bg-card">{mat}</td>
                       <td className="px-2 py-1.5 text-center text-[10px] text-muted-foreground">{raw?"lbs":"units"}</td>
-                      {PROC_SKUS.map(sku=>{
+                      {dynamicProcSkus.map(sku=>{
                         const qty=bomQty[sku]?.[mat]??0;
                         const rawTotal=[...RAW_MATS,...extraMaterials].reduce((s,m)=>s+(bomQty[sku]?.[m]??0),0);
                         const pct = raw && rawTotal>0 ? (qty/rawTotal)*100 : 0;
@@ -3978,7 +3975,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                 <tfoot>
                   <tr className="border-t border-border bg-muted/10">
                     <td className="px-4 py-1.5 text-[10px] uppercase tracking-wide text-muted-foreground" colSpan={2}>Σ % (raw)</td>
-                    {PROC_SKUS.map(sku=>{
+                    {dynamicProcSkus.map(sku=>{
                       const rawTotal=[...RAW_MATS,...extraMaterials].reduce((s,m)=>s+(bomQty[sku]?.[m]??0),0);
                       const sum=rawTotal>0?100:0;
                       return <td key={sku} className={`px-2 py-1.5 text-center font-mono text-[10px] ${sum>0?"text-emerald-600":"text-muted-foreground"}`}>{sum?sum.toFixed(0)+"%":"—"}</td>;
@@ -3994,7 +3991,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
             <p className="text-xs font-semibold text-muted-foreground mb-3 uppercase tracking-wide">Heinlein tolling ($/unit)</p>
             <div className="w-40">
               <input type="number" step="0.001" value={prodCosts.tolling_per_unit}
-                onChange={e=>setProdCosts(c=>({...c,tolling_per_unit:parseFloat(e.target.value)||0}))}
+                onChange={e=>setProdCosts((c: any)=>({...c,tolling_per_unit:parseFloat(e.target.value)||0}))}
                 className={`${inp} w-full`}/>
             </div>
             <p className="text-[11px] text-muted-foreground mt-2">Packaging (cups, lids, sealers, cases) now lives in the BOM above with its own price. COGS below applies each material's scrap % + overfill % from Raw Materials.</p>
@@ -4018,7 +4015,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                 </tr>
               </thead>
               <tbody>
-                {PROC_SKUS.map(sku=>{
+                {dynamicProcSkus.map(sku=>{
                   const c=cogs[sku]; if(!c) return null;
                   return (
                     <tr key={sku} className="border-t border-border/60 hover:bg-muted/20">
