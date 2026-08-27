@@ -2956,16 +2956,16 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   // Effective inventory: manual override wins; otherwise the live I&P on-hand.
   const ingInv: Record<string,string> = useMemo(() => {
     const o: Record<string,string> = {};
-    for (const k of ALL_INGS) {
+    for (const k of allMaterialsList) {
       o[k] = (ingInvOverride[k] !== undefined && ingInvOverride[k] !== "")
         ? ingInvOverride[k]
         : (ipOnHand[k] != null ? String(Math.round(ipOnHand[k])) : "");
     }
     return o;
-  }, [ingInvOverride, ipOnHand]);
+  }, [ingInvOverride, ipOnHand, allMaterialsList]);
   const setIngInv = (updater: any) => {
     setIngInvOverride(prev => {
-      const cur: Record<string,string> = {}; for (const k of ALL_INGS) cur[k] = prev[k] ?? "";
+      const cur: Record<string,string> = {}; for (const k of allMaterialsList) cur[k] = prev[k] ?? "";
       const next = typeof updater === "function" ? updater(cur) : updater;
       return next;
     });
@@ -3118,8 +3118,10 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     const oldName = renamingMat;
     const newName = renameValue.trim();
     if (oldName === newName) { setRenamingMat(null); return; }
-    // Insert new, copy old values
+    if (allMaterialsList.includes(newName)) { toast.error(`"${newName}" already exists`); return; }
     const old = dbMaterials.find(m => m.material === oldName);
+    // Delete old row first, then insert new (PK is material name, can't update it)
+    await supabase.from("ops_raw_materials").delete().eq("material", oldName);
     const { error: e1 } = await supabase.from("ops_raw_materials").insert({
       material: newName, unit: old?.unit ?? "lbs", scrap_pct: old?.scrap_pct ?? 0,
       overfill_pct: old?.overfill_pct ?? 0, lead_time_weeks: old?.lead_time_weeks ?? 4,
@@ -3127,8 +3129,6 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       active: true, sort_order: old?.sort_order ?? 100,
     });
     if (e1) { toast.error("Failed to rename: " + e1.message); return; }
-    // Deactivate old
-    await supabase.from("ops_raw_materials").update({ active: false }).eq("material", oldName);
     // Update BOM references
     const { data: bomRows } = await supabase.from("ops_bom").select("*").eq("material", oldName);
     if (bomRows && bomRows.length > 0) {
@@ -3137,12 +3137,16 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       }
       await supabase.from("ops_bom").delete().eq("material", oldName);
     }
+    // Update forecast PO references
+    await supabase.from("ops_forecast_po").update({ material: newName }).eq("material", oldName);
+    setIpForecastPOs(prev => prev.map(p => p.material === oldName ? {...p, material: newName} : p));
     // Update local state
-    setDbMaterials(prev => prev.map(m => m.material === oldName ? { ...m, material: newName } : m).filter(m => m.active));
+    setDbMaterials(prev => prev.map(m => m.material === oldName ? { ...m, material: newName } : m));
     setMatScrap(prev => { const n = {...prev}; n[newName] = n[oldName] ?? 0; delete n[oldName]; return n; });
     setMatOverfill(prev => { const n = {...prev}; n[newName] = n[oldName] ?? 0; delete n[oldName]; return n; });
     setLeadTimes(prev => { const n = {...prev}; n[newName] = n[oldName] ?? 4; delete n[oldName]; return n; });
     setPayTerms(prev => { const n = {...prev}; n[newName] = (n[oldName] ?? "lead") as PayTerm; delete n[oldName]; return n; });
+    setIngPrices(prev => { const n = {...prev}; if (n[oldName] != null) { n[newName] = n[oldName]; delete n[oldName]; } return n; });
     setBomQty(prev => {
       const out = {...prev};
       for (const sku of Object.keys(out)) { if (out[sku][oldName] != null) { out[sku][newName] = out[sku][oldName]; delete out[sku][oldName]; } }
@@ -3150,6 +3154,17 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     });
     setRenamingMat(null);
     toast.success(`✅ "${oldName}" renamed to "${newName}"`);
+  }
+
+  async function deleteMaterial(mat: string) {
+    if (!confirm(`Delete "${mat}"? This removes it from Raw Materials, BOM, and any Forecast POs referencing it.`)) return;
+    await supabase.from("ops_raw_materials").delete().eq("material", mat);
+    await supabase.from("ops_bom").delete().eq("material", mat);
+    // Don't delete forecast POs — just warn
+    const affectedPOs = ipForecastPOs.filter(p => p.material === mat);
+    if (affectedPOs.length > 0) toast("⚠️ " + affectedPOs.length + " Forecast PO(s) still reference this material");
+    setDbMaterials(prev => prev.filter(m => m.material !== mat));
+    toast.success(`🗑️ "${mat}" deleted`);
   }
   const WIP_KEY="baris.ops.wip.v1";
   const [wip, setWip] = useState<Record<string,{cases:string;due:string}>>(
@@ -3847,7 +3862,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                 </tr>
               </thead>
               <tbody>
-                {ALL_INGS.filter(mat=>PROC_SKUS.some(sku=>(bomQty[sku]?.[mat]??0)>0)).map(mat=>{
+                {allMaterialsList.filter(mat=>PROC_SKUS.some(sku=>(bomQty[sku]?.[mat]??0)>0) || extraMaterials.includes(mat)).map(mat=>{
                   const raw=isRawMat(mat);
                   return (
                     <tr key={mat} className="border-t border-border/60 hover:bg-muted/20">
@@ -3855,7 +3870,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                       <td className="px-2 py-1.5 text-center text-[10px] text-muted-foreground">{raw?"lbs":"units"}</td>
                       {PROC_SKUS.map(sku=>{
                         const qty=bomQty[sku]?.[mat]??0;
-                        const rawTotal=RAW_MATS.reduce((s,m)=>s+(bomQty[sku]?.[m]??0),0);
+                        const rawTotal=[...RAW_MATS,...extraMaterials].reduce((s,m)=>s+(bomQty[sku]?.[m]??0),0);
                         const pct = raw && rawTotal>0 ? (qty/rawTotal)*100 : 0;
                         if (bomView==="pct" && !raw) {
                           return <td key={sku} className="px-2 py-1 text-center text-muted-foreground">{qty>0?qty:"—"}</td>;
@@ -3881,7 +3896,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                   <tr className="border-t border-border bg-muted/10">
                     <td className="px-4 py-1.5 text-[10px] uppercase tracking-wide text-muted-foreground" colSpan={2}>Σ % (raw)</td>
                     {PROC_SKUS.map(sku=>{
-                      const rawTotal=RAW_MATS.reduce((s,m)=>s+(bomQty[sku]?.[m]??0),0);
+                      const rawTotal=[...RAW_MATS,...extraMaterials].reduce((s,m)=>s+(bomQty[sku]?.[m]??0),0);
                       const sum=rawTotal>0?100:0;
                       return <td key={sku} className={`px-2 py-1.5 text-center font-mono text-[10px] ${sum>0?"text-emerald-600":"text-muted-foreground"}`}>{sum?sum.toFixed(0)+"%":"—"}</td>;
                     })}
@@ -4117,6 +4132,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                   <th className="px-3 py-2.5 text-right">$/unit</th>
                   <th className="px-3 py-2.5 text-right">Stock</th>
                   <th className="px-3 py-2.5 text-right">Valor ($)</th>
+                  <th className="px-2 py-2.5 text-center w-8"></th>
                 </tr>
               </thead>
               <tbody>
@@ -4175,6 +4191,9 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                         </div>
                       </td>
                       <td className="px-3 py-2 text-right font-mono text-muted-foreground">{inv>0?`$${Math.round(inv*price).toLocaleString()}`:"—"}</td>
+                      <td className="px-2 py-2 text-center">
+                        <button onClick={() => deleteMaterial(ing)} className="text-[10px] text-muted-foreground hover:text-red-600 transition-colors" title={`Delete ${ing}`}>🗑️</button>
+                      </td>
                     </tr>
                   );
                 })}
@@ -4184,6 +4203,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                   <td className="px-4 py-2 font-semibold text-xs sticky left-0" style={{backgroundColor:"#1C2340"}} colSpan={10}>TOTAL INVENTORY VALUE</td>
                   <td className="px-3 py-2 text-right font-mono">{allMaterialsList.reduce((s,ing)=>s+(parseInt(ingInv[ing])||0),0).toLocaleString()}</td>
                   <td className="px-3 py-2 text-right font-mono font-bold text-emerald-400">${Math.round(allMaterialsList.reduce((s,ing)=>{const inv=parseInt(ingInv[ing])||0;return s+inv*(ingPrices[ing]??0);},0)).toLocaleString()}</td>
+                  <td></td>
                 </tr>
               </tfoot>
             </table>
