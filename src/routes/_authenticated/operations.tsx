@@ -3014,18 +3014,22 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     try { window.localStorage.setItem(MANUAL_PROD_KEY, JSON.stringify(manualProd)); } catch {}
   },[manualProd]);
 
-  // ─── IP Forecast Purchase Orders ───
-  const [ipForecastPOs, setIpForecastPOs] = useState<IPForecastPO[]>(() => {
-    try { const raw = window.localStorage.getItem(IP_FORECAST_KEY); if (raw) return JSON.parse(raw); } catch {}
-    return [];
-  });
-  const [ipFcstNextId, setIpFcstNextId] = useState(() => {
-    try { const raw = window.localStorage.getItem(IP_FORECAST_KEY); if (raw) { const arr = JSON.parse(raw); return arr.length > 0 ? Math.max(...arr.map((p:any)=>p.id)) + 1 : 1; } } catch {}
-    return 1;
-  });
-  useEffect(()=>{ try { window.localStorage.setItem(IP_FORECAST_KEY, JSON.stringify(ipForecastPOs)); } catch {} },[ipForecastPOs]);
+  // ─── IP Forecast Purchase Orders (Supabase: ops_forecast_po) ───
+  const [ipForecastPOs, setIpForecastPOs] = useState<IPForecastPO[]>([]);
+  const [ipPoLoading, setIpPoLoading] = useState(true);
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.from("ops_forecast_po").select("*").order("id");
+      if (data) setIpForecastPOs(data.map((r: any) => ({
+        id: r.id, material: r.material, qty: Number(r.qty) || 0,
+        matCost: Number(r.mat_cost) || 0, freight: Number(r.freight) || 0,
+        mBuy: r.month_buy ?? "", mRecv: r.month_receive ?? "", mPay: r.month_pay ?? "",
+      })));
+      setIpPoLoading(false);
+    })();
+  }, []);
 
-  function addIpForecastPO() {
+  async function addIpForecastPO() {
     const firstRawMat = RAW_MATS[0];
     const lt = leadTimes[firstRawMat] ?? 4;
     const now = new Date(); now.setDate(1);
@@ -3034,10 +3038,21 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     const rcvKey = `${rcvD.getFullYear()}-${String(rcvD.getMonth()+1).padStart(2,"0")}`;
     const payD = new Date(rcvD); payD.setMonth(payD.getMonth() + 1);
     const payKey = `${payD.getFullYear()}-${String(payD.getMonth()+1).padStart(2,"0")}`;
-    setIpForecastPOs(prev => [...prev, { id: ipFcstNextId, material: firstRawMat, qty: 0, matCost: 0, freight: 0, mBuy: buyKey, mRecv: rcvKey, mPay: payKey }]);
-    setIpFcstNextId(n => n + 1);
+    const { data, error } = await supabase.from("ops_forecast_po")
+      .insert({ material: firstRawMat, qty: 0, mat_cost: 0, freight: 0, month_buy: buyKey, month_receive: rcvKey, month_pay: payKey })
+      .select().single();
+    if (error) { toast.error("Failed to add PO: " + error.message); return; }
+    setIpForecastPOs(prev => [...prev, {
+      id: data.id, material: data.material, qty: Number(data.qty) || 0,
+      matCost: Number(data.mat_cost) || 0, freight: Number(data.freight) || 0,
+      mBuy: data.month_buy ?? "", mRecv: data.month_receive ?? "", mPay: data.month_pay ?? "",
+    }]);
   }
-  function removeIpForecastPO(id: number) { setIpForecastPOs(prev => prev.filter(p => p.id !== id)); }
+  async function removeIpForecastPO(id: number) {
+    const { error } = await supabase.from("ops_forecast_po").delete().eq("id", id);
+    if (error) { toast.error("Failed to delete PO: " + error.message); return; }
+    setIpForecastPOs(prev => prev.filter(p => p.id !== id));
+  }
 
   // ─── Confirm forecast PO → create real IP movement ───
   const [confirmingPO, setConfirmingPO] = useState<IPForecastPO | null>(null);
@@ -3045,51 +3060,36 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   async function confirmIpForecastPO() {
     if (!confirmingPO) return;
     const po = confirmingPO;
-    // Map procurement material name to IP movement material name
     const ipMat = PROC_TO_IP_MAT[po.material] ?? po.material;
     const isRaw = RAW_MATS.includes(po.material);
     const cpu = po.qty > 0 ? (po.matCost + po.freight) / po.qty : 0;
-    // Estimate receive date (1st of receive month)
     const estRecv = po.mRecv ? `${po.mRecv}-01` : null;
-    // Estimate payment date (1st of pay month)
     const estPay = po.mPay ? `${po.mPay}-01` : null;
-
     const payload: any = {
       movement_date: po.mBuy ? `${po.mBuy}-01` : ymd(),
-      material: ipMat,
-      vendor: null,
-      type: "In",
-      quantity: po.qty,
-      unit: isRaw ? "lbs" : "units",
-      lot_number: null,
-      concept: "Procurement",
-      notes: `Confirmed from Forecast PO #${po.id}`,
-      warehouse: "Heinlein",
-      total_price: po.matCost || null,
-      shipping_price: po.freight || null,
-      other_costs: null,
-      price_per_unit: po.qty > 0 ? po.matCost / po.qty : null,
-      cogs_per_unit: cpu || null,
-      estimated_receive_date: estRecv,
-      estimated_payment_date: estPay,
+      material: ipMat, vendor: null, type: "In", quantity: po.qty,
+      unit: isRaw ? "lbs" : "units", lot_number: null, concept: "Procurement",
+      notes: `Confirmed from Forecast PO #${po.id}`, warehouse: "Heinlein",
+      total_price: po.matCost || null, shipping_price: po.freight || null, other_costs: null,
+      price_per_unit: po.qty > 0 ? po.matCost / po.qty : null, cogs_per_unit: cpu || null,
+      estimated_receive_date: estRecv, estimated_payment_date: estPay,
     };
-
     setConfirmSaving(true);
     const { error } = await supabase.from("ip_movements").insert(payload);
     setConfirmSaving(false);
     if (error) { toast.error("Failed to create IP movement: " + error.message); return; }
     toast.success(`✅ PO #${po.id} confirmed → IP movement created for ${po.qty.toLocaleString()} ${isRaw?"lbs":"units"} of ${ipMat}`);
-    // Remove from forecast
+    // Remove from Supabase forecast table
+    await supabase.from("ops_forecast_po").delete().eq("id", po.id);
     setIpForecastPOs(prev => prev.filter(p => p.id !== po.id));
     setConfirmingPO(null);
-    onAdded(); // Refresh IP movements
+    onAdded();
   }
 
-  function updateIpForecastPO(id: number, field: string, value: any) {
+  async function updateIpForecastPO(id: number, field: string, value: any) {
     setIpForecastPOs(prev => prev.map(p => {
       if (p.id !== id) return p;
       const updated = { ...p, [field]: value };
-      // Auto-fill dates when material or buy month changes
       if (field === "material" || field === "mBuy") {
         const mat = field === "material" ? value : p.material;
         const buyM = field === "mBuy" ? value : p.mBuy;
@@ -3104,18 +3104,48 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       }
       return updated;
     }));
+    // Debounced save to Supabase
+    const po = ipForecastPOs.find(p => p.id === id);
+    if (!po) return;
+    const merged = { ...po, [field]: value };
+    // Re-compute auto-fill for the save
+    if (field === "material" || field === "mBuy") {
+      const mat = field === "material" ? value : po.material;
+      const buyM = field === "mBuy" ? value : po.mBuy;
+      const lt = leadTimes[mat] ?? 4;
+      const [by,bm] = buyM.split("-").map(Number);
+      const rcvD = new Date(by, bm - 1, 1); rcvD.setDate(rcvD.getDate() + lt * 7);
+      merged.mRecv = `${rcvD.getFullYear()}-${String(rcvD.getMonth()+1).padStart(2,"0")}`;
+      const pt = payTerms[mat] ?? "lead";
+      if (pt === "t0") merged.mPay = buyM;
+      else if (pt === "lead") merged.mPay = merged.mRecv;
+      else { const pd = new Date(rcvD); pd.setMonth(pd.getMonth()+1); merged.mPay = `${pd.getFullYear()}-${String(pd.getMonth()+1).padStart(2,"0")}`; }
+    }
+    supabase.from("ops_forecast_po").update({
+      material: merged.material, qty: merged.qty, mat_cost: merged.matCost,
+      freight: merged.freight, month_buy: merged.mBuy, month_receive: merged.mRecv, month_pay: merged.mPay,
+    }).eq("id", id).then(({ error }) => { if (error) console.error("PO save error:", error); });
   }
 
-  useEffect(()=>{
-    try{
-      const raw=window.localStorage.getItem(WIP_KEY);
-      if(raw) setWip(w=>({...w,...JSON.parse(raw)}));
-    }catch{/* ignore */}
-  },[]);
+  // ─── WIP "In production now" (Supabase: ops_wip) ───
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.from("ops_wip").select("*");
+      if (data && data.length > 0) {
+        const w: Record<string, { cases: string; due: string }> = {};
+        for (const r of data) w[r.sku] = { cases: String(r.cases ?? ""), due: r.due_date ?? "" };
+        setWip(prev => ({ ...prev, ...w }));
+      }
+    })();
+  }, []);
   function updateWip(sku:string, patch:Partial<{cases:string;due:string}>){
     setWip(w=>{
       const next={...w,[sku]:{...(w[sku]??{cases:"",due:""}),...patch}};
-      try{ window.localStorage.setItem(WIP_KEY, JSON.stringify(next)); }catch{/* ignore */}
+      // Save to Supabase
+      const entry = next[sku];
+      supabase.from("ops_wip").upsert({
+        sku, cases: parseInt(entry.cases) || 0, due_date: entry.due || null, updated_at: new Date().toISOString(),
+      }).then(({ error }) => { if (error) console.error("WIP save error:", error); });
       return next;
     });
   }
