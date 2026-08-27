@@ -2896,7 +2896,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   // Load published prices from Supabase on mount
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.from("ops_published").select("value").eq("key", "ingredient_prices").single();
+      const { data } = await supabase.from("ops_published").select("value").eq("key", "ingredient_prices").maybeSingle();
       if (data?.value && typeof data.value === "object" && Object.keys(data.value).length > 0) {
         const pub = data.value as Record<string, number>;
         setIngPricesPublished(pub);
@@ -2925,7 +2925,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   useEffect(() => { try { window.localStorage.setItem("baris.ops.prodCosts.v2", JSON.stringify(prodCosts)); } catch {} }, [prodCosts]);
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.from("ops_published").select("value").eq("key", "production_costs").single();
+      const { data } = await supabase.from("ops_published").select("value").eq("key", "production_costs").maybeSingle();
       if (data?.value && typeof data.value === "object" && Object.keys(data.value).length > 0) {
         const pub = data.value as Record<string, number>;
         try { if (!window.localStorage.getItem("baris.ops.prodCosts.v2")) setProdCosts(prev => ({...prev, ...pub})); } catch {}
@@ -3215,7 +3215,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     (async () => {
       let base = Object.fromEntries(SKUS.map(s=>[s, FORECAST_MONTHS_OPS.map(()=>0)]));
       // 1. Load published version from Supabase
-      const { data } = await supabase.from("ops_published").select("value").eq("key", "production_plan").single();
+      const { data } = await supabase.from("ops_published").select("value").eq("key", "production_plan").maybeSingle();
       if (data?.value && typeof data.value === "object" && Object.keys(data.value).length > 0) {
         base = {...base, ...(data.value as Record<string, number[]>)};
       }
