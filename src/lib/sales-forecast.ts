@@ -1,5 +1,3 @@
-import { useEffect, useMemo, useState } from "react";
-
 // ─── Core constants ──────────────────────────────────────────────────────────
 const WEEKS_PER_MONTH = 4.345;
 const UNITS_PER_CASE = 8;
@@ -243,12 +241,10 @@ function _syncToSupabase(state: ForecastState) {
 export async function loadForecastFromSupabase(): Promise<ForecastState | null> {
   if (!_supabase) return null;
   try {
-    const { data } = await _supabase.from("ops_published").select("value").eq("key", SUPABASE_KEY).single();
-    if (data?.value && typeof data.value === "object") {
-      return { ...DEFAULT_FORECAST_STATE, ...data.value } as ForecastState;
-    }
-  } catch {}
-  return null;
+    const { data, error } = await _supabase.from("ops_published").select("value").eq("key", SUPABASE_KEY).maybeSingle();
+    if (error || !data?.value || typeof data.value !== "object") return null;
+    return { ...DEFAULT_FORECAST_STATE, ...data.value } as ForecastState;
+  } catch { return null; }
 }
 
 export function subscribeForecast(cb: () => void) {
