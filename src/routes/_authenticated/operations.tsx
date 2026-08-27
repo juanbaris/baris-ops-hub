@@ -3656,9 +3656,13 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
           </div>
           <div className="flex gap-6 items-center">
             <button onClick={clearAllManual} className="rounded border border-border px-3 py-1 text-[10px] text-muted-foreground hover:bg-muted">↺ Clear all</button>
-            {prodPlanDirty && (
-              <button onClick={publishProdPlan} className="rounded-lg px-4 py-1.5 text-[10px] font-semibold text-white animate-pulse" style={{backgroundColor:"#16a34a"}}>
+            {prodPlanDirty ? (
+              <button onClick={publishProdPlan} className="rounded-lg px-4 py-1.5 text-[10px] font-semibold text-white" style={{backgroundColor:"#16a34a"}}>
                 📤 Publish plan for all
+              </button>
+            ) : (
+              <button onClick={publishProdPlan} className="rounded-lg border border-border px-4 py-1.5 text-[10px] font-semibold text-muted-foreground hover:bg-muted">
+                📤 Publish plan
               </button>
             )}
             <div className="text-center"><p className="text-[10px] text-muted-foreground uppercase tracking-wide">Total to produce</p>
