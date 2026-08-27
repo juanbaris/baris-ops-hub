@@ -2897,7 +2897,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   useEffect(() => {
     (async () => {
       try {
-        const { data } = await supabase.from("ops_published").select("value").eq("key", "ingredient_prices").maybeSingle();
+        const { data } = await (supabase as any).from("ops_published").select("value").eq("key", "ingredient_prices").maybeSingle();
         if (data?.value && typeof data.value === "object" && Object.keys(data.value).length > 0) {
           const pub = data.value as Record<string, number>;
           setIngPricesPublished(pub);
@@ -2907,7 +2907,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     })();
   }, []);
   async function publishIngPrices() {
-    const { error } = await supabase.from("ops_published").upsert({ key: "ingredient_prices", value: ingPrices, published_at: new Date().toISOString() });
+    const { error } = await (supabase as any).from("ops_published").upsert({ key: "ingredient_prices", value: ingPrices, published_at: new Date().toISOString() });
     if (error) { toast.error("Failed to publish prices: " + error.message); return; }
     setIngPricesPublished(ingPrices); setIngPricesDirty(false);
     toast.success("✅ Ingredient prices published for all users");
@@ -2927,7 +2927,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   useEffect(() => {
     (async () => {
       try {
-        const { data } = await supabase.from("ops_published").select("value").eq("key", "production_costs").maybeSingle();
+        const { data } = await (supabase as any).from("ops_published").select("value").eq("key", "production_costs").maybeSingle();
         if (data?.value && typeof data.value === "object" && Object.keys(data.value).length > 0) {
           const pub = data.value as Record<string, number>;
           try { if (!window.localStorage.getItem("baris.ops.prodCosts.v2")) setProdCosts(prev => ({...prev, ...pub})); } catch {}
@@ -2998,7 +2998,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   useEffect(() => {
     (async () => {
       try {
-        const { data } = await supabase.from("ops_bom").select("*");
+        const { data } = await (supabase as any).from("ops_bom").select("*");
         if (data && data.length > 0) {
           const bom: Record<string, Record<string, number>> = JSON.parse(JSON.stringify(BOM_QTY));
           for (const row of data) {
@@ -3014,7 +3014,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   function setBomQtyCell(sku:string, mat:string, val:number){
     setBomQty(prev=>({...prev,[sku]:{...(prev[sku]??{}),[mat]:val}}));
     // Save to Supabase
-    supabase.from("ops_bom").upsert(
+    (supabase as any).from("ops_bom").upsert(
       { sku, material: mat, qty_per_case: val },
       { onConflict: "sku,material" }
     ).then(({ error }) => { if (error) console.error("BOM save error:", error); });
@@ -3027,7 +3027,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       const basis = rawTotal>0 ? rawTotal : LBS_PER_CASE_BOM;
       const newVal = (pct/100)*basis;
       // Save to Supabase
-      supabase.from("ops_bom").upsert({ sku, material: mat, qty_per_case: newVal }, { onConflict: "sku,material" })
+      (supabase as any).from("ops_bom").upsert({ sku, material: mat, qty_per_case: newVal }, { onConflict: "sku,material" })
         .then(({ error }) => { if (error) console.error("BOM save error:", error); });
       return {...prev,[sku]:{...row,[mat]:newVal}};
     });
@@ -3042,7 +3042,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
         rows.push({ sku, material: mat, qty_per_case: qty });
       }
     }
-    if (rows.length > 0) await supabase.from("ops_bom").upsert(rows, { onConflict: "sku,material" });
+    if (rows.length > 0) await (supabase as any).from("ops_bom").upsert(rows, { onConflict: "sku,material" });
     toast.success("BOM reset to defaults (Supabase updated)");
   }
   // ─── Editable material master: scrap %, overfill %, lead weeks, payment terms (Supabase: ops_raw_materials) ───
@@ -3051,7 +3051,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   useEffect(() => {
     (async () => {
       try {
-        const { data } = await supabase.from("ops_raw_materials").select("*").order("sort_order");
+        const { data } = await (supabase as any).from("ops_raw_materials").select("*").order("sort_order");
         if (data && data.length > 0) {
         setDbMaterials(data as any);
         // Merge DB values into state
@@ -3088,7 +3088,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
 
   // Save material setting to Supabase
   function saveRawMatField(material: string, field: string, value: any) {
-    supabase.from("ops_raw_materials").upsert(
+    (supabase as any).from("ops_raw_materials").upsert(
       { material, [field]: value },
       { onConflict: "material" }
     ).then(({ error }) => { if (error) console.error("Raw mat save error:", error); });
@@ -3118,7 +3118,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     if (!name) return;
     if (allMaterialsList.includes(name)) { toast.error("Material already exists"); return; }
     const nextOrder = dbMaterials.length > 0 ? Math.max(...dbMaterials.map(m => m.sort_order)) + 1 : 100;
-    const { error } = await supabase.from("ops_raw_materials").insert({
+    const { error } = await (supabase as any).from("ops_raw_materials").insert({
       material: name, unit: "lbs", scrap_pct: 0, overfill_pct: 0,
       lead_time_weeks: 4, payment_terms: "lead", default_price: 0, active: true, sort_order: nextOrder,
     });
@@ -3139,8 +3139,8 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     if (allMaterialsList.includes(newName)) { toast.error(`"${newName}" already exists`); return; }
     const old = dbMaterials.find(m => m.material === oldName);
     // Delete old row first, then insert new (PK is material name, can't update it)
-    await supabase.from("ops_raw_materials").delete().eq("material", oldName);
-    const { error: e1 } = await supabase.from("ops_raw_materials").insert({
+    await (supabase as any).from("ops_raw_materials").delete().eq("material", oldName);
+    const { error: e1 } = await (supabase as any).from("ops_raw_materials").insert({
       material: newName, unit: old?.unit ?? "lbs", scrap_pct: old?.scrap_pct ?? 0,
       overfill_pct: old?.overfill_pct ?? 0, lead_time_weeks: old?.lead_time_weeks ?? 4,
       payment_terms: old?.payment_terms ?? "lead", default_price: old?.default_price ?? 0,
@@ -3148,15 +3148,15 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     });
     if (e1) { toast.error("Failed to rename: " + e1.message); return; }
     // Update BOM references
-    const { data: bomRows } = await supabase.from("ops_bom").select("*").eq("material", oldName);
+    const { data: bomRows } = await (supabase as any).from("ops_bom").select("*").eq("material", oldName);
     if (bomRows && bomRows.length > 0) {
       for (const row of bomRows) {
-        await supabase.from("ops_bom").upsert({ sku: row.sku, material: newName, qty_per_case: row.qty_per_case }, { onConflict: "sku,material" });
+        await (supabase as any).from("ops_bom").upsert({ sku: row.sku, material: newName, qty_per_case: row.qty_per_case }, { onConflict: "sku,material" });
       }
-      await supabase.from("ops_bom").delete().eq("material", oldName);
+      await (supabase as any).from("ops_bom").delete().eq("material", oldName);
     }
     // Update forecast PO references
-    await supabase.from("ops_forecast_po").update({ material: newName }).eq("material", oldName);
+    await (supabase as any).from("ops_forecast_po").update({ material: newName }).eq("material", oldName);
     setIpForecastPOs(prev => prev.map(p => p.material === oldName ? {...p, material: newName} : p));
     // Update local state
     setDbMaterials(prev => prev.map(m => m.material === oldName ? { ...m, material: newName } : m));
@@ -3176,8 +3176,8 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
 
   async function deleteMaterial(mat: string) {
     if (!confirm(`Delete "${mat}"? This removes it from Raw Materials, BOM, and any Forecast POs referencing it.`)) return;
-    await supabase.from("ops_raw_materials").delete().eq("material", mat);
-    await supabase.from("ops_bom").delete().eq("material", mat);
+    await (supabase as any).from("ops_raw_materials").delete().eq("material", mat);
+    await (supabase as any).from("ops_bom").delete().eq("material", mat);
     // Don't delete forecast POs — just warn
     const affectedPOs = ipForecastPOs.filter(p => p.material === mat);
     if (affectedPOs.length > 0) toast("⚠️ " + affectedPOs.length + " Forecast PO(s) still reference this material");
@@ -3222,7 +3222,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     (async () => {
       try {
         let base = Object.fromEntries(SKUS.map(s=>[s, FORECAST_MONTHS_OPS.map(()=>0)]));
-        const { data } = await supabase.from("ops_published").select("value").eq("key", "production_plan").maybeSingle();
+        const { data } = await (supabase as any).from("ops_published").select("value").eq("key", "production_plan").maybeSingle();
         if (data?.value && typeof data.value === "object" && Object.keys(data.value).length > 0) {
           base = {...base, ...(data.value as Record<string, number[]>)};
         }
@@ -3249,7 +3249,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   }, []);
 
   async function publishProdPlan() {
-    const { error } = await supabase.from("ops_published").upsert({
+    const { error } = await (supabase as any).from("ops_published").upsert({
       key: "production_plan", value: manualProd, published_at: new Date().toISOString(),
     });
     if (error) { toast.error("Failed to publish plan: " + error.message); return; }
@@ -3262,7 +3262,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     toast.success("✅ Production plan published for all users");
   }
   async function publishProdCosts() {
-    const { error } = await supabase.from("ops_published").upsert({
+    const { error } = await (supabase as any).from("ops_published").upsert({
       key: "production_costs", value: prodCosts, published_at: new Date().toISOString(),
     });
     if (error) { toast.error("Failed to publish costs: " + error.message); return; }
@@ -3276,7 +3276,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   useEffect(() => {
     (async () => {
       try {
-        const { data } = await supabase.from("ops_forecast_po").select("*").order("id");
+        const { data } = await (supabase as any).from("ops_forecast_po").select("*").order("id");
         if (data) setIpForecastPOs(data.map((r: any) => ({
           id: r.id, material: r.material, qty: Number(r.qty) || 0,
           matCost: Number(r.mat_cost) || 0, freight: Number(r.freight) || 0,
@@ -3296,7 +3296,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     const rcvKey = `${rcvD.getFullYear()}-${String(rcvD.getMonth()+1).padStart(2,"0")}`;
     const payD = new Date(rcvD); payD.setMonth(payD.getMonth() + 1);
     const payKey = `${payD.getFullYear()}-${String(payD.getMonth()+1).padStart(2,"0")}`;
-    const { data, error } = await supabase.from("ops_forecast_po")
+    const { data, error } = await (supabase as any).from("ops_forecast_po")
       .insert({ material: firstRawMat, qty: 0, mat_cost: 0, freight: 0, month_buy: buyKey, month_receive: rcvKey, month_pay: payKey })
       .select().single();
     if (error) { toast.error("Failed to add PO: " + error.message); return; }
@@ -3307,7 +3307,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     }]);
   }
   async function removeIpForecastPO(id: number) {
-    const { error } = await supabase.from("ops_forecast_po").delete().eq("id", id);
+    const { error } = await (supabase as any).from("ops_forecast_po").delete().eq("id", id);
     if (error) { toast.error("Failed to delete PO: " + error.message); return; }
     setIpForecastPOs(prev => prev.filter(p => p.id !== id));
   }
@@ -3338,7 +3338,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     if (error) { toast.error("Failed to create IP movement: " + error.message); return; }
     toast.success(`✅ PO #${po.id} confirmed → IP movement created for ${po.qty.toLocaleString()} ${isRaw?"lbs":"units"} of ${ipMat}`);
     // Remove from Supabase forecast table
-    await supabase.from("ops_forecast_po").delete().eq("id", po.id);
+    await (supabase as any).from("ops_forecast_po").delete().eq("id", po.id);
     setIpForecastPOs(prev => prev.filter(p => p.id !== po.id));
     setConfirmingPO(null);
     onAdded();
@@ -3379,7 +3379,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       else if (pt === "lead") merged.mPay = merged.mRecv;
       else { const pd = new Date(rcvD); pd.setMonth(pd.getMonth()+1); merged.mPay = `${pd.getFullYear()}-${String(pd.getMonth()+1).padStart(2,"0")}`; }
     }
-    supabase.from("ops_forecast_po").update({
+    (supabase as any).from("ops_forecast_po").update({
       material: merged.material, qty: merged.qty, mat_cost: merged.matCost,
       freight: merged.freight, month_buy: merged.mBuy, month_receive: merged.mRecv, month_pay: merged.mPay,
     }).eq("id", id).then(({ error }) => { if (error) console.error("PO save error:", error); });
@@ -3389,7 +3389,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   useEffect(() => {
     (async () => {
       try {
-        const { data } = await supabase.from("ops_wip").select("*");
+        const { data } = await (supabase as any).from("ops_wip").select("*");
         if (data && data.length > 0) {
           const w: Record<string, { cases: string; due: string }> = {};
           for (const r of data) w[r.sku] = { cases: String(r.cases ?? ""), due: r.due_date ?? "" };
@@ -3403,7 +3403,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       const next={...w,[sku]:{...(w[sku]??{cases:"",due:""}),...patch}};
       // Save to Supabase
       const entry = next[sku];
-      supabase.from("ops_wip").upsert({
+      (supabase as any).from("ops_wip").upsert({
         sku, cases: parseInt(entry.cases) || 0, due_date: entry.due || null, updated_at: new Date().toISOString(),
       }).then(({ error }) => { if (error) console.error("WIP save error:", error); });
       return next;
