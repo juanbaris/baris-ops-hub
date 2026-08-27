@@ -2956,16 +2956,24 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   // Effective inventory: manual override wins; otherwise the live I&P on-hand.
   const ingInv: Record<string,string> = useMemo(() => {
     const o: Record<string,string> = {};
-    for (const k of allMaterialsList) {
+    for (const k of ALL_INGS) {
       o[k] = (ingInvOverride[k] !== undefined && ingInvOverride[k] !== "")
         ? ingInvOverride[k]
         : (ipOnHand[k] != null ? String(Math.round(ipOnHand[k])) : "");
     }
+    // Also include any overridden extra materials (from Supabase)
+    for (const k of Object.keys(ingInvOverride)) {
+      if (!o[k] && ingInvOverride[k] !== undefined && ingInvOverride[k] !== "") {
+        o[k] = ingInvOverride[k];
+      }
+    }
     return o;
-  }, [ingInvOverride, ipOnHand, allMaterialsList]);
+  }, [ingInvOverride, ipOnHand]);
   const setIngInv = (updater: any) => {
     setIngInvOverride(prev => {
-      const cur: Record<string,string> = {}; for (const k of allMaterialsList) cur[k] = prev[k] ?? "";
+      const cur: Record<string,string> = {};
+      for (const k of ALL_INGS) cur[k] = prev[k] ?? "";
+      for (const k of Object.keys(prev)) cur[k] = prev[k] ?? "";
       const next = typeof updater === "function" ? updater(cur) : updater;
       return next;
     });
