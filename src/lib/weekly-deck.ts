@@ -11,6 +11,7 @@ const BURGUNDY = "A3224A";
 const GREEN = "7EB53F";
 const GRAY = "94A3B8";
 const YELLOW = "F5A623";
+const NAVY_BLACK = "111827";
 
 function titleBar(slide: PptxGenJS.Slide, title: string, subtitle: string) {
   slide.background = { color: CREAM };
