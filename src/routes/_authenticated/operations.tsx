@@ -3195,53 +3195,60 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     }
   );
   const [showSkuMins, setShowSkuMins] = useState(false);
-  // ─── Production Plan: draft in localStorage, publish to Supabase ───
+  // ─── Production Plan: Supabase is source of truth, localStorage is unsaved draft ───
   const [manualProd, setManualProd] = useState<Record<string,number[]>>(
-    () => {
-      try { const raw = window.localStorage.getItem(MANUAL_PROD_KEY); if (raw) return JSON.parse(raw); } catch {}
-      return Object.fromEntries(SKUS.map(s=>[s, FORECAST_MONTHS_OPS.map(()=>0)]));
-    }
+    () => Object.fromEntries(SKUS.map(s=>[s, FORECAST_MONTHS_OPS.map(()=>0)]))
   );
   const [prodPlanDirty, setProdPlanDirty] = useState(false);
+  const [prodPlanLoaded, setProdPlanLoaded] = useState(false);
 
   // Persist per-SKU mins
   useEffect(()=>{
     try { window.localStorage.setItem(SKU_MINS_KEY, JSON.stringify(skuMinRuns)); } catch {}
   },[skuMinRuns]);
-  // Persist manual overrides (draft)
-  useEffect(()=>{
-    try { window.localStorage.setItem(MANUAL_PROD_KEY, JSON.stringify(manualProd)); } catch {}
-  },[manualProd]);
-  // Load published plan from Supabase on mount — ALWAYS use as base, localStorage is only a draft overlay
+
+  // On mount: load from Supabase first, then check for unsaved localStorage draft
   useEffect(() => {
     (async () => {
+      let base = Object.fromEntries(SKUS.map(s=>[s, FORECAST_MONTHS_OPS.map(()=>0)]));
+      // 1. Load published version from Supabase
       const { data } = await supabase.from("ops_published").select("value").eq("key", "production_plan").single();
       if (data?.value && typeof data.value === "object" && Object.keys(data.value).length > 0) {
-        const pub = data.value as Record<string, number[]>;
-        // Check if localStorage has any actual non-zero production values
-        let localHasData = false;
+        base = {...base, ...(data.value as Record<string, number[]>)};
+      }
+      // 2. Check if there's an unsaved local draft (marked by a flag)
+      const hasDraft = window.localStorage.getItem("baris.ops.prodPlanDraft") === "true";
+      if (hasDraft) {
         try {
           const raw = window.localStorage.getItem(MANUAL_PROD_KEY);
           if (raw) {
             const local = JSON.parse(raw);
-            localHasData = Object.values(local).some((arr: any) => Array.isArray(arr) && arr.some((v: number) => v > 0));
+            const localHasData = Object.values(local).some((arr: any) => Array.isArray(arr) && arr.some((v: number) => v > 0));
+            if (localHasData) {
+              setManualProd({...base, ...local});
+              setProdPlanDirty(true);
+              setProdPlanLoaded(true);
+              return;
+            }
           }
         } catch {}
-        // If local has real data, it's a draft — keep it. Otherwise use published.
-        if (!localHasData) {
-          setManualProd(prev => ({...prev, ...pub}));
-          try { window.localStorage.setItem(MANUAL_PROD_KEY, JSON.stringify({...pub})); } catch {}
-        }
       }
+      // No draft: use published
+      setManualProd(base);
+      setProdPlanLoaded(true);
     })();
   }, []);
+
   async function publishProdPlan() {
     const { error } = await supabase.from("ops_published").upsert({
       key: "production_plan", value: manualProd, published_at: new Date().toISOString(),
     });
     if (error) { toast.error("Failed to publish plan: " + error.message); return; }
-    // Update localStorage to match published (so other tabs on same browser see it immediately)
-    try { window.localStorage.setItem(MANUAL_PROD_KEY, JSON.stringify(manualProd)); } catch {}
+    // Clear draft flag — next load (any tab/user) will use Supabase
+    try {
+      window.localStorage.removeItem("baris.ops.prodPlanDraft");
+      window.localStorage.removeItem(MANUAL_PROD_KEY);
+    } catch {}
     setProdPlanDirty(false);
     toast.success("✅ Production plan published for all users");
   }
@@ -3396,13 +3403,21 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     setManualProd(prev=>{
       const arr=[...(prev[sku]??FORECAST_MONTHS_OPS.map(()=>0))];
       arr[monthIdx]=val;
-      return {...prev,[sku]:arr};
+      const next = {...prev,[sku]:arr};
+      // Save as unsaved draft
+      try {
+        window.localStorage.setItem(MANUAL_PROD_KEY, JSON.stringify(next));
+        window.localStorage.setItem("baris.ops.prodPlanDraft", "true");
+      } catch {}
+      return next;
     });
     setProdPlanDirty(true);
   }
   function clearAllManual(){
     setManualProd(Object.fromEntries(SKUS.map(s=>[s, FORECAST_MONTHS_OPS.map(()=>0)])));
-    toast.success("All manual overrides cleared");
+    try { window.localStorage.removeItem("baris.ops.prodPlanDraft"); window.localStorage.removeItem(MANUAL_PROD_KEY); } catch {}
+    setProdPlanDirty(true);
+    toast.success("All production cleared");
   }
 
   const hasAnyManual = useMemo(()=>PROC_SKUS.some(sku=>(manualProd[sku]??[]).some(v=>v>0)),[manualProd]);
