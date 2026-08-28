@@ -4,31 +4,43 @@ import {
   forecastFromState, loadForecastState, skuForecast, skuForecastByMonthKey,
   subscribeForecast, committedForecastFromState, committedLeverCount,
   productionRequirements, initForecastSupabase, loadForecastFromSupabase,
-  saveForecastState, type ForecastState,
+  type ForecastState,
 } from "@/lib/sales-forecast";
 
 // Initialize Supabase client for the forecast module
 initForecastSupabase(supabase);
+
+const STORAGE_KEY = "baris.sales.forecast.v1";
 
 /** Live view of the forecast edited in the Sales module. */
 export function useSalesForecast() {
   const [state, setState] = useState<ForecastState>(() => loadForecastState());
 
   useEffect(() => {
-    // On mount: try loading from Supabase (source of truth for committed state)
+    let cancelled = false;
+    // Load from Supabase — source of truth. Overrides localStorage.
     (async () => {
       try {
         const remote = await loadForecastFromSupabase();
-        if (remote && remote.committedAt) {
-          // Only use Supabase version if it has committed data
-          setState(remote);
-          saveForecastState(remote);
+        if (!cancelled && remote) {
+          // Only use Supabase if it actually has meaningful data
+          const hasCommitted = (remote.velCommitted ?? []).some(Boolean)
+            || (remote.retCommitted ?? []).some(Boolean)
+            || (remote.skuCommitted ?? []).some(Boolean)
+            || !!remote.mixCommitted;
+          if (hasCommitted || remote.committedAt) {
+            setState(remote);
+            // Sync to localStorage so sales.tsx picks it up
+            try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(remote)); } catch {}
+          }
         }
-      } catch { /* Supabase unavailable — use localStorage */ }
+      } catch { /* Supabase unavailable — localStorage is fine */ }
     })();
-    // Subscribe to local changes (same-tab updates)
-    setState(loadForecastState());
-    return subscribeForecast(() => setState(loadForecastState()));
+    // Subscribe to local changes (same-tab, from sales.tsx edits)
+    const unsub = subscribeForecast(() => {
+      if (!cancelled) setState(loadForecastState());
+    });
+    return () => { cancelled = true; unsub(); };
   }, []);
 
   return useMemo(() => {
