@@ -2536,7 +2536,7 @@ const FORECAST_KEYS_OPS = Array.from({ length: 12 }, (_, i) => {
   const d = new Date();
   d.setDate(1);
   d.setMonth(d.getMonth() + i);
-  return `${d.getFullYear()}-${d.getMonth() + 1}`;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 });
 function buildOpsForecast(bySkuMonthKey: Record<string, Record<string, number>>, procSkuList?: string[]): Record<string, number[]> {
   const skuList = procSkuList ?? SKUS;
