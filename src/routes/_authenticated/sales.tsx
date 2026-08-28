@@ -1296,6 +1296,51 @@ function SalesPage() {
   const [mixCommitted,setMixCommitted] = useState(false);
   const [promoMultipliers,setPromoMultipliers] = useState<number[]>(Array(12).fill(1));
 
+  // ── Load saved state on mount (localStorage + Supabase) ──
+  const [stateLoaded, setStateLoaded] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      // Try Supabase first (source of truth for SET state)
+      let loaded: any = null;
+      try {
+        const { initForecastSupabase, loadForecastFromSupabase } = await import("@/lib/sales-forecast");
+        const { supabase: sb } = await import("@/integrations/supabase/client");
+        initForecastSupabase(sb);
+        loaded = await loadForecastFromSupabase();
+      } catch {}
+      // Fallback to localStorage
+      if (!loaded) {
+        try {
+          const raw = window.localStorage.getItem("baris.sales.forecast.v1");
+          if (raw) loaded = JSON.parse(raw);
+        } catch {}
+      }
+      if (cancelled || !loaded) { setStateLoaded(true); return; }
+      // Apply loaded state to all individual states
+      if (loaded.scenario) setScenario(loaded.scenario);
+      if (loaded.seasonIdx) setSeasonIdx(loaded.seasonIdx);
+      if (loaded.velChains) setVelChains(loaded.velChains);
+      if (loaded.velActive) setVelActive(loaded.velActive);
+      if (loaded.velNew) setVelNew(loaded.velNew);
+      if (loaded.retActive) setRetActive(loaded.retActive);
+      if (loaded.retStores) setRetStores(loaded.retStores);
+      if (loaded.retVel) setRetVel(loaded.retVel);
+      if (loaded.retEntry) setRetEntry(loaded.retEntry);
+      if (loaded.retVelBySku) setRetVelBySku(loaded.retVelBySku);
+      if (loaded.newSkus) setNewSkus(loaded.newSkus);
+      if (loaded.velCommitted) setVelCommitted(loaded.velCommitted);
+      if (loaded.retCommitted) setRetCommitted(loaded.retCommitted);
+      if (loaded.skuCommitted) setSkuCommitted(loaded.skuCommitted);
+      if (loaded.mixOverrides) setMixOverrides(loaded.mixOverrides);
+      if (loaded.mixOverrideActive != null) setMixOverrideActive(loaded.mixOverrideActive);
+      if (loaded.mixCommitted != null) setMixCommitted(loaded.mixCommitted);
+      if (loaded.promoMultipliers) setPromoMultipliers(loaded.promoMultipliers);
+      setStateLoaded(true);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   useEffect(()=>{
     setVelNew(prev=>velChains.map((c,i)=>prev[i]??c.velCurrent));
   },[velChains]);
@@ -1332,6 +1377,7 @@ function SalesPage() {
   }
 
   useEffect(()=>{
+    if (!stateLoaded) return; // Don't save until initial state is loaded
     const state: ForecastState = {
       scenario, seasonIdx, velChains,
       velActive, velNew, retActive, retStores, retVel, retEntry, newSkus,
@@ -1341,7 +1387,7 @@ function SalesPage() {
       promoMultipliers, retVelBySku,
     };
     saveForecastState(state);
-  },[scenario,seasonIdx,velChains,velActive,velNew,retActive,retStores,retVel,retEntry,newSkus,
+  },[stateLoaded,scenario,seasonIdx,velChains,velActive,velNew,retActive,retStores,retVel,retEntry,newSkus,
      velCommitted,retCommitted,skuCommitted,mixCommitted,mixOverrides,mixOverrideActive,committedCount]);
 
   useEffect(()=>{
