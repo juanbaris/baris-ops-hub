@@ -3457,25 +3457,45 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     return base;
   }, [committedNewSkus]);
 
-  // Use committed forecast from Sales (includes new SKUs from simulator)
+  // Use committed forecast from Sales, recalculated with the selected planScenario
   const planSkuByMonthKey = useMemo(() => {
     const out: Record<string, Record<string, number>> = {};
-    if (salesProduction) {
-      for (const pm of salesProduction) {
-        const mk = `${pm.year}-${String(pm.month).padStart(2, "0")}`;
-        for (const [sku, cases] of Object.entries(pm.skuBreakdown)) {
-          if (!out[sku]) out[sku] = {};
-          out[sku][mk] = cases;
-        }
-        // Add new SKU breakdown
-        for (const ns of pm.newSkuBreakdown) {
+    const state = salesForecastHook.state;
+    // Override scenario for procurement planning
+    const modState = { ...state, scenario: planScenario };
+    // Recalculate forecast with selected scenario
+    const forecast = calcForecast(
+      modState.scenario,
+      modState.velActive.map((a: boolean, i: number) => a && !!(modState.velCommitted ?? [])[i]),
+      modState.velNew,
+      modState.retActive.map((a: boolean, i: number) => a && !!(modState.retCommitted ?? [])[i]),
+      modState.retStores, modState.retVel, modState.retEntry,
+      modState.velChains, modState.seasonIdx,
+      (modState.newSkus ?? []).map((sk: any, i: number) => ({ ...sk, active: sk.active && !!(modState.skuCommitted ?? [])[i] })),
+      modState.promoMultipliers,
+      modState.retVelBySku,
+    );
+    // Build SKU breakdown using mix percentages
+    const skuByMonth = skuForecastByMonthKey(forecast);
+    for (const [sku, monthMap] of Object.entries(skuByMonth)) {
+      out[sku] = monthMap;
+    }
+    // Add new SKU cases
+    const newSkus = (modState.newSkus ?? []).filter((s: any, i: number) => s.active && !!(modState.skuCommitted ?? [])[i]);
+    for (const fm of forecast) {
+      const mk = `${fm.year}-${String(fm.month).padStart(2, "0")}`;
+      for (const ns of newSkus) {
+        const cases = (ns as any).stores && (ns as any).vel
+          ? Math.round((ns as any).stores * (ns as any).vel * 4.345 / 8 * (fm.month >= (ns as any).entry ? (fm.month - (ns as any).entry < 1 ? 0.4 : fm.month - (ns as any).entry < 2 ? 0.7 : 1.0) : 0))
+          : 0;
+        if (cases > 0) {
           if (!out[ns.name]) out[ns.name] = {};
-          out[ns.name][mk] = (out[ns.name][mk] ?? 0) + ns.cases;
+          out[ns.name][mk] = (out[ns.name][mk] ?? 0) + cases;
         }
       }
     }
     return out;
-  }, [salesProduction]);
+  }, [salesForecastHook.state, planScenario]);
   const fcstOps = useMemo(()=>buildOpsForecast(planSkuByMonthKey, dynamicProcSkus),[planSkuByMonthKey, dynamicProcSkus]);
 
   // Stock from Lot Master (all warehouses) — same source as FP Stock, so Schedule "available"
