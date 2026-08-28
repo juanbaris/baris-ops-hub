@@ -2731,12 +2731,13 @@ const DEFAULT_LEAD_WEEKS = 4;
 
 /** Production requirements coming from the Sales simulator (committed scenario wins). */
 function CommittedRequirements({ planScenario, onPlanScenarioChange, forecast, months }: { planScenario: SalesScenario; onPlanScenarioChange: (s: SalesScenario) => void; forecast: Record<string,number[]>; months: string[] }) {
+  const skuCols = Object.keys(forecast).filter(k => (forecast[k] ?? []).some(v => v > 0) || PROC_SKUS.includes(k));
   function exportCsv(){
-    const head = ["Month",...PROC_SKUS,"TOTAL"];
+    const head = ["Month",...skuCols,"TOTAL"];
     const rows = months.map((label,i)=>[
       label,
-      ...PROC_SKUS.map(s=>Math.round(forecast[s]?.[i]??0)),
-      PROC_SKUS.reduce((a,s)=>a+Math.round(forecast[s]?.[i]??0),0),
+      ...skuCols.map(s=>Math.round(forecast[s]?.[i]??0)),
+      skuCols.reduce((a,s)=>a+Math.round(forecast[s]?.[i]??0),0),
     ]);
     const csv=[head,...rows].map(r=>r.join(",")).join("\n");
     const url=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
@@ -2774,17 +2775,17 @@ function CommittedRequirements({ planScenario, onPlanScenarioChange, forecast, m
           <thead>
             <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
               <th className="px-4 py-2 text-left">Month</th>
-              {PROC_SKUS.map(s=><th key={s} className="px-3 py-2 text-right" title={PROC_SKU_LABEL[s]}>{s}</th>)}
+              {skuCols.map(s=><th key={s} className="px-3 py-2 text-right" title={PROC_SKU_LABEL[s]??s}>{s}</th>)}
               <th className="px-4 py-2 text-right font-bold">TOTAL</th>
             </tr>
           </thead>
           <tbody>
             {months.map((label,i)=>{
-              const rowTotal = PROC_SKUS.reduce((a,s)=>a+Math.round(forecast[s]?.[i]??0),0);
+              const rowTotal = skuCols.reduce((a,s)=>a+Math.round(forecast[s]?.[i]??0),0);
               return (
                 <tr key={label} className="border-t border-border/60 hover:bg-muted/20">
                   <td className="px-4 py-1.5 font-semibold">{label}</td>
-                  {PROC_SKUS.map(s=><td key={s} className="px-3 py-1.5 text-right font-mono">{Math.round(forecast[s]?.[i]??0).toLocaleString()}</td>)}
+                  {skuCols.map(s=><td key={s} className="px-3 py-1.5 text-right font-mono">{Math.round(forecast[s]?.[i]??0).toLocaleString()}</td>)}
                   <td className="px-4 py-1.5 text-right font-mono font-bold">{rowTotal.toLocaleString()}</td>
                 </tr>
               );
@@ -2796,8 +2797,9 @@ function CommittedRequirements({ planScenario, onPlanScenarioChange, forecast, m
   );
 }
 
-function calcCOGSFull(prices: Record<string,number>, costs: typeof DEFAULT_PROD_COSTS, matScrap: Record<string,number>, matOverfill: Record<string,number>, bomQty: Record<string, Record<string, number>>) {
-  return Object.fromEntries(PROC_SKUS.map(sku => {
+function calcCOGSFull(prices: Record<string,number>, costs: typeof DEFAULT_PROD_COSTS, matScrap: Record<string,number>, matOverfill: Record<string,number>, bomQty: Record<string, Record<string, number>>, skuList?: string[]) {
+  const skus = skuList ?? PROC_SKUS;
+  return Object.fromEntries(skus.map(sku => {
     const bom = bomQty[sku]??{};
     let rasp=0,choc=0,other=0,pkg=0;
     for (const [mat,qty] of Object.entries(bom)) {
@@ -3501,7 +3503,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     ()=>calcProdSchedule(bySku,orders,safetyWoh,minRun,freqMonths,fcstOps,wipBySku,skuMinRuns,manualProd,optimizeTruck,bomQty,matScrap,matOverfill,dynamicProcSkus),
     [bySku,orders,safetyWoh,minRun,freqMonths,fcstOps,wipBySku,skuMinRuns,manualProd,optimizeTruck,bomQty,matScrap,matOverfill,dynamicProcSkus]
   );
-  const cogs = useMemo(()=>calcCOGSFull(ingPrices,prodCosts,matScrap,matOverfill,bomQty),[ingPrices,prodCosts,matScrap,matOverfill,bomQty]);
+  const cogs = useMemo(()=>calcCOGSFull(ingPrices,prodCosts,matScrap,matOverfill,bomQty,dynamicProcSkus),[ingPrices,prodCosts,matScrap,matOverfill,bomQty,dynamicProcSkus]);
 
   // ─── Payments forecast — from IP Forecast POs (by payment month) + Heinlein tolling (30d after production) ───
   const payments = useMemo(()=>{
@@ -3675,7 +3677,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   const fifoResults = useMemo(() => runFifoForecast(
     ipStartForForecast, fpStartForForecast, allPOsForFifo,
     prodPlanForForecast, salesFcstForForecast, bomQty,
-    tollingPerCase, ALL_INGS, SKUS as unknown as string[],
+    tollingPerCase, ALL_INGS, dynamicProcSkus,
   ), [ipStartForForecast, fpStartForForecast, allPOsForFifo, prodPlanForForecast, salesFcstForForecast, bomQty, tollingPerCase]);
 
   // ─── Bridge: write FIFO inventory & payments to localStorage for Finance ───
@@ -4388,8 +4390,8 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
         const FR = fifoResults;
         const last = FR[FR.length - 1];
         const tIPv = ALL_INGS.reduce((s, g) => s + (last?.ipStock[g]?.value ?? 0), 0);
-        const tFPv = SKUS.reduce((s, sk) => s + (last?.fpStock[sk]?.value ?? 0), 0);
-        const tFPc = SKUS.reduce((s, sk) => s + (last?.fpStock[sk]?.cases ?? 0), 0);
+        const tFPv = dynamicProcSkus.reduce((s, sk) => s + (last?.fpStock[sk]?.value ?? 0), 0);
+        const tFPc = dynamicProcSkus.reduce((s, sk) => s + (last?.fpStock[sk]?.cases ?? 0), 0);
         const tPay = FR.reduce((s, r) => s + r.totalPayments, 0);
         return (
           <div className="space-y-4">
@@ -4426,7 +4428,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                     </tr>
                   </thead>
                   <tbody>
-                    {SKUS.map(sk => (
+                    {dynamicProcSkus.map(sk => (
                       <tr key={sk} className="border-t border-border/60">
                         <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{sk}</td>
                         {FR.map(r => {
@@ -4898,7 +4900,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                     </tr>
                   </thead>
                   <tbody>
-                    {SKUS.map(sk => (
+                    {dynamicProcSkus.map(sk => (
                       <tr key={sk} className="border-t border-border/60">
                         <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{sk}</td>
                         {FR.map(r => {
@@ -4923,7 +4925,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                     ))}
                     <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
                       <td className="px-4 py-2 font-semibold text-xs sticky left-0" style={{backgroundColor:"#1C2340"}}>TOTAL</td>
-                      {FR.map(r => <td key={r.mk} className="px-3 py-2 text-right font-mono font-bold">{Math.round(SKUS.reduce((s,sk)=>s+(r.fpStock[sk]?.cases??0),0)).toLocaleString()}</td>)}
+                      {FR.map(r => <td key={r.mk} className="px-3 py-2 text-right font-mono font-bold">{Math.round(dynamicProcSkus.reduce((s,sk)=>s+(r.fpStock[sk]?.cases??0),0)).toLocaleString()}</td>)}
                     </tr>
                   </tbody>
                 </table>
@@ -4944,7 +4946,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                     </tr>
                   </thead>
                   <tbody>
-                    {SKUS.map(sk => (
+                    {dynamicProcSkus.map(sk => (
                       <tr key={sk} className="border-t border-border/60">
                         <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{sk}</td>
                         {FR.map(r => <td key={r.mk} className="px-3 py-1.5 text-right font-mono">${Math.round(r.fpStock[sk]?.value ?? 0).toLocaleString()}</td>)}
@@ -4952,7 +4954,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                     ))}
                     <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
                       <td className="px-4 py-2 font-semibold text-xs sticky left-0" style={{backgroundColor:"#1C2340"}}>TOTAL</td>
-                      {FR.map(r => <td key={r.mk} className="px-3 py-2 text-right font-mono font-bold text-emerald-400">${Math.round(SKUS.reduce((s,sk)=>s+(r.fpStock[sk]?.value??0),0)).toLocaleString()}</td>)}
+                      {FR.map(r => <td key={r.mk} className="px-3 py-2 text-right font-mono font-bold text-emerald-400">${Math.round(dynamicProcSkus.reduce((s,sk)=>s+(r.fpStock[sk]?.value??0),0)).toLocaleString()}</td>)}
                     </tr>
                   </tbody>
                 </table>
@@ -4974,7 +4976,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                     </tr>
                   </thead>
                   <tbody>
-                    {SKUS.map(sk => (
+                    {dynamicProcSkus.map(sk => (
                       <React.Fragment key={sk}>
                         <tr className="border-t border-border/60">
                           <td className="px-4 py-1 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}} rowSpan={2}>{sk}</td>
@@ -5009,7 +5011,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                   </tr>
                 </thead>
                 <tbody>
-                  {SKUS.map(sk => {
+                  {dynamicProcSkus.map(sk => {
                     const lots = last?.fpLots[sk] ?? [];
                     if (lots.length === 0) return (
                       <tr key={sk} className="border-t border-border/60">
