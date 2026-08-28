@@ -2407,7 +2407,7 @@ const UNITS_PER_CASE_BOM = 8;
 const DEFAULT_PROD_COSTS = { tolling_per_unit:0.65, cup_per_unit:0.095, lid_per_unit:0.092, sealer_per_unit:0.030, case_per_case:0.36 };
 
 // ─── Procurement material master + BOM (quantities are PER CASE of 8 units) ───
-const PROC_SKUS: string[] = ["XD","PW","HM","WM","WD","Matcha","Strawberry"];
+const PROC_SKUS: string[] = ["XD","PW","HM","WM","WD","Matcha"];
 const PROC_SKU_LABEL: Record<string,string> = {
   XD:"Extra Dark", PW:"Pistachio & White", HM:"Hazelnut & Milk",
   WM:"White & Milk", WD:"White & Dark", Matcha:"Matcha & White", Strawberry:"Strawberry",
