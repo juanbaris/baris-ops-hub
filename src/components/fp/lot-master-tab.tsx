@@ -170,6 +170,28 @@ export function LotMasterTab() {
     load();
   }
 
+  function exportExcel() {
+    const headers = ["Warehouse","SKU","Item Code","Lot #","Expiry","Cases","Potes","COGS/pote","COGS/case","Inv. Value ($)","Status","Notes"];
+    const rows = filtered.map(l => [
+      l.warehouse, l.sku, l.lineage_item_code ?? "", l.lot_number,
+      l.expiry_date ?? "",
+      l.cases, l.cases * UNITS_PER_CASE,
+      l.cogs_per_case ?? "",
+      l.cogs_per_case ? (l.cogs_per_case * UNITS_PER_CASE).toFixed(2) : "",
+      l.cogs_per_case ? (l.cases * l.cogs_per_case * UNITS_PER_CASE).toFixed(2) : "",
+      l.cogs_status ?? "", l.notes ?? "",
+    ]);
+    const totalCases = filtered.reduce((s, l) => s + l.cases, 0);
+    const totalValue = filtered.reduce((s, l) => s + l.cases * (Number(l.cogs_per_case) || 0) * UNITS_PER_CASE, 0);
+    rows.push(["TOTAL","","","","", totalCases, totalCases * UNITS_PER_CASE, "","", totalValue.toFixed(2), "",""]);
+    const csv = [headers, ...rows].map(r => r.map(c => typeof c === "string" && c.includes(",") ? `"${c}"` : c).join(",")).join("\n");
+    const bom = "\uFEFF"; // UTF-8 BOM for Excel
+    const url = URL.createObjectURL(new Blob([bom + csv], { type: "text/csv;charset=utf-8" }));
+    const a = document.createElement("a"); a.href = url;
+    a.download = `lot-master-${new Date().toISOString().slice(0,10)}.csv`; a.click();
+    URL.revokeObjectURL(url);
+  }
+
   const th = "px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground select-none cursor-pointer hover:text-foreground";
   const arrow = (k: SortKey) => sortKey === k ? (sortDir === "asc" ? " ▲" : " ▼") : "";
 
@@ -250,6 +272,7 @@ export function LotMasterTab() {
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3">
         <button onClick={() => setAdding((a) => !a)} className="rounded-lg px-4 py-1.5 text-sm font-semibold text-white" style={{ backgroundColor: BRAND }}>+ Add lot</button>
+        <button onClick={exportExcel} className="rounded-lg border border-border px-4 py-1.5 text-sm font-semibold text-muted-foreground hover:text-foreground hover:bg-muted">📥 Export Excel</button>
         <select value={filterSku} onChange={(e) => setFilterSku(e.target.value)} className={inp}>
           <option value="all">All SKUs</option>
           {SKUS.map((s) => <option key={s} value={s}>{s}</option>)}
