@@ -5,7 +5,7 @@ import { PageHeader } from "@/components/app-shell";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import { useSalesForecast } from "@/hooks/use-sales-forecast";
-import { calcForecast, skuForecastByMonthKey, DEFAULT_VEL_CHAINS, NEW_RETAILERS, type Scenario as SalesScenario } from "@/lib/sales-forecast";
+import { calcForecast, skuForecastByMonthKey, forecastFromState, committedForecastFromState, productionRequirements, DEFAULT_VEL_CHAINS, NEW_RETAILERS, type Scenario as SalesScenario } from "@/lib/sales-forecast";
 import { buildLotMap, resolveCogs, type LotCard } from "@/lib/fp-shared";
 
 type FPRow = Database["public"]["Tables"]["fp_movements"]["Row"];
@@ -2529,6 +2529,7 @@ const PAY_TERM_KEY = "baris.ops.payTerms.v1";
 
 const FORECAST_MONTHS_OPS = Array.from({ length: 12 }, (_, i) => {
   const d = new Date();
+  d.setDate(1);
   d.setMonth(d.getMonth() + i);
   return d.toLocaleString("en-US", { month: "short", year: "2-digit" });
 });
@@ -3457,24 +3458,29 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     return base;
   }, [committedNewSkus]);
 
-  // Use forecast from Sales hook — mirrors Sales by SKU exactly
+  // Recalculate forecast with selected planScenario — mirrors Sales by SKU for that scenario
   const planSkuByMonthKey = useMemo(() => {
+    const state = salesForecastHook.state;
+    const modState = { ...state, scenario: planScenario };
+    const committed = committedForecastFromState(modState);
+    const forecast = committed ?? forecastFromState(modState);
+    const newSkus = (modState.newSkus ?? []).map((s: any, i: number) =>
+      committed ? { ...s, active: s.active && !!(modState.skuCommitted ?? [])[i] } : s);
+    const prod = productionRequirements(forecast, newSkus, modState.mixOverrides ?? {}, !!modState.mixOverrideActive && !!modState.mixCommitted);
     const out: Record<string, Record<string, number>> = {};
-    if (salesProduction) {
-      for (const pm of salesProduction) {
-        const mk = `${pm.year}-${String(pm.month).padStart(2, "0")}`;
-        for (const [sku, cases] of Object.entries(pm.skuBreakdown)) {
-          if (!out[sku]) out[sku] = {};
-          out[sku][mk] = cases;
-        }
-        for (const ns of pm.newSkuBreakdown) {
-          if (!out[ns.name]) out[ns.name] = {};
-          out[ns.name][mk] = (out[ns.name][mk] ?? 0) + ns.cases;
-        }
+    for (const pm of prod) {
+      const mk = `${pm.year}-${String(pm.month).padStart(2, "0")}`;
+      for (const [sku, cases] of Object.entries(pm.skuBreakdown)) {
+        if (!out[sku]) out[sku] = {};
+        out[sku][mk] = cases;
+      }
+      for (const ns of pm.newSkuBreakdown) {
+        if (!out[ns.name]) out[ns.name] = {};
+        out[ns.name][mk] = (out[ns.name][mk] ?? 0) + ns.cases;
       }
     }
     return out;
-  }, [salesProduction]);
+  }, [salesForecastHook.state, planScenario]);
   const fcstOps = useMemo(()=>buildOpsForecast(planSkuByMonthKey, dynamicProcSkus),[planSkuByMonthKey, dynamicProcSkus]);
 
   // Stock from Lot Master (all warehouses) — same source as FP Stock, so Schedule "available"
