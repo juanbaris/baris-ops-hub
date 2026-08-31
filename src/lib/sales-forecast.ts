@@ -144,7 +144,7 @@ export function skuForecastByMonthKey(forecast: ForecastRow[]): Record<string, R
   const out: Record<string, Record<string, number>> = {};
   for (const [sku, arr] of Object.entries(bySku)) {
     out[sku] = {};
-    forecast.forEach((f, i) => { out[sku][`${f.year}-${f.month}`] = arr[i] ?? 0; });
+    forecast.forEach((f, i) => { out[sku][`${f.year}-${String(f.month).padStart(2, "0")}`] = arr[i] ?? 0; });
   }
   return out;
 }
