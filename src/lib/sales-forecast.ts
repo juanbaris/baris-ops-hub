@@ -60,6 +60,23 @@ export const FORECAST_MONTHS = [
   { label: "May 2027", month: 5, year: 2027, yoy2025: 1314 },
   { label: "Jun 2027", month: 6, year: 2027, yoy2025: 2710 },
   { label: "Jul 2027", month: 7, year: 2027, yoy2025: 1242 },
+  { label: "Aug 2027", month: 8, year: 2027, yoy2025: 0 },
+  { label: "Sep 2027", month: 9, year: 2027, yoy2025: 0 },
+  { label: "Oct 2027", month: 10, year: 2027, yoy2025: 0 },
+  { label: "Nov 2027", month: 11, year: 2027, yoy2025: 0 },
+  { label: "Dec 2027", month: 12, year: 2027, yoy2025: 0 },
+  { label: "Jan 2028", month: 1, year: 2028, yoy2025: 0 },
+  { label: "Feb 2028", month: 2, year: 2028, yoy2025: 0 },
+  { label: "Mar 2028", month: 3, year: 2028, yoy2025: 0 },
+  { label: "Apr 2028", month: 4, year: 2028, yoy2025: 0 },
+  { label: "May 2028", month: 5, year: 2028, yoy2025: 0 },
+  { label: "Jun 2028", month: 6, year: 2028, yoy2025: 0 },
+  { label: "Jul 2028", month: 7, year: 2028, yoy2025: 0 },
+  { label: "Aug 2028", month: 8, year: 2028, yoy2025: 0 },
+  { label: "Sep 2028", month: 9, year: 2028, yoy2025: 0 },
+  { label: "Oct 2028", month: 10, year: 2028, yoy2025: 0 },
+  { label: "Nov 2028", month: 11, year: 2028, yoy2025: 0 },
+  { label: "Dec 2028", month: 12, year: 2028, yoy2025: 0 },
 ];
 
 // ─── Velocity chains ──────────────────────────────────────────────────────────
@@ -191,7 +208,7 @@ export const DEFAULT_FORECAST_STATE: ForecastState = {
   mixOverrides: {},
   mixOverrideActive: false,
   committedAt: null,
-  promoMultipliers: Array(12).fill(1),
+  promoMultipliers: Array(FORECAST_MONTHS.length).fill(1),
 };
 
 const STORAGE_KEY = "baris.sales.forecast.v1";
