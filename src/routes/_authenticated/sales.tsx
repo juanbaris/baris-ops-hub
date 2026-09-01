@@ -11,9 +11,16 @@ import {
   saveForecastState, DEFAULT_NEW_SKUS, NEW_SKU_COLORS, newSkuCases,
   type VelChain, type ForecastState, type NewSku,
 } from "@/lib/sales-forecast";
+import {
+  EXTENDED_SKUS, SKU_FULL_NAMES, fetchSalesAccounts, fetchPromoCalendar,
+  updateSalesAccount, updatePromoCalendarRow, aggregatePromoCalendar,
+  mergeForecastWithDb, dbSkuByMonthFromAgg,
+  type SalesAccount, type PromoCalendarRow, type DbMonthAgg,
+} from "@/lib/sales-database";
 
 const DEFAULT_MIX_PCT: Record<string,number> = {XD:30,PW:25,HM:18,WM:12,WD:8,Matcha:7};
 const MIX_SKUS = ["XD","PW","HM","WM","WD","Matcha"];
+const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
 type HistRow = { label: string; cases: number; revenue: number };
 const DIST_MIX = [
@@ -26,9 +33,12 @@ const ALL_MONTHS_REAL = [
   "Jan 2026","Feb 2026","Mar 2026","Apr 2026","May 2026","Jun 2026","Jul 2026",
   "Aug 2026","Sep 2026","Oct 2026","Nov 2026","Dec 2026",
   "Jan 2027","Feb 2027","Mar 2027","Apr 2027","May 2027","Jun 2027","Jul 2027",
+  "Aug 2027","Sep 2027","Oct 2027","Nov 2027","Dec 2027",
+  "Jan 2028","Feb 2028","Mar 2028","Apr 2028","May 2028","Jun 2028",
+  "Jul 2028","Aug 2028","Sep 2028","Oct 2028","Nov 2028","Dec 2028",
 ];
 
-type SalesTab = "real"|"resumen"|"detalle"|"sku"|"simulador"|"estacionalidad"|"salesdb";
+type SalesTab = "real"|"resumen"|"detalle"|"sku"|"simulador"|"estacionalidad"|"salesdb"|"accounts"|"promocal";
 declare global { interface Window { Chart: any } }
 
 // ─── Sales DB Tab (reference · read-only order-level source data) ────────────
@@ -273,7 +283,7 @@ function SummaryTab({forecast,scenario,reals,history,committedCount=0}:{forecast
           {label:"Forecast 12m (cases)",value:totalFcst.toLocaleString(),sub:`Scenario ${scenario}`,color:"#A3224A"},
           {label:"Revenue forecast 12m",value:`$${Math.round(totalRev/1000)}K`,sub:`@$${PRICE_PER_CASE}/case`,color:"#1C2340"},
           {label:"vs Budget",value:`${((totalFcst/totalBudget-1)*100).toFixed(1)}%`,sub:"Pessimistic baseline",color:totalFcst>=totalBudget?"#10B981":"#EF4444"},
-          {label:"Months with actuals",value:`${coveredMonths}/12`,sub:"Update monthly",color:"#6B7280"},
+          {label:"Months with actuals",value:`${coveredMonths}/${forecast.length}`,sub:"Update monthly",color:"#6B7280"},
         ].map((k,i)=>(
           <div key={i} className="rounded-2xl border border-border bg-card p-5 shadow-sm">
             <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">{k.label}</p>
@@ -283,7 +293,7 @@ function SummaryTab({forecast,scenario,reals,history,committedCount=0}:{forecast
         ))}
       </div>
       <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-        <h3 className="text-sm font-bold mb-1" style={{color:"#1C2340"}}>Real · Forecast · Budget — Jan 2026 → Jul 2027</h3>
+        <h3 className="text-sm font-bold mb-1" style={{color:"#1C2340"}}>Real · Forecast · Budget — Jan 2026 → Dec 2028</h3>
         <div className="flex items-center gap-4 mb-3 text-[11px] text-muted-foreground">
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{backgroundColor:"#10B981"}}/>Real</span>
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{backgroundColor:"rgba(163,34,74,0.45)"}}/>Forecast remaining</span>
@@ -320,14 +330,15 @@ function SummaryTab({forecast,scenario,reals,history,committedCount=0}:{forecast
 }
 
 // ─── Detalle Tab ──────────────────────────────────────────────────────────────
-type DetalleRange = "all"|"ytd"|"next3"|"rest2026"|"y2026"|"y2027";
+type DetalleRange = "all"|"ytd"|"next3"|"rest2026"|"y2026"|"y2027"|"y2028";
 const RANGE_OPTIONS: {id:DetalleRange;label:string;sub:string}[] = [
-  {id:"all",    label:"All",           sub:"Jan 2026 – Jul 2027"},
+  {id:"all",    label:"All",           sub:"Jan 2026 – Dec 2028"},
   {id:"ytd",    label:"Actuals (YTD)", sub:"Jan–Jul 2026"},
   {id:"next3",  label:"Next 3 months", sub:"Aug–Oct 2026"},
   {id:"rest2026",label:"Rest of 2026", sub:"Aug–Dec 2026"},
   {id:"y2026",  label:"Full 2026",     sub:"Jan–Dec 2026"},
-  {id:"y2027",  label:"Full 2027",     sub:"Jan–Jul 2027"},
+  {id:"y2027",  label:"Full 2027",     sub:"Jan–Dec 2027"},
+  {id:"y2028",  label:"Full 2028",     sub:"Jan–Dec 2028"},
 ];
 const NEXT3_LABELS = ["Aug 2026","Sep 2026","Oct 2026"];
 const REST2026_LABELS = ["Aug 2026","Sep 2026","Oct 2026","Nov 2026","Dec 2026"];
@@ -347,7 +358,8 @@ function DetalleTab({forecast,reals,onRealUpdate,history,committedCount=0}:{fore
     if(range==="next3") return NEXT3_LABELS.includes(f.label);
     if(range==="rest2026") return REST2026_LABELS.includes(f.label);
     if(range==="y2026") return f.year===2026;
-    return f.year===2027;
+    if(range==="y2027") return f.year===2027;
+    return f.year===2028;
   });
 
   const histCases = histRows.reduce((s,h)=>s+h.cases,0);
@@ -509,20 +521,29 @@ function DetalleTab({forecast,reals,onRealUpdate,history,committedCount=0}:{fore
 }
 
 // ─── SKU Tab ──────────────────────────────────────────────────────────────────
-function SKUTab({forecast,newSkus,mixOverrides,mixOverrideActive,committedCount}:{
+function SKUTab({forecast,newSkus,mixOverrides,mixOverrideActive,committedCount,dbSkuByMonth}:{
   forecast:any[];newSkus:NewSku[];mixOverrides:Record<string,Record<string,number>>;
-  mixOverrideActive:boolean;committedCount:number;
+  mixOverrideActive:boolean;committedCount:number;dbSkuByMonth?:Record<string,Record<string,number>>;
 }) {
-  const SKU_COLORS: Record<string,string> = {XD:"#1C2340",PW:"#A3224A",HM:"#3B82F6",WM:"#10B981",WD:"#F59E0B",Matcha:"#8B5CF6"};
-  const SKUS = ["XD","PW","HM","WM","WD","Matcha"];
+  const SKU_COLORS: Record<string,string> = {
+    XD:"#1C2340",PW:"#A3224A",HM:"#3B82F6",WM:"#10B981",WD:"#F59E0B",Matcha:"#8B5CF6",
+    VS:"#EC4899",CS:"#F97316",GR:"#14B8A6",GS:"#A855F7",
+  };
+  const SKUS = [...EXTENDED_SKUS];
+  const LEGACY_SKUS = new Set(["XD","PW","HM","WM","WD","Matcha"]);
   const baseByMonth = useMemo(()=>forecast.map(f=>f.totalCases-(f.newSkuDelta??0)),[forecast]);
   const defaultMonths = useMemo(()=>skuForecast(forecast.map((f,i)=>({...f,totalCases:baseByMonth[i]})) as any),[forecast,baseByMonth]);
   const skuData = useMemo(()=>SKUS.map(sku=>{
-    const months = mixOverrideActive
-      ? forecast.map((f,i)=>Math.round(baseByMonth[i]*((mixOverrides[f.label]?.[sku] ?? DEFAULT_MIX_PCT[sku])/100)))
-      : (defaultMonths[sku]??[]);
-    return {sku,pct:SKU_MIX[sku],months,total:months.reduce((a:number,b:number)=>a+b,0)};
-  }),[forecast,defaultMonths,baseByMonth,mixOverrideActive,mixOverrides]);
+    const months = forecast.map((f,i)=>{
+      const dbRow = dbSkuByMonth?.[f.label];
+      if (dbRow) return Math.round(dbRow[sku] ?? 0);
+      if (!LEGACY_SKUS.has(sku)) return 0;
+      return mixOverrideActive
+        ? Math.round(baseByMonth[i]*((mixOverrides[f.label]?.[sku] ?? DEFAULT_MIX_PCT[sku])/100))
+        : (defaultMonths[sku]?.[i] ?? 0);
+    });
+    return {sku,pct:SKU_MIX[sku]??0,months,total:months.reduce((a:number,b:number)=>a+b,0)};
+  }),[forecast,defaultMonths,baseByMonth,mixOverrideActive,mixOverrides,dbSkuByMonth]);
 
   const activeNew = useMemo(()=>newSkus
     .map((s,i)=>({sku:s,color:NEW_SKU_COLORS[i%NEW_SKU_COLORS.length]}))
@@ -1224,7 +1245,7 @@ function SeasonalityTab({seasonIdx,onSeasonIdxChange,velChains,onVelChainsChange
             <h3 className="text-sm font-bold" style={{color:"#1C2340"}}>Promo multipliers — por mes</h3>
             <p className="text-xs text-muted-foreground">1.0 = sin cambio · 1.5 = +50% demanda · Aplica a los 3 escenarios</p>
           </div>
-          <button onClick={()=>onPromoMultipliersChange(Array(12).fill(1))}
+          <button onClick={()=>onPromoMultipliersChange(Array(FORECAST_MONTHS.length).fill(1))}
             className="rounded-full border border-border px-3 py-1 text-xs font-semibold text-muted-foreground hover:text-foreground flex-shrink-0">
             Reset × 1.0
           </button>
@@ -1267,6 +1288,215 @@ function SeasonalityTab({seasonIdx,onSeasonIdxChange,velChains,onVelChainsChange
   );
 }
 
+// ─── Accounts Tab (fixed but editable — feeds Promo Calendar's Delivered Cost) ─
+function AccountsTab({accounts,loading,onUpdated}:{accounts:SalesAccount[];loading:boolean;onUpdated:(a:SalesAccount)=>void}) {
+  const [year,setYear] = useState<number>(2027);
+  const [saving,setSaving] = useState<string|null>(null);
+  const years = Array.from(new Set(accounts.map(a=>a.year))).sort();
+  const rows = accounts.filter(a=>a.year===year).sort((a,b)=>a.account_name.localeCompare(b.account_name));
+
+  const FIELDS: {key:keyof SalesAccount;label:string;pct?:boolean}[] = [
+    {key:"distributor",label:"Dist."},
+    {key:"delivered_cost",label:"Delivered Cost"},
+    {key:"dist_markup_pct",label:"Dist. Markup",pct:true},
+    {key:"srp",label:"SRP"},
+    {key:"edlp_allowance",label:"EDLP Allow."},
+    {key:"discounts_pct",label:"Discounts",pct:true},
+    {key:"edlp_pct",label:"EDLP %",pct:true},
+    {key:"promos_pct",label:"Promos %",pct:true},
+    {key:"dist_fees_pct",label:"Dist. Fees",pct:true},
+    {key:"dist_allowance_pct",label:"Dist. Allow.",pct:true},
+    {key:"payment_terms_pct",label:"Payment Terms",pct:true},
+    {key:"fulfillment_cost",label:"Fulfillment"},
+  ];
+
+  async function commit(row:SalesAccount, key:keyof SalesAccount, raw:string){
+    if(key==="distributor"){
+      if(raw!=="UNFI"&&raw!=="KEHE"&&raw!=="Rainforest") return;
+      const updated={...row,distributor:raw as SalesAccount["distributor"]};
+      onUpdated(updated);
+      setSaving(row.id);
+      try{ const {supabase:sb}=await import("@/integrations/supabase/client"); await updateSalesAccount(sb,row.id,{distributor:updated.distributor}); } catch(e){console.error(e);}
+      setSaving(null);
+      return;
+    }
+    const num=parseFloat(raw);
+    const val=isNaN(num)?null:num;
+    const updated={...row,[key]:val} as SalesAccount;
+    onUpdated(updated);
+    setSaving(row.id);
+    try{ const {supabase:sb}=await import("@/integrations/supabase/client"); await updateSalesAccount(sb,row.id,{[key]:val}); } catch(e){console.error(e);}
+    setSaving(null);
+  }
+
+  const inp="rounded border border-border bg-background px-1.5 py-0.5 text-xs font-mono text-right focus:outline-none focus:ring-1 focus:ring-primary/30 w-20";
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-700">
+        🔗 Master de cuentas — fijo pero editable. El <strong>Delivered Cost</strong> de cada cuenta alimenta el revenue de Promo Calendar / Sales.
+      </div>
+      <div className="flex gap-2">
+        {years.map(y=>(
+          <button key={y} onClick={()=>setYear(y)}
+            className={`rounded-full px-3.5 py-1.5 text-xs font-semibold ${year===y?"text-white":"border border-border text-muted-foreground"}`}
+            style={year===y?{backgroundColor:"#1C2340"}:{}}>{y}</button>
+        ))}
+      </div>
+      <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
+        <table className="w-full text-xs min-w-max">
+          <thead>
+            <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/40 border-b border-border">
+              <th className="px-3 py-2.5 text-left sticky left-0 bg-muted/40">Account</th>
+              {FIELDS.map(f=><th key={f.key as string} className="px-3 py-2.5 text-right whitespace-nowrap">{f.label}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr><td colSpan={FIELDS.length+1} className="px-3 py-6 text-center text-muted-foreground">Cargando cuentas…</td></tr>
+            ) : rows.map(row=>(
+              <tr key={row.id} className={`border-t border-border/60 ${saving===row.id?"bg-amber-50/40":""}`}>
+                <td className="px-3 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{row.account_name}</td>
+                {FIELDS.map(f=>{
+                  const v=row[f.key];
+                  if(f.key==="distributor"){
+                    return (
+                      <td key={f.key as string} className="px-3 py-1.5 text-right">
+                        <select defaultValue={String(v)} onChange={e=>commit(row,f.key,e.target.value)}
+                          className="rounded border border-border bg-background px-1.5 py-0.5 text-xs focus:outline-none">
+                          <option value="UNFI">UNFI</option><option value="KEHE">KEHE</option><option value="Rainforest">Rainforest</option>
+                        </select>
+                      </td>
+                    );
+                  }
+                  const display = f.pct && typeof v==="number" ? (v*100).toFixed(1) : (v==null?"":String(v));
+                  return (
+                    <td key={f.key as string} className="px-3 py-1.5 text-right">
+                      <input type="number" step="0.01" defaultValue={display}
+                        onBlur={e=>{
+                          const raw = f.pct ? String(parseFloat(e.target.value||"0")/100) : e.target.value;
+                          commit(row,f.key,raw);
+                        }}
+                        className={inp}/>
+                      {f.pct && <span className="text-[9px] text-muted-foreground ml-0.5">%</span>}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ─── Promo Calendar Tab (fixed but editable — Account × SKU × Month) ──────────
+function PromoCalendarTab({rows,accounts,loading,onUpdated}:{rows:PromoCalendarRow[];accounts:SalesAccount[];loading:boolean;onUpdated:(r:PromoCalendarRow)=>void}) {
+  const years = Array.from(new Set(rows.map(r=>r.year))).sort();
+  const [year,setYear] = useState<number>(2027);
+  const accountNames = Array.from(new Set(rows.filter(r=>r.year===year).map(r=>r.account_name))).sort();
+  const [account,setAccount] = useState<string>("");
+  const [saving,setSaving] = useState<string|null>(null);
+  useEffect(()=>{ if(accountNames.length && !accountNames.includes(account)) setAccount(accountNames[0]); },[accountNames.join("|")]);
+
+  const filtered = rows
+    .filter(r=>r.year===year && r.account_name===account)
+    .sort((a,b)=>a.sku_code.localeCompare(b.sku_code)||a.month-b.month);
+  const skusForAccount = Array.from(new Set(filtered.map(r=>r.sku_code)));
+
+  async function commit(row:PromoCalendarRow, patch:Partial<PromoCalendarRow>){
+    const stores = patch.stores ?? row.stores ?? 0;
+    const vel = patch.reg_avg_vel ?? row.reg_avg_vel ?? 0;
+    const weeks = patch.weeks ?? row.weeks ?? 0;
+    const recompute = ("stores" in patch || "reg_avg_vel" in patch || "weeks" in patch);
+    const total_units = recompute ? Math.round((stores*vel*weeks)*1000)/1000 : row.total_units;
+    const updated={...row,...patch,total_units};
+    onUpdated(updated);
+    setSaving(row.id);
+    try{
+      const {supabase:sb}=await import("@/integrations/supabase/client");
+      await updatePromoCalendarRow(sb,row.id,{...patch,total_units});
+    } catch(e){ console.error(e); }
+    setSaving(null);
+  }
+
+  const inp="rounded border border-border bg-background px-1.5 py-0.5 text-xs font-mono text-right focus:outline-none focus:ring-1 focus:ring-primary/30 w-16";
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-700">
+        🔗 Fijo pero editable — Stores / Reg Vel. / Weeks recalculan Total Units automáticamente (Vel × Stores × Weeks). Esto alimenta Summary, Monthly Detail y By SKU para {year}.
+      </div>
+      <div className="flex flex-wrap gap-4 items-center">
+        <div className="flex gap-2">
+          {years.map(y=>(
+            <button key={y} onClick={()=>setYear(y)}
+              className={`rounded-full px-3.5 py-1.5 text-xs font-semibold ${year===y?"text-white":"border border-border text-muted-foreground"}`}
+              style={year===y?{backgroundColor:"#1C2340"}:{}}>{y}</button>
+          ))}
+        </div>
+        <select value={account} onChange={e=>setAccount(e.target.value)}
+          className="rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold focus:outline-none">
+          {accountNames.map(a=><option key={a} value={a}>{a}</option>)}
+        </select>
+      </div>
+      {loading ? (
+        <div className="rounded-2xl border border-border bg-card p-6 text-center text-xs text-muted-foreground">Cargando promo calendar…</div>
+      ) : skusForAccount.map(sku=>{
+        const skuRows = filtered.filter(r=>r.sku_code===sku).sort((a,b)=>a.month-b.month);
+        const dist = skuRows[0]?.distributor;
+        return (
+          <div key={sku} className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
+            <div className="px-4 py-2.5 border-b border-border bg-muted/30 flex items-center gap-2">
+              <span className="font-bold text-sm" style={{color:"#1C2340"}}>{sku}</span>
+              <span className="text-xs text-muted-foreground">{SKU_FULL_NAMES[sku]??""} · {dist}</span>
+            </div>
+            <table className="w-full text-xs min-w-max">
+              <thead>
+                <tr className="text-[10px] uppercase tracking-wide text-muted-foreground border-b border-border">
+                  <th className="px-3 py-2 text-left">Mes</th>
+                  <th className="px-3 py-2 text-right">Stores</th>
+                  <th className="px-3 py-2 text-right">Reg Vel.</th>
+                  <th className="px-3 py-2 text-right">Weeks</th>
+                  <th className="px-3 py-2 text-right font-bold">Total Units</th>
+                  <th className="px-3 py-2 text-right">Promo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {skuRows.map(row=>(
+                  <tr key={row.id} className={`border-t border-border/60 ${saving===row.id?"bg-amber-50/40":""}`}>
+                    <td className="px-3 py-1.5 font-semibold" style={{color:"#1C2340"}}>{MONTHS_SHORT[row.month-1]} {row.year}</td>
+                    <td className="px-3 py-1.5 text-right">
+                      <input type="number" step="1" defaultValue={row.stores??""} className={inp}
+                        onBlur={e=>commit(row,{stores:e.target.value===""?null:parseFloat(e.target.value)})}/>
+                    </td>
+                    <td className="px-3 py-1.5 text-right">
+                      <input type="number" step="0.01" defaultValue={row.reg_avg_vel??""} className={inp}
+                        onBlur={e=>commit(row,{reg_avg_vel:e.target.value===""?null:parseFloat(e.target.value)})}/>
+                    </td>
+                    <td className="px-3 py-1.5 text-right">
+                      <input type="number" step="0.25" defaultValue={row.weeks??""} className={inp}
+                        onBlur={e=>commit(row,{weeks:e.target.value===""?null:parseFloat(e.target.value)})}/>
+                    </td>
+                    <td className="px-3 py-1.5 text-right font-mono font-bold" style={{color:"#1C2340"}}>
+                      {row.total_units.toLocaleString(undefined,{maximumFractionDigits:1})}
+                    </td>
+                    <td className="px-3 py-1.5 text-right">
+                      <input type="text" defaultValue={row.promo_label??""} className="rounded border border-border bg-background px-1.5 py-0.5 text-xs w-20 focus:outline-none"
+                        onBlur={e=>commit(row,{promo_label:e.target.value===""?null:e.target.value})}/>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 function SalesPage() {
   const [tab,setTab] = useState<SalesTab>("real");
@@ -1294,7 +1524,33 @@ function SalesPage() {
   const [mixOverrides,setMixOverrides] = useState<Record<string,Record<string,number>>>({});
   const [mixOverrideActive,setMixOverrideActive] = useState(false);
   const [mixCommitted,setMixCommitted] = useState(false);
-  const [promoMultipliers,setPromoMultipliers] = useState<number[]>(Array(12).fill(1));
+  const [promoMultipliers,setPromoMultipliers] = useState<number[]>(Array(FORECAST_MONTHS.length).fill(1));
+
+  // ── Sales database: Accounts + Promo Calendar (2027+, replaces the scenario
+  //    formula for any month present here; 2026 stays on Fulfillment) ────────
+  const [dbAccounts,setDbAccounts] = useState<SalesAccount[]>([]);
+  const [dbPromo,setDbPromo] = useState<PromoCalendarRow[]>([]);
+  const [dbLoading,setDbLoading] = useState(true);
+  useEffect(()=>{
+    let cancelled=false;
+    (async()=>{
+      try {
+        const { supabase: sb } = await import("@/integrations/supabase/client");
+        const [accs,rows] = await Promise.all([fetchSalesAccounts(sb), fetchPromoCalendar(sb)]);
+        if(!cancelled){ setDbAccounts(accs); setDbPromo(rows); }
+      } catch(e) { console.error("Sales DB load error:", e); }
+      if(!cancelled) setDbLoading(false);
+    })();
+    return ()=>{ cancelled=true; };
+  },[]);
+  const dbAgg = useMemo(()=>aggregatePromoCalendar(dbPromo,dbAccounts),[dbPromo,dbAccounts]);
+  const dbSkuByMonth = useMemo(()=>dbSkuByMonthFromAgg(dbAgg),[dbAgg]);
+  function refreshPromoRow(updated:PromoCalendarRow){
+    setDbPromo(rows=>rows.map(r=>r.id===updated.id?updated:r));
+  }
+  function refreshAccount(updated:SalesAccount){
+    setDbAccounts(accs=>accs.map(a=>a.id===updated.id?updated:a));
+  }
 
   // ── Load saved state on mount (localStorage + Supabase) ──
   const [stateLoaded, setStateLoaded] = useState(false);
@@ -1369,6 +1625,11 @@ function SalesPage() {
     ? newSkus.map((s,i)=>({...s,active:s.active&&!!skuCommitted[i]}))
     : newSkus;
 
+  // DB (Promo Calendar + Accounts) overrides the scenario formula for any month
+  // it covers — currently 2027-2028. Used by Summary / Monthly Detail / By SKU.
+  const dbMergedForecast = useMemo(()=>mergeForecastWithDb(forecast,dbAgg),[forecast,dbAgg]);
+  const dbMergedSkuTabForecast = useMemo(()=>mergeForecastWithDb(skuTabForecast,dbAgg),[skuTabForecast,dbAgg]);
+
   function clearCommitted(){
     setVelCommitted(velCommitted.map(()=>false));
     setRetCommitted(retCommitted.map(()=>false));
@@ -1408,6 +1669,8 @@ function SalesPage() {
   ];
   const TABS_REFERENCE: {id:SalesTab;label:string}[] = [
     {id:"salesdb",label:"Sales DB"},
+    {id:"accounts",label:"Accounts"},
+    {id:"promocal",label:"Promo Calendar"},
   ];
 
   // ── Updated scenario descriptions from Excel budget model (Aug 2026) ────────
@@ -1421,7 +1684,7 @@ function SalesPage() {
     <div className="space-y-5 pb-10">
       <div>
         <h1 className="text-2xl font-bold" style={{color:"#1C2340"}}>Sales</h1>
-        <p className="text-sm text-muted-foreground">Demand forecast Aug 2026 → Jul 2027 · update actuals monthly</p>
+        <p className="text-sm text-muted-foreground">Demand forecast Aug 2026 → Dec 2028 · update actuals monthly</p>
       </div>
       <div className="flex items-center gap-4 flex-wrap">
         <div className="flex gap-1 rounded-xl bg-muted p-1">
@@ -1453,11 +1716,11 @@ function SalesPage() {
         ))}
       </div>
       {tab==="real"          && <RealMonthlyTab actuals={byLabel} loading={loadingActuals}/>}
-      {tab==="resumen"       && <SummaryTab forecast={forecast} scenario={scenario} reals={mergedReals} history={history} committedCount={committedCount}/>}
-      {tab==="detalle"       && <DetalleTab forecast={forecast} reals={mergedReals} history={history} committedCount={committedCount} onRealUpdate={(l,v)=>setReals(r=>({...r,[l]:v}))}/>}
-      {tab==="sku"           && <SKUTab forecast={skuTabForecast} newSkus={skuTabNewSkus}
+      {tab==="resumen"       && <SummaryTab forecast={dbMergedForecast} scenario={scenario} reals={mergedReals} history={history} committedCount={committedCount}/>}
+      {tab==="detalle"       && <DetalleTab forecast={dbMergedForecast} reals={mergedReals} history={history} committedCount={committedCount} onRealUpdate={(l,v)=>setReals(r=>({...r,[l]:v}))}/>}
+      {tab==="sku"           && <SKUTab forecast={dbMergedSkuTabForecast} newSkus={skuTabNewSkus}
                                   mixOverrides={mixOverrides} mixOverrideActive={mixOverrideActive&&(committedCount===0||mixCommitted)}
-                                  committedCount={committedCount}/>}
+                                  committedCount={committedCount} dbSkuByMonth={dbSkuByMonth}/>}
       {tab==="simulador"     && <SimuladorTab velChains={velChains}
                                   velActive={velActive} setVelActive={setVelActive}
                                   velNew={velNew} setVelNew={setVelNew}
@@ -1474,14 +1737,16 @@ function SalesPage() {
                                   mixOverrideActive={mixOverrideActive} setMixOverrideActive={setMixOverrideActive}
                                   mixCommitted={mixCommitted} setMixCommitted={setMixCommitted}
                                   onClearCommitted={clearCommitted}
-                                  detailView={<DetalleTab forecast={forecast} reals={mergedReals} history={history} committedCount={committedCount} onRealUpdate={(l,v)=>setReals(r=>({...r,[l]:v}))}/>}
-                                  skuView={<SKUTab forecast={skuTabForecast} newSkus={skuTabNewSkus}
+                                  detailView={<DetalleTab forecast={dbMergedForecast} reals={mergedReals} history={history} committedCount={committedCount} onRealUpdate={(l,v)=>setReals(r=>({...r,[l]:v}))}/>}
+                                  skuView={<SKUTab forecast={dbMergedSkuTabForecast} newSkus={skuTabNewSkus}
                                     mixOverrides={mixOverrides} mixOverrideActive={mixOverrideActive&&(committedCount===0||mixCommitted)}
-                                    committedCount={committedCount}/>}/>}
+                                    committedCount={committedCount} dbSkuByMonth={dbSkuByMonth}/>}/>}
       {tab==="estacionalidad"&& <SeasonalityTab seasonIdx={seasonIdx} onSeasonIdxChange={setSeasonIdx}
                                   velChains={velChains} onVelChainsChange={setVelChains}
                                   promoMultipliers={promoMultipliers} onPromoMultipliersChange={setPromoMultipliers}/>}
       {tab==="salesdb"       && <SalesDBTab/>}
+      {tab==="accounts"      && <AccountsTab accounts={dbAccounts} loading={dbLoading} onUpdated={refreshAccount}/>}
+      {tab==="promocal"      && <PromoCalendarTab rows={dbPromo} accounts={dbAccounts} loading={dbLoading} onUpdated={refreshPromoRow}/>}
     </div>
   );
 }
