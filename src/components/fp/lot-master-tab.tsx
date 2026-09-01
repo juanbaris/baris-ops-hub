@@ -148,6 +148,22 @@ export function LotMasterTab() {
     if (error) { toast.error(error.message); load(); return; }
     toast.success("✓ saved");
   }
+  // Materialize a virtual lot (one that only exists in FP movements) into a real lot_master row so
+  // it becomes fully editable inline (COGS, expiry, notes). cases_initial=0 preserves the current
+  // effective on-hand — the movement delta stays as-is on top of the new baseline row.
+  async function materializeLot(l: Lot) {
+    if (l.id) return; // already a real row
+    const { error } = await supabase.from("lot_master").insert({
+      warehouse: l.warehouse, sku: l.sku, lineage_item_code: l.lineage_item_code,
+      lot_number: l.lot_number, expiry_date: l.expiry_date,
+      cases_initial: 0, // delta from movements already reflects effective on-hand
+      cogs_per_case: l.cogs_per_case, cogs_status: l.cogs_per_case == null ? "missing" : "estimated",
+      notes: l.notes,
+    } as any);
+    if (error) { toast.error(error.message); return; }
+    toast.success(`Lot ${l.lot_number} ready to edit`);
+    load();
+  }
   async function deleteLot(id: string | null, lot: string) {
     if (!id) { toast.error("Virtual lot — nothing to delete"); return; }
     if (!window.confirm(`Delete lot ${lot}? This cannot be undone.`)) return;
@@ -247,8 +263,15 @@ export function LotMasterTab() {
                 ) : (l.notes ?? "—")}
               </td>
               {editable && (
-                <td className="px-3 py-1.5 text-right">
-                  {l.id && <button onClick={() => deleteLot(l.id, l.lot_number)} className="rounded border border-red-200 px-2 py-0.5 text-[10px] text-red-600 hover:bg-red-50">Del</button>}
+                <td className="px-3 py-1.5 text-right whitespace-nowrap">
+                  {l.id ? (
+                    <button onClick={() => deleteLot(l.id, l.lot_number)} className="rounded border border-red-200 px-2 py-0.5 text-[10px] text-red-600 hover:bg-red-50">Del</button>
+                  ) : (
+                    <button onClick={() => materializeLot(l)} title="Convert this virtual lot into a real Lot Master row so you can edit COGS, expiry and notes"
+                      className="rounded border border-blue-300 bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700 hover:bg-blue-100">
+                      ✎ Edit
+                    </button>
+                  )}
                 </td>
               )}
             </tr>
