@@ -3903,12 +3903,12 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                 })}
                 <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
                   <td className="px-4 py-2 font-semibold sticky left-0 text-xs" style={{backgroundColor:"#1C2340"}}>Total cases</td>
-                  <td className="px-3 py-2 text-right font-mono text-xs">{SKUS.reduce((s,sku)=>s+Math.max(0,(bySku[sku]??0)-orders.filter(o=>COMMITTED_STATUSES.includes(o.status)).reduce((a,o)=>a+(Number(o[{XD:"xd_cases",PW:"pw_cases",HM:"hm_cases",WM:"wm_cases",WD:"wd_cases",Matcha:"matcha_cases"}[sku]])||0),0)),0).toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right font-mono text-xs">{SKUS.reduce((s,sku)=>s+Math.max(0,(bySku[sku]??0)-orders.filter(o=>COMMITTED_STATUSES.includes(o.status)).reduce((a,o)=>a+(Number(o[SKU_KEYS[sku]])||0),0)),0).toLocaleString()}</td>
                   <td className="px-3 py-2 text-center font-mono text-xs text-emerald-300">
                     {SKUS.reduce((s,sku)=>s+(wipBySku[sku]??0),0).toLocaleString()}
                   </td>
                   <td className="px-3 py-2 text-right font-mono text-xs">
-                    {SKUS.reduce((s,sku)=>s+Math.max(0,(bySku[sku]??0)-orders.filter(o=>COMMITTED_STATUSES.includes(o.status)).reduce((a,o)=>a+(Number(o[{XD:"xd_cases",PW:"pw_cases",HM:"hm_cases",WM:"wm_cases",WD:"wd_cases",Matcha:"matcha_cases"}[sku]])||0),0))+(wipBySku[sku]??0),0).toLocaleString()}
+                    {SKUS.reduce((s,sku)=>s+Math.max(0,(bySku[sku]??0)-orders.filter(o=>COMMITTED_STATUSES.includes(o.status)).reduce((a,o)=>a+(Number(o[SKU_KEYS[sku]])||0),0))+(wipBySku[sku]??0),0).toLocaleString()}
                   </td>
                   <td className="px-3 py-2"></td>
                   {totalByMonth.map((t,i)=>{
