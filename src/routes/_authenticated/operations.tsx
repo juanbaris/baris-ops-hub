@@ -116,7 +116,6 @@ const STATUS_PILL: Record<string, string> = {
 
 export function FPStockTab({ movements, orders, loading, baseline, lotMap }: { movements: FPRow[]; orders: any[]; loading: boolean; baseline: BaselineRow[]; lotMap: Record<string, LotCard> }) {
   const { bySkuMonthKey } = useSalesForecast();
-  const [showValue, setShowValue] = useState(false);
   const [lots, setLots] = useState<any[]>([]);
   useEffect(() => { (async () => { const { data } = await supabase.from("lot_master").select("*"); setLots(data ?? []); })(); }, []);
 
@@ -198,24 +197,39 @@ export function FPStockTab({ movements, orders, loading, baseline, lotMap }: { m
             <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
               <th className="px-4 py-2.5 text-left">SKU</th>
               <th className="px-4 py-2.5 text-left">Item #</th>
-              <th className="px-4 py-2.5 text-right">Stock (cajas)</th>
-              <th className="px-4 py-2.5 text-right">Potes</th>
               <th className="px-4 py-2.5 text-right text-amber-700">Inv. $</th>
+              <th className="px-4 py-2.5 text-right">Stock (cajas)</th>
+              <th className="px-4 py-2.5 text-right">Committed</th>
+              <th className="px-4 py-2.5 text-right">Available</th>
+              <th className="px-4 py-2.5 text-right">Forecast</th>
+              <th className="px-4 py-2.5 text-right">WoH</th>
+              <th className="px-4 py-2.5 text-center">Status</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={5} className="p-6 text-center text-muted-foreground">Loading…</td></tr>
+              <tr><td colSpan={9} className="p-6 text-center text-muted-foreground">Loading…</td></tr>
             ) : SKUS.map(sku => {
               const cs = Math.round(bySku[sku] ?? 0);
               const v = valBySku[sku] ?? 0;
+              const comm = Math.round(committed[sku] ?? 0);
+              const available = cs - comm;
+              const fc = forecastNextMonth[sku] ?? 0;
+              const woh = fc > 0 ? (available / fc) * 4 : 0;
+              const st = stockStatus(available, woh);
               return (
                 <tr key={sku} className="border-t border-border/60 hover:bg-muted/20">
                   <td className="px-4 py-2 font-semibold" style={{color:"#1C2340"}}>{sku}</td>
                   <td className="px-4 py-2 font-mono text-xs text-muted-foreground">{SKU_ITEMS[sku]}</td>
-                  <td className="px-4 py-2 text-right font-mono font-semibold">{cs.toLocaleString()}</td>
-                  <td className="px-4 py-2 text-right font-mono text-xs text-muted-foreground">{(cs*8).toLocaleString()}</td>
                   <td className="px-4 py-2 text-right font-mono font-semibold" style={{color:"#A3224A"}}>{v?`$${Math.round(v).toLocaleString()}`:"—"}</td>
+                  <td className="px-4 py-2 text-right font-mono font-semibold">{cs.toLocaleString()}</td>
+                  <td className="px-4 py-2 text-right font-mono text-xs">{comm ? comm.toLocaleString() : "—"}</td>
+                  <td className="px-4 py-2 text-right font-mono font-semibold">{available.toLocaleString()}</td>
+                  <td className="px-4 py-2 text-right font-mono text-xs text-muted-foreground">{Math.round(fc).toLocaleString()}</td>
+                  <td className="px-4 py-2 text-right font-mono text-xs">{woh.toFixed(1)}</td>
+                  <td className="px-4 py-2 text-center">
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${STATUS_PILL[st]}`}>{st}</span>
+                  </td>
                 </tr>
               );
             })}
@@ -223,9 +237,11 @@ export function FPStockTab({ movements, orders, loading, baseline, lotMap }: { m
           <tfoot>
             <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
               <td className="px-4 py-2 text-xs font-semibold" colSpan={2}>TOTAL</td>
-              <td className="px-4 py-2 text-right font-mono font-bold">{SKUS.reduce((s,sku)=>s+Math.round(bySku[sku]??0),0).toLocaleString()}</td>
-              <td className="px-4 py-2 text-right font-mono text-slate-300">{SKUS.reduce((s,sku)=>s+Math.round(bySku[sku]??0)*8,0).toLocaleString()}</td>
               <td className="px-4 py-2 text-right font-mono font-bold text-emerald-400">${Math.round(SKUS.reduce((s,sku)=>s+(valBySku[sku]??0),0)).toLocaleString()}</td>
+              <td className="px-4 py-2 text-right font-mono font-bold">{SKUS.reduce((s,sku)=>s+Math.round(bySku[sku]??0),0).toLocaleString()}</td>
+              <td className="px-4 py-2 text-right font-mono text-slate-300">{SKUS.reduce((s,sku)=>s+Math.round(committed[sku]??0),0).toLocaleString()}</td>
+              <td className="px-4 py-2 text-right font-mono font-bold">{SKUS.reduce((s,sku)=>s+(Math.round(bySku[sku]??0)-Math.round(committed[sku]??0)),0).toLocaleString()}</td>
+              <td colSpan={3}/>
             </tr>
           </tfoot>
         </table>
@@ -268,7 +284,6 @@ export function FPStockTab({ movements, orders, loading, baseline, lotMap }: { m
             })
           : whRows.filter(s => !KNOWN.includes(s.warehouse) && s.cases > 0).sort((a, b) => a.sku.localeCompare(b.sku));
         if (rows.length === 0) return null;
-        const isLineage = wh === 'Lineage Newark';
         const whIcon = wh === 'Lineage Newark' ? '📦' : wh === 'Cold Chain' ? '❄️' : wh === 'Lineage Linden' ? '🏬' : '🏭';
         const whTitle = isFixed ? `${whIcon} ${wh}` : '🏭 Other Warehouses';
         return (
@@ -287,55 +302,24 @@ export function FPStockTab({ movements, orders, loading, baseline, lotMap }: { m
                   <th className="px-4 py-2.5 text-left">SKU</th>
                   <th className="px-4 py-2.5 text-left">Item #</th>
                   {!isFixed && <th className="px-4 py-2.5 text-left">Warehouse</th>}
+                  <th className="px-4 py-2.5 text-right">Stock (cajas)</th>
+                  <th className="px-4 py-2.5 text-right">Potes</th>
                   <th className="px-4 py-2.5 text-right text-amber-700">Inv. $</th>
-                  <th className="px-4 py-2.5 text-right">{showValue ? "Stock $" : "Stock (cajas)"}</th>
-                  <th className="px-4 py-2.5 text-right">{showValue ? "Committed $" : "Committed"}</th>
-                  <th className="px-4 py-2.5 text-right">{showValue ? "Available $" : "Available"}</th>
-                  <th className="px-4 py-2.5 text-right">Forecast</th>
-                  <th className="px-4 py-2.5 text-right">WoH</th>
-                  <th className="px-4 py-2.5 text-center">Status</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={11} className="p-8 text-center text-muted-foreground">Loading…</td></tr>
+                  <tr><td colSpan={isFixed ? 5 : 6} className="p-8 text-center text-muted-foreground">Loading…</td></tr>
                 ) : rows.map(s => {
-                  const skuStock = Math.round(bySku[s.sku] ?? 0);
-                  const comm = Math.round(committed[s.sku] ?? 0);
-                  const share = skuStock > 0 ? s.cases / skuStock : 0;
-                  const rowComm = Math.round(comm * share);
-                  const available = Math.round(s.cases) - rowComm;   // can be < 0
-                  const fc = forecastNextMonth[s.sku as SKU] ?? 0;
-                  const woh = fc > 0 ? (available / (fc * share || fc)) * 4 : 0;
-                  const st = stockStatus(available, woh);
                   return (
                     <tr key={`${s.sku}|${s.warehouse}`} className="border-t border-border/60 hover:bg-muted/20">
                       <td className="px-4 py-2 font-semibold" style={{color:"#1C2340"}}>{s.sku}</td>
                       <td className="px-4 py-2 font-mono text-xs text-muted-foreground">{SKU_ITEMS[s.sku as SKU]}</td>
                       {!isFixed && <td className="px-4 py-2 text-xs text-muted-foreground">{s.warehouse}</td>}
+                      <td className="px-4 py-2 text-right font-mono font-semibold">{Math.round(s.cases).toLocaleString()}</td>
+                      <td className="px-4 py-2 text-right font-mono text-xs text-muted-foreground">{Math.round(s.cases * 8).toLocaleString()}</td>
                       <td className="px-4 py-2 text-right font-mono font-semibold" style={{color:"#A3224A"}}>
                         {s.value ? `$${Math.round(s.value).toLocaleString()}` : <span className="text-muted-foreground text-xs">—</span>}
-                      </td>
-                      <td className="px-4 py-2 text-right font-mono font-semibold">
-                        {showValue ? `$${Math.round(s.value / 1000).toLocaleString()}K` : (
-                          <span>
-                            {Math.round(s.cases).toLocaleString()}
-                            <span className="block text-[10px] font-normal text-muted-foreground">{Math.round(s.cases * 8).toLocaleString()} potes</span>
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-2 text-right font-mono text-xs">
-                        {showValue && rowComm && cogsBySku[s.sku] ? `$${Math.round(rowComm * cogsBySku[s.sku] / 1000).toLocaleString()}K` : (rowComm ? rowComm.toLocaleString() : "—")}
-                      </td>
-                      <td className="px-4 py-2 text-right font-mono font-semibold">
-                        {showValue && cogsBySku[s.sku]
-                          ? <span style={{color:"#A3224A"}}>${Math.round(available * cogsBySku[s.sku] / 1000).toLocaleString()}K</span>
-                          : available.toLocaleString()}
-                      </td>
-                      <td className="px-4 py-2 text-right font-mono text-xs text-muted-foreground">{Math.round(fc * (share || (isLineage ? 1 : 0))).toLocaleString()}</td>
-                      <td className="px-4 py-2 text-right font-mono text-xs">{woh.toFixed(1)}</td>
-                      <td className="px-4 py-2 text-center">
-                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${STATUS_PILL[st]}`}>{st}</span>
                       </td>
                     </tr>
                   );
@@ -346,32 +330,15 @@ export function FPStockTab({ movements, orders, loading, baseline, lotMap }: { m
                   <td className="px-4 py-2 text-xs font-semibold" colSpan={isFixed ? 2 : 3}>
                     TOTAL ({rows.length} SKUs)
                   </td>
-                  <td className="px-4 py-2 text-right font-mono font-semibold" style={{color:"#f87171"}}>
-                    ${Math.round(rows.reduce((s,r)=>s+r.value,0)).toLocaleString()}
-                  </td>
                   <td className="px-4 py-2 text-right font-mono font-semibold">
                     {rows.reduce((s,r)=>s+Math.round(r.cases),0).toLocaleString()}
                   </td>
                   <td className="px-4 py-2 text-right font-mono text-slate-300">
-                    {(() => {
-                      const tot = rows.reduce((s,r)=>{
-                        const skuStock=Math.round(bySku[r.sku]??0);
-                        const comm=Math.round(committed[r.sku]??0);
-                        const share=skuStock>0?r.cases/skuStock:0;
-                        return s+Math.round(comm*share);
-                      },0);
-                      return tot>0?tot.toLocaleString():"—";
-                    })()}
+                    {rows.reduce((s,r)=>s+Math.round(r.cases)*8,0).toLocaleString()}
                   </td>
-                  <td className="px-4 py-2 text-right font-mono font-semibold text-emerald-400">
-                    {rows.reduce((s,r)=>{
-                      const skuStock=Math.round(bySku[r.sku]??0);
-                      const comm=Math.round(committed[r.sku]??0);
-                      const share=skuStock>0?r.cases/skuStock:0;
-                      return s+Math.round(r.cases)-Math.round(comm*share);
-                    },0).toLocaleString()}
+                  <td className="px-4 py-2 text-right font-mono font-semibold" style={{color:"#f87171"}}>
+                    ${Math.round(rows.reduce((s,r)=>s+r.value,0)).toLocaleString()}
                   </td>
-                  <td colSpan={3}/>
                 </tr>
               </tfoot>
             </table>
