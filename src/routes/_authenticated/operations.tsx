@@ -262,11 +262,9 @@ export function FPStockTab({ movements, orders, loading, baseline, lotMap }: { m
               <p className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground">{sku}</p>
               <p className="text-[10px] text-muted-foreground">{SKU_ITEMS[sku]}</p>
               <p className={`text-xl font-bold font-mono mt-1 ${isCrit ? "text-red-600" : isLow ? "text-orange-500" : ""}`} style={!isCrit && !isLow ? {color:"#1C2340"} : {}}>
-                {showValue && cogsBySku[sku]
-                  ? `$${Math.round(available * cogsBySku[sku] / 1000).toLocaleString()}K`
-                  : available.toLocaleString()}
+                {available.toLocaleString()}
               </p>
-              <p className="text-[10px] text-muted-foreground">{showValue ? "$ value (COGS)" : "available cases"}</p>
+              <p className="text-[10px] text-muted-foreground">available cases</p>
               <p className="text-[11px] font-mono font-semibold mt-0.5" style={{color:"#1C2340"}}>{woh.toFixed(1)} wks</p>
               <span className={`inline-block mt-1 rounded-full px-2 py-0.5 text-[9px] font-bold ${STATUS_PILL[st]}`}>{st}</span>
             </div>
