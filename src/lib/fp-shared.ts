@@ -11,6 +11,9 @@ export const SKUS: SKU[] = ["XD", "PW", "HM", "WM", "WD", "Matcha"];
 /** BARIS display names. The DB enum keeps the short codes. */
 export const SKU_LABEL: Record<SKU, string> = {
   XD: "XD", PW: "P&W", HM: "H&M", WM: "W&M", WD: "W&D", Matcha: "Matcha",
+  // New flavors confirmed for launch (fixed in Operations) — not yet used in Fulfillment/Home.
+  "Strawberry & White": "Strawberry & White", "Strawberry Caramel": "Strawberry Caramel",
+  "Strawberry Yogurt": "Strawberry Yogurt", "Raspberry Yogurt": "Raspberry Yogurt",
 };
 
 /** Maps any written form ("P&W", "pw", "P & W") back to the DB enum value. */
