@@ -1473,7 +1473,17 @@ export type Database = {
         | "Accepted"
         | "Sent to 3PL"
         | "BOL Confirmed"
-      sku: "XD" | "PW" | "HM" | "WM" | "WD" | "Matcha"
+      sku:
+        | "XD"
+        | "PW"
+        | "HM"
+        | "WM"
+        | "WD"
+        | "Matcha"
+        | "Strawberry & White"
+        | "Strawberry Caramel"
+        | "Strawberry Yogurt"
+        | "Raspberry Yogurt"
       warehouse:
         | "Lineage Newark"
         | "Cold Chain"
@@ -1647,7 +1657,18 @@ export const Constants = {
         "Sent to 3PL",
         "BOL Confirmed",
       ],
-      sku: ["XD", "PW", "HM", "WM", "WD", "Matcha"],
+      sku: [
+        "XD",
+        "PW",
+        "HM",
+        "WM",
+        "WD",
+        "Matcha",
+        "Strawberry & White",
+        "Strawberry Caramel",
+        "Strawberry Yogurt",
+        "Raspberry Yogurt",
+      ],
       warehouse: [
         "Lineage Newark",
         "Cold Chain",
