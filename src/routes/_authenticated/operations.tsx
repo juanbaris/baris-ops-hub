@@ -17,8 +17,15 @@ type IPConcept = Database["public"]["Enums"]["ip_concept"];
 type Facility = Database["public"]["Enums"]["facility"];
 type MoveType = Database["public"]["Enums"]["movement_type"];
 
-const SKUS: SKU[] = ["XD","PW","HM","WM","WD","Matcha"];
-const SKU_ITEMS: Record<SKU, string> = { XD:"88021", PW:"77670", HM:"77671", WM:"93562", WD:"23141", Matcha:"77672" };
+// New flavors confirmed for launch — fixed in Operations (Stock, FP Movements, Production, Procurement
+// Planning) even before they have real sales history. They default to 0 everywhere until real data
+// (item numbers, BOM, movements) is entered — never omitted.
+const NEW_FIXED_SKUS = ["Strawberry & White","Strawberry Caramel","Strawberry Yogurt","Raspberry Yogurt"] as const;
+const SKUS: SKU[] = ["XD","PW","HM","WM","WD","Matcha", ...NEW_FIXED_SKUS];
+const SKU_ITEMS: Record<SKU, string> = {
+  XD:"88021", PW:"77670", HM:"77671", WM:"93562", WD:"23141", Matcha:"77672",
+  "Strawberry & White":"TBD", "Strawberry Caramel":"TBD", "Strawberry Yogurt":"TBD", "Raspberry Yogurt":"TBD",
+};
 const WAREHOUSES: Warehouse[] = ["Lineage Newark","Lineage Linden","Cold Chain","Empire","Heinlein","OOE"];
 const FP_CONCEPTS: FPConcept[] = ["Production","Sale","Sample","Damage","Transfer","Free"];
 const IP_CONCEPTS: IPConcept[] = ["Procurement","Consumption","Damage","Transfer"];
@@ -97,9 +104,18 @@ type OpsTab = "stock" | "fp" | "ip" | "production" | "procurement" | "summary" |
 
 function ymd(d = new Date()) { return d.toISOString().slice(0,10); }
 // ─── FP Stock Tab ─────────────────────────────────────────────────────────────
-const SKU_KEYS: Record<SKU, string> = { XD:"xd_cases", PW:"pw_cases", HM:"hm_cases", WM:"wm_cases", WD:"wd_cases", Matcha:"matcha_cases" };
+// customer_orders has no columns yet for the new flavors — point at a column that doesn't exist so
+// any lookup safely resolves to 0 (Committed/Order-qty for them) until Fulfillment adds real support.
+const SKU_KEYS: Record<SKU, string> = {
+  XD:"xd_cases", PW:"pw_cases", HM:"hm_cases", WM:"wm_cases", WD:"wd_cases", Matcha:"matcha_cases",
+  "Strawberry & White":"__unsupported_sku_col__", "Strawberry Caramel":"__unsupported_sku_col__",
+  "Strawberry Yogurt":"__unsupported_sku_col__", "Raspberry Yogurt":"__unsupported_sku_col__",
+};
 /** Fallback used only until the shared sales forecast is available. */
-const FORECAST_FALLBACK: Record<SKU, number> = { XD:1161, PW:967, HM:696, WM:464, WD:310, Matcha:271 };
+const FORECAST_FALLBACK: Record<SKU, number> = {
+  XD:1161, PW:967, HM:696, WM:464, WD:310, Matcha:271,
+  "Strawberry & White":0, "Strawberry Caramel":0, "Strawberry Yogurt":0, "Raspberry Yogurt":0,
+};
 
 function stockStatus(available: number, woh: number) {
   if (available <= 0) return "OOS";
@@ -2401,6 +2417,9 @@ const BOM_QTY: Record<string, Record<string, number>> = (()=>{
     WD:     { "IQF Raspberries":0.773196, "Choc White (Corinthian)":0.999149, "Cocoa Butter":0.029974, "Soy Lecithin":0.001804 },
     Matcha: { "IQF Raspberries":1.159794, "Choc White (Corinthian)":1.363067, "Cocoa Butter":0.025773, "Matcha Powder":0.022680, "Sea Salt":0.003557, "Soy Lecithin":0.002448 },
     Strawberry: {},
+    // Confirmed new flavors — recipe not finalized yet, starts at 0 (editable in BOM + COGS, or via
+    // "Upload new BOM for everyone" once the real recipe is ready).
+    "Strawberry & White": {}, "Strawberry Caramel": {}, "Strawberry Yogurt": {}, "Raspberry Yogurt": {},
   };
   for (const s of PROC_SKUS) {
     b[s] = b[s] || {};
@@ -2927,13 +2946,33 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     return {};
   });
   useEffect(()=>{ try { window.localStorage.setItem("baris.ops.ingInvOverride.v1", JSON.stringify(ingInvOverride)); } catch {} },[ingInvOverride]);
-  // Effective inventory: manual override wins; otherwise the live I&P on-hand.
+  // ─── Raw material stock: draft override (per-browser) → published fixed baseline (Supabase, shared) → live I&P on-hand ───
+  const [ingStockPublished, setIngStockPublished] = useState<Record<string, number>>({});
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await (supabase.from("ops_published" as any) as any).select("value").eq("key", "raw_material_stock").maybeSingle();
+        if (data?.value && typeof data.value === "object" && Object.keys(data.value).length > 0) {
+          setIngStockPublished(data.value as Record<string, number>);
+        }
+      } catch (e) { console.error("Failed to load published raw material stock:", e); }
+    })();
+  }, []);
+  async function publishIngStock() {
+    const snapshot: Record<string, number> = {};
+    for (const k of ALL_INGS) snapshot[k] = parseInt(ingInv[k]) || 0;
+    const { error } = await supabase.from("ops_published" as any).upsert({ key: "raw_material_stock", value: snapshot, published_at: new Date().toISOString() });
+    if (error) { toast.error("Failed to publish stock: " + error.message); return; }
+    setIngStockPublished(snapshot);
+    toast.success("🔒 Stock values fijados para todos los usuarios");
+  }
+  // Effective inventory: manual (per-browser) override wins; then the published shared baseline; otherwise the live I&P on-hand.
   const ingInv: Record<string,string> = useMemo(() => {
     const o: Record<string,string> = {};
     for (const k of ALL_INGS) {
       o[k] = (ingInvOverride[k] !== undefined && ingInvOverride[k] !== "")
         ? ingInvOverride[k]
-        : (ipOnHand[k] != null ? String(Math.round(ipOnHand[k])) : "");
+        : (ingStockPublished[k] != null ? String(Math.round(ingStockPublished[k])) : (ipOnHand[k] != null ? String(Math.round(ipOnHand[k])) : ""));
     }
     // Also include any overridden extra materials (from Supabase)
     for (const k of Object.keys(ingInvOverride)) {
@@ -2942,7 +2981,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       }
     }
     return o;
-  }, [ingInvOverride, ipOnHand]);
+  }, [ingInvOverride, ipOnHand, ingStockPublished]);
   const setIngInv = (updater: any) => {
     setIngInvOverride(prev => {
       const cur: Record<string,string> = {};
@@ -3012,6 +3051,56 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     }
     if (rows.length > 0) await supabase.from("ops_bom" as any).upsert(rows, { onConflict: "sku,material" });
     toast.success("BOM reset to defaults (Supabase updated)");
+  }
+  // ─── Bulk BOM upload (CSV): sku,material,qty_per_case — overwrites Supabase ops_bom for everyone ───
+  const bomUploadRef = useRef<HTMLInputElement>(null);
+  const [bomUploading, setBomUploading] = useState(false);
+  function parseBomCsv(text: string): { sku: string; material: string; qty_per_case: number }[] {
+    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    if (lines.length === 0) return [];
+    const splitLine = (l: string) => l.split(",").map(c => c.trim().replace(/^"|"$/g, ""));
+    let start = 0;
+    const firstCols = splitLine(lines[0]).map(c => c.toLowerCase());
+    if (firstCols.includes("sku") && firstCols.includes("material")) start = 1; // header row present
+    const out: { sku: string; material: string; qty_per_case: number }[] = [];
+    for (let i = start; i < lines.length; i++) {
+      const cols = splitLine(lines[i]);
+      if (cols.length < 3) continue;
+      const [sku, material, qtyStr] = cols;
+      const qty = Number(qtyStr.replace(/,/g, ""));
+      if (!sku || !material || Number.isNaN(qty)) continue;
+      out.push({ sku, material, qty_per_case: qty });
+    }
+    return out;
+  }
+  async function handleBomUpload(file: File) {
+    setBomUploading(true);
+    try {
+      const text = await file.text();
+      const rows = parseBomCsv(text);
+      if (rows.length === 0) {
+        toast.error("No se pudieron leer filas del archivo. Formato esperado: sku,material,qty_per_case");
+        return;
+      }
+      const { error } = await supabase.from("ops_bom" as any).upsert(rows, { onConflict: "sku,material" });
+      if (error) throw error;
+      // Reflect immediately in local state for every SKU touched
+      setBomQty(prev => {
+        const next = { ...prev };
+        for (const r of rows) {
+          next[r.sku] = { ...(next[r.sku] ?? {}), [r.material]: r.qty_per_case };
+        }
+        return next;
+      });
+      setBomFromDb(true);
+      toast.success(`BOM actualizado para todos los usuarios (${rows.length} filas) — Supabase`);
+    } catch (e: any) {
+      console.error("BOM upload error:", e);
+      toast.error("Error al subir el BOM: " + (e?.message ?? "desconocido"));
+    } finally {
+      setBomUploading(false);
+      if (bomUploadRef.current) bomUploadRef.current.value = "";
+    }
   }
   // ─── Editable material master: scrap %, overfill %, lead weeks, payment terms (Supabase: ops_raw_materials) ───
   const [dbMaterials, setDbMaterials] = useState<{material:string;scrap_pct:number;overfill_pct:number;lead_time_weeks:number;payment_terms:string;default_price:number;unit:string;active:boolean;sort_order:number}[]>([]);
@@ -3417,7 +3506,9 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   }, [salesForecastHook.state]);
   const dynamicProcSkus = useMemo(() => {
     const base = [...PROC_SKUS];
-    for (const name of committedNewSkus) {
+    // NEW_FIXED_SKUS are confirmed launches — always included regardless of the Sales Simulator
+    // toggle, defaulting to 0 stock/forecast/BOM until real data comes in.
+    for (const name of [...NEW_FIXED_SKUS, ...committedNewSkus]) {
       if (!base.includes(name)) base.push(name);
     }
     return base;
@@ -3560,19 +3651,19 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   // Build IP starting stock from I&P Summary (on-hand) with average cost
   const ipStartForForecast = useMemo(() => {
     const out: Record<string, { qty: number; costPerUnit: number }> = {};
-    for (const mat of ALL_INGS) {
+    for (const mat of allMaterialsList) {
       const qty = parseInt(ingInv[mat]) || 0;
       const price = ingPrices[mat] ?? 0;
       if (qty > 0) out[mat] = { qty, costPerUnit: price };
     }
     return out;
-  }, [ingInv, ingPrices]);
+  }, [ingInv, ingPrices, allMaterialsList]);
 
   // Build FP starting stock: bySku (lot master stock) + WIP (in production now)
   // This matches what the Schedule uses as starting point: stock + WIP
   const fpStartForForecast = useMemo(() => {
     const out: Record<string, { cases: number; totalValue: number }> = {};
-    for (const sku of SKUS) {
+    for (const sku of dynamicProcSkus) {
       const stock = bySku[sku] ?? 0;
       const wipCases = wipBySku[sku] ?? 0;
       const cases = stock + wipCases;
@@ -3580,7 +3671,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       out[sku] = { cases, totalValue: cases * avgCogs };
     }
     return out;
-  }, [bySku, wipBySku, cogs]);
+  }, [bySku, wipBySku, cogs, dynamicProcSkus]);
 
   // Build production plan from schedule for FIFO simulation
   const prodPlanForForecast = useMemo(() => {
@@ -3602,7 +3693,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   // Build sales forecast map for FIFO
   const salesFcstForForecast = useMemo(() => {
     const out: Record<string, Record<string, number>> = {};
-    for (const sku of SKUS) {
+    for (const sku of dynamicProcSkus) {
       out[sku] = {};
       for (let i = 0; i < FORECAST_KEYS_OPS.length; i++) {
         const fk = FORECAST_KEYS_OPS[i];
@@ -3611,7 +3702,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       }
     }
     return out;
-  }, [fcstOps]);
+  }, [fcstOps, dynamicProcSkus]);
 
   // Tolling per case
   const tollingPerCase = (prodCosts.tolling_per_unit ?? 0) * UNITS_PER_CASE_BOM;
@@ -3647,8 +3738,8 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   const fifoResults = useMemo(() => runFifoForecast(
     ipStartForForecast, fpStartForForecast, allPOsForFifo,
     prodPlanForForecast, salesFcstForForecast, bomQty,
-    tollingPerCase, ALL_INGS, dynamicProcSkus,
-  ), [ipStartForForecast, fpStartForForecast, allPOsForFifo, prodPlanForForecast, salesFcstForForecast, bomQty, tollingPerCase]);
+    tollingPerCase, allMaterialsList, dynamicProcSkus,
+  ), [ipStartForForecast, fpStartForForecast, allPOsForFifo, prodPlanForForecast, salesFcstForForecast, bomQty, tollingPerCase, allMaterialsList, dynamicProcSkus]);
 
   // ─── Bridge: write FIFO inventory & payments to localStorage for Finance ───
   useEffect(() => {
@@ -3656,7 +3747,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       const inv: Record<string, { ip: number; fp: number; total: number }> = {};
       const pay: Record<string, { ipPurchases: number; tolling: number; total: number }> = {};
       for (const r of fifoResults) {
-        const ipVal = ALL_INGS.reduce((s, g) => s + (r.ipStock[g]?.value ?? 0), 0);
+        const ipVal = allMaterialsList.reduce((s, g) => s + (r.ipStock[g]?.value ?? 0), 0);
         const fpVal = SKUS.reduce((s, sk) => s + (r.fpStock[sk]?.value ?? 0), 0);
         inv[r.mk] = { ip: Math.round(ipVal), fp: Math.round(fpVal), total: Math.round(ipVal + fpVal) };
         pay[r.mk] = { ipPurchases: Math.round(r.ipPayments), tolling: Math.round(r.tollPayments), total: Math.round(r.totalPayments) };
@@ -3664,7 +3755,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       window.localStorage.setItem("baris.ops.fifoInventory.v1", JSON.stringify(inv));
       window.localStorage.setItem("baris.ops.fifoPayments.v1", JSON.stringify(pay));
     } catch { /* ignore */ }
-  }, [fifoResults]);
+  }, [fifoResults, allMaterialsList]);
 
   // Shopping list: PO forecast totals per material
   const poForecastByMat = useMemo(() => {
@@ -3902,8 +3993,18 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                   ))}
                 </div>
                 <button onClick={resetBom} className="rounded border border-border px-3 py-1 text-[10px] text-muted-foreground hover:bg-muted">Reset BOM</button>
+                <input ref={bomUploadRef} type="file" accept=".csv,text/csv" className="hidden"
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) handleBomUpload(f); }} />
+                <button onClick={() => bomUploadRef.current?.click()} disabled={bomUploading}
+                  className="rounded px-3 py-1 text-[10px] font-semibold text-white disabled:opacity-50"
+                  style={{backgroundColor:"#A3224A"}}>
+                  {bomUploading ? "Subiendo…" : "⬆️ Upload new BOM for everyone"}
+                </button>
               </div>
             </div>
+            <p className="px-5 pb-2 text-[10px] text-muted-foreground -mt-2">
+              CSV con columnas <code>sku,material,qty_per_case</code> (con o sin header). Sobreescribe el BOM en Supabase para todos los usuarios.
+            </p>
             <table className="text-xs min-w-max w-full">
               <thead>
                 <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
@@ -4130,6 +4231,9 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
             <span>💡 Material master — shared across all users (Supabase). Click a name to rename. Add new materials below.</span>
             <div className="flex gap-2 flex-wrap">
               <button onClick={resetAllIngInv} className="rounded border border-blue-300 bg-white px-3 py-1 text-[10px] font-semibold text-blue-700 hover:bg-blue-100 whitespace-nowrap">↻ Reset stock to IP Summary</button>
+              <button onClick={publishIngStock} className="rounded px-3 py-1 text-[10px] font-semibold text-white whitespace-nowrap" style={{backgroundColor:"#A3224A"}} title="Fija los valores de Stock actuales para que todos los usuarios vean los mismos números">
+                🔒 Fijar valores de stock
+              </button>
               {ingPricesDirty && (
                 <button onClick={publishIngPrices} className="rounded px-3 py-1 text-[10px] font-semibold text-white whitespace-nowrap" style={{backgroundColor:"#16a34a"}}>
                   📤 Publish prices
@@ -4735,7 +4839,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                     </tr>
                   </thead>
                   <tbody>
-                    {RAW_MATS.filter(g => FR.some(r => (r.ipStock[g]?.qty ?? 0) > 0 || (r.ipReceived[g] ?? 0) > 0 || (r.ipConsumed[g] ?? 0) > 0)).map(g => (
+                    {allMaterialsList.filter(g => FR.some(r => (r.ipStock[g]?.qty ?? 0) > 0 || (r.ipReceived[g] ?? 0) > 0 || (r.ipConsumed[g] ?? 0) > 0)).map(g => (
                       <tr key={g} className="border-t border-border/60">
                         <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{g}</td>
                         {FR.map(r => {
@@ -4763,7 +4867,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                     </tr>
                   </thead>
                   <tbody>
-                    {RAW_MATS.filter(g => FR.some(r => (r.ipStock[g]?.value ?? 0) > 0)).map(g => (
+                    {allMaterialsList.filter(g => FR.some(r => (r.ipStock[g]?.value ?? 0) > 0)).map(g => (
                       <tr key={g} className="border-t border-border/60">
                         <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{g}</td>
                         {FR.map(r => <td key={r.mk} className="px-3 py-1.5 text-right font-mono">${Math.round(r.ipStock[g]?.value ?? 0).toLocaleString()}</td>)}
@@ -4771,7 +4875,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                     ))}
                     <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
                       <td className="px-4 py-2 font-semibold text-xs sticky left-0" style={{backgroundColor:"#1C2340"}}>TOTAL</td>
-                      {FR.map(r => <td key={r.mk} className="px-3 py-2 text-right font-mono font-bold text-emerald-400">${Math.round(ALL_INGS.reduce((s,g)=>s+(r.ipStock[g]?.value??0),0)).toLocaleString()}</td>)}
+                      {FR.map(r => <td key={r.mk} className="px-3 py-2 text-right font-mono font-bold text-emerald-400">${Math.round(allMaterialsList.reduce((s,g)=>s+(r.ipStock[g]?.value??0),0)).toLocaleString()}</td>)}
                     </tr>
                   </tbody>
                 </table>
