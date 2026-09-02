@@ -480,23 +480,12 @@ function SKUTab({forecast,newSkus,mixOverrides,mixOverrideActive,committedCount,
     return {sku,pct:SKU_MIX[sku]??0,months,total:months.reduce((a:number,b:number)=>a+b,0)};
   }),[forecast,defaultMonths,baseByMonth,mixOverrideActive,mixOverrides,dbSkuByMonth]);
 
-  const activeNew = useMemo(()=>newSkus
-    .map((s,i)=>({sku:s,color:NEW_SKU_COLORS[i%NEW_SKU_COLORS.length]}))
-    .filter(x=>x.sku.active)
-    .map(x=>{
-      const months = forecast.map((_,i)=>newSkuCases(x.sku,i));
-      return {...x,months,total:months.reduce((a,b)=>a+b,0)};
-    }),[newSkus,forecast]);
-
   const grandTotal = forecast.reduce((s,f)=>s+f.totalCases,0);
-  const mixSlices = [
-    ...SKUS.map(sku=>({key:sku,color:SKU_COLORS[sku],cases:skuData.find(d=>d.sku===sku)?.total??0})),
-    ...activeNew.map(n=>({key:n.sku.name,color:n.color,cases:n.total})),
-  ];
+  const mixSlices = SKUS.map(sku=>({key:sku,color:SKU_COLORS[sku],cases:skuData.find(d=>d.sku===sku)?.total??0}));
   return (
     <div className="space-y-5">
       <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-        <h3 className="text-sm font-bold mb-1" style={{color:"#1C2340"}}>Mix de SKUs — Forecast 2026–2027</h3>
+        <h3 className="text-sm font-bold mb-1" style={{color:"#1C2340"}}>Mix de SKUs — 2026 (fórmula) · 2027–2028 (Promo Calendar)</h3>
         {committedCount>0 && <p className="text-xs mb-3 font-semibold" style={{color:"#B45309"}}>Cases based on committed scenario</p>}
         {mixOverrideActive && <p className="text-xs mb-3 text-muted-foreground">Mix override ON — per-month percentages from Block 4</p>}
         <div className="flex gap-2 flex-wrap mb-3">
@@ -538,20 +527,6 @@ function SKUTab({forecast,newSkus,mixOverrides,mixOverrideActive,committedCount,
                 <td className="px-4 py-1.5 text-right font-mono font-bold">{s.total.toLocaleString()}</td>
               </tr>
             ))}
-            {activeNew.map(n=>(
-              <tr key={n.sku.name} className="border-t border-border/60 hover:bg-muted/20 bg-amber-50/30">
-                <td className="px-4 py-1.5 font-semibold">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-sm" style={{backgroundColor:n.color}}/>
-                    {n.sku.name}
-                    <span className="rounded-full border border-amber-400 px-1.5 text-[9px] font-semibold text-amber-700">NEW</span>
-                  </div>
-                </td>
-                <td className="px-4 py-1.5 text-center text-muted-foreground">{grandTotal>0?Math.round(n.total/grandTotal*100):0}%</td>
-                {n.months.map((v,i)=><td key={i} className="px-3 py-1.5 text-right font-mono">{v.toLocaleString()}</td>)}
-                <td className="px-4 py-1.5 text-right font-mono font-bold">{n.total.toLocaleString()}</td>
-              </tr>
-            ))}
             <tr className="border-t-2 border-border font-bold" style={{backgroundColor:"#1C2340",color:"#fff"}}>
               <td className="px-4 py-2">TOTAL</td>
               <td className="px-4 py-2 text-center">100%</td>
@@ -561,9 +536,6 @@ function SKUTab({forecast,newSkus,mixOverrides,mixOverrideActive,committedCount,
           </tbody>
         </table>
       </div>
-      {activeNew.length>0 && (
-        <p className="text-xs text-amber-700">⚠ New SKU cases are simulator projections. Lock them with SET to include in production planning.</p>
-      )}
       <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
         <h3 className="text-sm font-bold mb-3" style={{color:"#1C2340"}}>Historical SKU mix</h3>
         <table className="w-full text-sm">
