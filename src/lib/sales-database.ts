@@ -328,3 +328,37 @@ export function playsToPromoRows(plays: SimPlay[]): Partial<PromoCalendarRow>[] 
   }
   return rows;
 }
+
+// Incremental impact of a single play (cases + revenue) over the base Promo Calendar.
+export function computePlayImpact(play: SimPlay, rows: PromoCalendarRow[], accounts: SalesAccount[]): { cases: number; revenue: number } {
+  const costMap = new Map<string, number>();
+  accounts.forEach(a => costMap.set(`${a.year}|${a.account_name}`, a.delivered_cost));
+  const costFor = (year: number, account: string, dist: Distributor) =>
+    costMap.get(`${year}|${account}`) ?? DEFAULT_DELIVERED_COST[dist] ?? 4.62;
+
+  let cases = 0, revenue = 0;
+  if (!play.active) return { cases: 0, revenue: 0 };
+
+  if (play.kind === "new_stores") {
+    for (let mm = ym(play.fromYear, play.fromMonth); mm <= ym(2028, 12); mm++) {
+      const year = Math.floor((mm - 1) / 12);
+      const month = ((mm - 1) % 12) + 1;
+      if (year < 2027) continue;
+      void month;
+      for (const sku of play.skus) {
+        const units = play.stores * play.vel * (play.weeks || WEEKS_PER_MONTH_DEFAULT);
+        cases += units / UNITS_PER_CASE;
+        revenue += units * costFor(year, play.account, play.distributor);
+      }
+    }
+  } else {
+    for (const r of rows) {
+      if (r.account_name !== play.account || r.sku_code !== play.sku) continue;
+      if (ym(r.year, r.month) < ym(play.fromYear, play.fromMonth)) continue;
+      const delta = (r.total_units ?? 0) * (play.pct / 100);
+      cases += delta / UNITS_PER_CASE;
+      revenue += delta * costFor(r.year, r.account_name, r.distributor);
+    }
+  }
+  return { cases: Math.round(cases), revenue: Math.round(revenue) };
+}
