@@ -92,6 +92,50 @@ export async function updatePromoCalendarRow(supabase: any, id: string, patch: P
   if (error) throw error;
 }
 
+// ─── Insert / delete (add or remove accounts and promo rows) ──────────────────
+export async function insertSalesAccount(supabase: any, row: Partial<SalesAccount>): Promise<SalesAccount | null> {
+  const { data, error } = await supabase.from("sales_accounts").insert(row).select().single();
+  if (error) { console.error("insertSalesAccount error:", error); throw error; }
+  return data as SalesAccount;
+}
+
+export async function deleteSalesAccount(supabase: any, id: string) {
+  const { error } = await supabase.from("sales_accounts").delete().eq("id", id);
+  if (error) throw error;
+}
+
+export async function insertPromoRows(supabase: any, rows: Partial<PromoCalendarRow>[]): Promise<PromoCalendarRow[]> {
+  const { data, error } = await supabase.from("sales_promo_calendar").insert(rows).select();
+  if (error) { console.error("insertPromoRows error:", error); throw error; }
+  return (data ?? []) as PromoCalendarRow[];
+}
+
+export async function deletePromoRows(supabase: any, ids: string[]) {
+  if (!ids.length) return;
+  const { error } = await supabase.from("sales_promo_calendar").delete().in("id", ids);
+  if (error) throw error;
+}
+
+// ─── Actuals by account (Sales P&L: forecast vs real, editable per cell) ──────
+export type AccountActual = { id: string; year: number; month: number; account_name: string; actual_revenue: number | null };
+
+export async function fetchAccountActuals(supabase: any): Promise<AccountActual[]> {
+  const { data, error } = await supabase
+    .from("sales_account_actuals").select("*")
+    .order("year", { ascending: true }).order("month", { ascending: true })
+    .limit(10000);
+  if (error) { console.error("fetchAccountActuals error:", error); return []; }
+  return (data ?? []) as AccountActual[];
+}
+
+export async function upsertAccountActual(supabase: any, year: number, month: number, account_name: string, actual_revenue: number | null) {
+  const { error } = await supabase
+    .from("sales_account_actuals")
+    .upsert({ year, month, account_name, actual_revenue, updated_at: new Date().toISOString() },
+      { onConflict: "year,month,account_name" });
+  if (error) throw error;
+}
+
 // ─── Aggregation ──────────────────────────────────────────────────────────────
 export type DbMonthAgg = {
   label: string; year: number; month: number;
@@ -139,4 +183,38 @@ export function mergeForecastWithDb<T extends { label: string; totalCases: numbe
 
 export function dbSkuByMonthFromAgg(dbAgg: Record<string, DbMonthAgg>): Record<string, Record<string, number>> {
   return Object.fromEntries(Object.entries(dbAgg).map(([label, agg]) => [label, agg.bySku]));
+}
+
+// Revenue per account per (year, month). key = `${year}|${month}|${account_name}`.
+export function aggregateByAccountMonth(
+  rows: PromoCalendarRow[],
+  accounts: SalesAccount[],
+): Map<string, number> {
+  const costMap = new Map<string, number>();
+  accounts.forEach(a => costMap.set(`${a.year}|${a.account_name}`, a.delivered_cost));
+  const out = new Map<string, number>();
+  for (const r of rows) {
+    const cost = costMap.get(`${r.year}|${r.account_name}`) ?? DEFAULT_DELIVERED_COST[r.distributor] ?? 4.62;
+    const rev = (r.total_units ?? 0) * cost;
+    const key = `${r.year}|${r.month}|${r.account_name}`;
+    out.set(key, (out.get(key) ?? 0) + rev);
+  }
+  return out;
+}
+
+// Annual revenue per account per year. key = `${year}|${account_name}`.
+export function aggregateAnnualByAccount(
+  rows: PromoCalendarRow[],
+  accounts: SalesAccount[],
+): Map<string, number> {
+  const costMap = new Map<string, number>();
+  accounts.forEach(a => costMap.set(`${a.year}|${a.account_name}`, a.delivered_cost));
+  const out = new Map<string, number>();
+  for (const r of rows) {
+    const cost = costMap.get(`${r.year}|${r.account_name}`) ?? DEFAULT_DELIVERED_COST[r.distributor] ?? 4.62;
+    const rev = (r.total_units ?? 0) * cost;
+    const key = `${r.year}|${r.account_name}`;
+    out.set(key, (out.get(key) ?? 0) + rev);
+  }
+  return out;
 }
