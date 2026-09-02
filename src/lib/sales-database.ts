@@ -74,12 +74,22 @@ export async function fetchSalesAccounts(supabase: any): Promise<SalesAccount[]>
 }
 
 export async function fetchPromoCalendar(supabase: any): Promise<PromoCalendarRow[]> {
-  const { data, error } = await supabase
-    .from("sales_promo_calendar").select("*")
-    .order("year", { ascending: true }).order("month", { ascending: true })
-    .limit(10000);
-  if (error) { console.error("fetchPromoCalendar error:", error); return []; }
-  return (data ?? []) as PromoCalendarRow[];
+  const all: PromoCalendarRow[] = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from("sales_promo_calendar").select("*")
+      .order("year", { ascending: true })
+      .order("month", { ascending: true })
+      .order("account_name", { ascending: true })
+      .order("sku_code", { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) { console.error("fetchPromoCalendar error:", error); break; }
+    const batch = (data ?? []) as PromoCalendarRow[];
+    all.push(...batch);
+    if (batch.length < PAGE) break;
+  }
+  return all;
 }
 
 export async function updateSalesAccount(supabase: any, id: string, patch: Partial<SalesAccount>) {
@@ -120,12 +130,19 @@ export async function deletePromoRows(supabase: any, ids: string[]) {
 export type AccountActual = { id: string; year: number; month: number; account_name: string; actual_revenue: number | null };
 
 export async function fetchAccountActuals(supabase: any): Promise<AccountActual[]> {
-  const { data, error } = await supabase
-    .from("sales_account_actuals").select("*")
-    .order("year", { ascending: true }).order("month", { ascending: true })
-    .limit(10000);
-  if (error) { console.error("fetchAccountActuals error:", error); return []; }
-  return (data ?? []) as AccountActual[];
+  const all: AccountActual[] = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from("sales_account_actuals").select("*")
+      .order("year", { ascending: true }).order("month", { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) { console.error("fetchAccountActuals error:", error); break; }
+    const batch = (data ?? []) as AccountActual[];
+    all.push(...batch);
+    if (batch.length < PAGE) break;
+  }
+  return all;
 }
 
 export async function upsertAccountActual(supabase: any, year: number, month: number, account_name: string, actual_revenue: number | null) {
