@@ -3577,23 +3577,8 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   const scenarioFactor = planScenario === "Pessimistic" ? 1 - scenarioPct / 100
     : planScenario === "Optimistic" ? 1 + scenarioPct / 100 : 1;
 
-  // Derive dynamic SKU list: base SKUs + committed new SKUs from simulator
-  const committedNewSkus = useMemo(() => {
-    const state = salesForecastHook.state;
-    const newSkus = state.newSkus ?? [];
-    const skuCommitted = state.skuCommitted ?? [];
-    return newSkus.filter((s, i) => s.active && !!skuCommitted[i]).map(s => NEW_SKU_NAME_TO_CODE[s.name] ?? s.name);
-  }, [salesForecastHook.state]);
-  const dynamicProcSkus = useMemo(() => {
-    // PROC_SKUS already includes all 10 codes (XD..GS).
-    // Only add truly new SKUs from the simulator that aren't already mapped.
-    const base = [...PROC_SKUS];
-    for (const name of committedNewSkus) {
-      const code = NEW_SKU_NAME_TO_CODE[name] ?? name;
-      if (!base.includes(code)) base.push(code);
-    }
-    return base;
-  }, [committedNewSkus]);
+  // Locked to the canonical 10 SKU codes — matches Sales → By SKU exactly
+  const dynamicProcSkus = PROC_SKUS;
 
   // Build forecast EXACTLY matching Sales → By SKU: use Promo Calendar DB as primary,
   // formula forecast as fallback for months not in the DB.
