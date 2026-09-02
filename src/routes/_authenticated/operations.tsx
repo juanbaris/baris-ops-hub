@@ -8,6 +8,12 @@ import { useSalesForecast } from "@/hooks/use-sales-forecast";
 import { calcForecast, skuForecastByMonthKey, forecastFromState, committedForecastFromState, productionRequirements, DEFAULT_VEL_CHAINS, NEW_RETAILERS, type Scenario as SalesScenario } from "@/lib/sales-forecast";
 import { buildLotMap, resolveCogs, type LotCard } from "@/lib/fp-shared";
 
+// Map full new-SKU names (from sales-forecast.ts DEFAULT_NEW_SKUS) → short codes used everywhere
+const NEW_SKU_NAME_TO_CODE: Record<string, string> = {
+  "Strawberry & White": "VS", "Strawberry Caramel": "CS",
+  "Strawberry Yogurt": "GS", "Raspberry Yogurt": "GR",
+};
+
 type FPRow = Database["public"]["Tables"]["fp_movements"]["Row"];
 type IPRow = Database["public"]["Tables"]["ip_movements"]["Row"];
 type SKU = Database["public"]["Enums"]["sku"];
@@ -17,14 +23,13 @@ type IPConcept = Database["public"]["Enums"]["ip_concept"];
 type Facility = Database["public"]["Enums"]["facility"];
 type MoveType = Database["public"]["Enums"]["movement_type"];
 
-// New flavors confirmed for launch — fixed in Operations (Stock, FP Movements, Production, Procurement
-// Planning) even before they have real sales history. They default to 0 everywhere until real data
-// (item numbers, BOM, movements) is entered — never omitted.
-const NEW_FIXED_SKUS = ["Strawberry & White","Strawberry Caramel","Strawberry Yogurt","Raspberry Yogurt"] as const;
+// New flavors confirmed for launch — short codes match Sales → By SKU tab (VS, CS, GR, GS).
+// Default to 0 everywhere until real data (item numbers, BOM, movements) is entered.
+const NEW_FIXED_SKUS = ["VS","CS","GR","GS"] as const;
 const SKUS: SKU[] = ["XD","PW","HM","WM","WD","Matcha", ...NEW_FIXED_SKUS];
 const SKU_ITEMS: Record<SKU, string> = {
   XD:"88021", PW:"77670", HM:"77671", WM:"93562", WD:"23141", Matcha:"77672",
-  "Strawberry & White":"TBD", "Strawberry Caramel":"TBD", "Strawberry Yogurt":"TBD", "Raspberry Yogurt":"TBD",
+  VS:"TBD", CS:"TBD", GR:"TBD", GS:"TBD",
 };
 const WAREHOUSES: Warehouse[] = ["Lineage Newark","Lineage Linden","Cold Chain","Empire","Heinlein","OOE"];
 const FP_CONCEPTS: FPConcept[] = ["Production","Sale","Sample","Damage","Transfer","Free"];
@@ -108,13 +113,13 @@ function ymd(d = new Date()) { return d.toISOString().slice(0,10); }
 // any lookup safely resolves to 0 (Committed/Order-qty for them) until Fulfillment adds real support.
 const SKU_KEYS: Record<SKU, string> = {
   XD:"xd_cases", PW:"pw_cases", HM:"hm_cases", WM:"wm_cases", WD:"wd_cases", Matcha:"matcha_cases",
-  "Strawberry & White":"__unsupported_sku_col__", "Strawberry Caramel":"__unsupported_sku_col__",
-  "Strawberry Yogurt":"__unsupported_sku_col__", "Raspberry Yogurt":"__unsupported_sku_col__",
+  VS:"__unsupported_sku_col__", CS:"__unsupported_sku_col__",
+  GR:"__unsupported_sku_col__", GS:"__unsupported_sku_col__",
 };
 /** Fallback used only until the shared sales forecast is available. */
 const FORECAST_FALLBACK: Record<SKU, number> = {
   XD:1161, PW:967, HM:696, WM:464, WD:310, Matcha:271,
-  "Strawberry & White":0, "Strawberry Caramel":0, "Strawberry Yogurt":0, "Raspberry Yogurt":0,
+  VS:0, CS:0, GR:0, GS:0,
 };
 
 function stockStatus(available: number, woh: number) {
@@ -2388,10 +2393,11 @@ const UNITS_PER_CASE_BOM = 8;
 const DEFAULT_PROD_COSTS = { tolling_per_unit:0.65, cup_per_unit:0.095, lid_per_unit:0.092, sealer_per_unit:0.030, case_per_case:0.36 };
 
 // ─── Procurement material master + BOM (quantities are PER CASE of 8 units) ───
-const PROC_SKUS: string[] = ["XD","PW","HM","WM","WD","Matcha"];
+const PROC_SKUS: string[] = ["XD","PW","HM","WM","WD","Matcha","VS","CS","GR","GS"];
 const PROC_SKU_LABEL: Record<string,string> = {
   XD:"Extra Dark", PW:"Pistachio & White", HM:"Hazelnut & Milk",
-  WM:"White & Milk", WD:"White & Dark", Matcha:"Matcha & White", Strawberry:"Strawberry",
+  WM:"White & Milk", WD:"White & Dark", Matcha:"Matcha & White",
+  VS:"Strawberry Vainilla", CS:"Strawberry Caramel", GR:"Raspberry Yogurt", GS:"Strawberry Yogurt",
 };
 const RAW_MATS = [
   "IQF Raspberries","Choc Extra Dark (Revere 70%)","Choc Dark (Duluth)","Choc Milk (Valcour)",
@@ -2416,10 +2422,9 @@ const BOM_QTY: Record<string, Record<string, number>> = (()=>{
     WM:     { "IQF Raspberries":0.773196, "Choc Milk (Valcour)":0.773196, "Choc White (Corinthian)":0.998892, "Cocoa Butter":0.030232, "Soy Lecithin":0.001804 },
     WD:     { "IQF Raspberries":0.773196, "Choc White (Corinthian)":0.999149, "Cocoa Butter":0.029974, "Soy Lecithin":0.001804 },
     Matcha: { "IQF Raspberries":1.159794, "Choc White (Corinthian)":1.363067, "Cocoa Butter":0.025773, "Matcha Powder":0.022680, "Sea Salt":0.003557, "Soy Lecithin":0.002448 },
-    Strawberry: {},
     // Confirmed new flavors — recipe not finalized yet, starts at 0 (editable in BOM + COGS, or via
     // "Upload new BOM for everyone" once the real recipe is ready).
-    "Strawberry & White": {}, "Strawberry Caramel": {}, "Strawberry Yogurt": {}, "Raspberry Yogurt": {},
+    VS: {}, CS: {}, GR: {}, GS: {},
   };
   for (const s of PROC_SKUS) {
     b[s] = b[s] || {};
@@ -2471,7 +2476,7 @@ const ING_PACK_SIZES: Record<string,number> = (()=>{
   for (const m of PACK_MATS) o[m] = 1;
   return o;
 })();
-const SKU_MIX_PCT: Record<string,number> = {XD:0.30,PW:0.25,HM:0.18,WM:0.12,WD:0.08,Matcha:0.07};
+const SKU_MIX_PCT: Record<string,number> = {XD:0.27,PW:0.20,HM:0.19,WM:0.06,WD:0.05,Matcha:0.01,VS:0.08,CS:0.08,GR:0.02,GS:0.02};
 
 // Maps an IP Summary material name → Procurement material name (to pull current stock from I&P).
 const IP_TO_PROC_MAT: Record<string,string> = {
@@ -2511,18 +2516,19 @@ const PAY_TERM_LABEL: Record<PayTerm,string> = { t0:"On order (t=0)", lead:"On a
 const PAY_TERM_KEY = "baris.ops.payTerms.v1";
 
 
-const FORECAST_MONTHS_OPS = Array.from({ length: 12 }, (_, i) => {
-  const d = new Date();
-  d.setDate(1);
-  d.setMonth(d.getMonth() + i);
-  return d.toLocaleString("en-US", { month: "short", year: "2-digit" });
-});
-const FORECAST_KEYS_OPS = Array.from({ length: 12 }, (_, i) => {
-  const d = new Date();
-  d.setDate(1);
-  d.setMonth(d.getMonth() + i);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-});
+// Fixed forecast horizon matching Sales tab: Aug 2026 → Dec 2028
+const FORECAST_MONTHS_OPS: string[] = [];
+const FORECAST_KEYS_OPS: string[] = [];
+(() => {
+  const MONTHS_EN = ["","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  let y = 2026, m = 8;
+  while (y < 2029 || (y === 2029 && m === 1)) {
+    if (y === 2029) break;
+    FORECAST_MONTHS_OPS.push(`${MONTHS_EN[m]} ${String(y).slice(-2)}`);
+    FORECAST_KEYS_OPS.push(`${y}-${String(m).padStart(2, "0")}`);
+    m++; if (m > 12) { m = 1; y++; }
+  }
+})();
 function buildOpsForecast(bySkuMonthKey: Record<string, Record<string, number>>, procSkuList?: string[]): Record<string, number[]> {
   const skuList = procSkuList ?? SKUS;
   return Object.fromEntries(skuList.map(sku => [
@@ -2568,9 +2574,11 @@ const IP_FORECAST_KEY = "baris.ops.ipForecastPOs.v1";
 // 13-month horizon: current month + 12 forward.
 const FORECAST_HORIZON_MONTHS = (() => {
   const out: { key: string; label: string }[] = [];
-  for (let i = 0; i < 13; i++) {
-    const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() + i);
-    out.push({ key: `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`, label: d.toLocaleDateString("en",{month:"short",year:"2-digit"}) });
+  const MONTHS_EN = ["","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  let y = 2026, m = 8;
+  while (y < 2029) {
+    out.push({ key: `${y}-${String(m).padStart(2,"0")}`, label: `${MONTHS_EN[m]} ${String(y).slice(-2)}` });
+    m++; if (m > 12) { m = 1; y++; }
   }
   return out;
 })();
@@ -2714,67 +2722,96 @@ const BOM_PCT_KEY = "baris.ops.bomPct.v1";
 const LEAD_KEY = "baris.ops.leadTimes.v1";
 const DEFAULT_LEAD_WEEKS = 4;
 
-/** Production requirements coming from the Sales simulator (committed scenario wins). */
+const OPS_SKU_COLORS: Record<string,string> = {
+  XD:"#1C2340",PW:"#A3224A",HM:"#3B82F6",WM:"#10B981",WD:"#F59E0B",Matcha:"#8B5CF6",
+  VS:"#EC4899",CS:"#F97316",GR:"#14B8A6",GS:"#A855F7",
+};
+
+/** Forecast sales by SKU — mirrors the Sales → By SKU table exactly. */
 function CommittedRequirements({ planScenario, onPlanScenarioChange, forecast, months }: { planScenario: SalesScenario; onPlanScenarioChange: (s: SalesScenario) => void; forecast: Record<string,number[]>; months: string[] }) {
-  const skuCols = Object.keys(forecast).filter(k => (forecast[k] ?? []).some(v => v > 0) || PROC_SKUS.includes(k));
+  const SKUS_ORDER = PROC_SKUS;
+  const skuData = useMemo(() => SKUS_ORDER.map(sku => {
+    const vals = months.map((_,i) => Math.round(forecast[sku]?.[i] ?? 0));
+    return { sku, months: vals, total: vals.reduce((a,b) => a+b, 0) };
+  }), [forecast, months]);
+  const grandTotal = skuData.reduce((s,d) => s+d.total, 0);
+  const mixSlices = SKUS_ORDER.map(sku => ({ key:sku, color:OPS_SKU_COLORS[sku]??"#888", cases:skuData.find(d=>d.sku===sku)?.total??0 }));
+
   function exportCsv(){
-    const head = ["Month",...skuCols,"TOTAL"];
-    const rows = months.map((label,i)=>[
-      label,
-      ...skuCols.map(s=>Math.round(forecast[s]?.[i]??0)),
-      skuCols.reduce((a,s)=>a+Math.round(forecast[s]?.[i]??0),0),
-    ]);
+    const head = ["SKU","MIX",...months,"TOTAL"];
+    const rows = skuData.map(s=>[s.sku,grandTotal>0?Math.round(s.total/grandTotal*100)+"%":"0%",...s.months,s.total]);
     const csv=[head,...rows].map(r=>r.join(",")).join("\n");
     const url=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
-    const a=document.createElement("a");
-    a.href=url; a.download="forecast-by-sku.csv"; a.click();
+    const a=document.createElement("a"); a.href=url; a.download="forecast-by-sku.csv"; a.click();
     URL.revokeObjectURL(url);
   }
 
   return (
-    <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
-      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-border bg-muted/30">
-        <div>
-          <p className="text-sm font-bold" style={{color:"#1C2340"}}>Forecast sales by SKU — {planScenario} scenario</p>
-          <p className="text-xs text-muted-foreground">
-            Monthly forecast driving this whole tab. Switch scenario to recalculate schedule, stock, shopping &amp; payments.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="flex gap-1 rounded-xl bg-muted p-1">
-            {(["Pessimistic","Normal","Optimistic"] as const).map(s=>(
-              <button key={s} onClick={()=>onPlanScenarioChange(s)}
-                className={`rounded-lg px-2.5 py-1 text-xs font-semibold ${planScenario===s?"text-white":"text-muted-foreground"}`}
-                style={planScenario===s?{backgroundColor:s==="Pessimistic"?"#EF4444":s==="Normal"?"#1C2340":"#10B981"}:{}}>
-                {s}
-              </button>
-            ))}
+    <div className="space-y-5">
+      <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+          <div>
+            <h3 className="text-sm font-bold" style={{color:"#1C2340"}}>Forecast sales by SKU — {planScenario} scenario</h3>
+            <p className="text-xs text-muted-foreground">Monthly forecast driving this whole tab. Switch scenario to recalculate schedule, stock, shopping &amp; payments.</p>
           </div>
-          <button onClick={exportCsv} className="rounded-full border border-border px-3 py-1 text-xs font-semibold text-muted-foreground hover:text-foreground">
-            Export CSV
-          </button>
+          <div className="flex items-center gap-2">
+            <div className="flex gap-1 rounded-xl bg-muted p-1">
+              {(["Pessimistic","Normal","Optimistic"] as const).map(s=>(
+                <button key={s} onClick={()=>onPlanScenarioChange(s)}
+                  className={`rounded-lg px-2.5 py-1 text-xs font-semibold ${planScenario===s?"text-white":"text-muted-foreground"}`}
+                  style={planScenario===s?{backgroundColor:s==="Pessimistic"?"#EF4444":s==="Normal"?"#1C2340":"#10B981"}:{}}>
+                  {s}
+                </button>
+              ))}
+            </div>
+            <button onClick={exportCsv} className="rounded-full border border-border px-3 py-1 text-xs font-semibold text-muted-foreground hover:text-foreground">Export CSV</button>
+          </div>
+        </div>
+        <div className="flex gap-2 flex-wrap mb-3">
+          {mixSlices.map(s=>(
+            <div key={s.key} className="flex items-center gap-1.5 rounded-xl border border-border px-3 py-2">
+              <span className="w-3 h-3 rounded-sm" style={{backgroundColor:s.color}}/>
+              <span className="text-xs font-semibold">{s.key}</span>
+              <span className="text-xs text-muted-foreground">{grandTotal>0?Math.round(s.cases/grandTotal*100):0}%</span>
+            </div>
+          ))}
+        </div>
+        <div className="h-3 rounded-full overflow-hidden flex">
+          {mixSlices.map(s=>(
+            <div key={s.key} style={{width:`${grandTotal>0?s.cases/grandTotal*100:0}%`,backgroundColor:s.color}} title={`${s.key}: ${grandTotal>0?Math.round(s.cases/grandTotal*100):0}%`}/>
+          ))}
         </div>
       </div>
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
         <table className="w-full text-xs min-w-max">
           <thead>
-            <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
-              <th className="px-4 py-2 text-left">Month</th>
-              {skuCols.map(s=><th key={s} className="px-3 py-2 text-right" title={PROC_SKU_LABEL[s]??s}>{s}</th>)}
-              <th className="px-4 py-2 text-right font-bold">TOTAL</th>
+            <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/40 border-b border-border">
+              <th className="px-4 py-2.5 text-left">SKU</th>
+              <th className="px-4 py-2.5 text-center">Mix</th>
+              {months.map(label=><th key={label} className="px-3 py-2.5 text-right w-16">{label}</th>)}
+              <th className="px-4 py-2.5 text-right font-bold">Total</th>
             </tr>
           </thead>
           <tbody>
-            {months.map((label,i)=>{
-              const rowTotal = skuCols.reduce((a,s)=>a+Math.round(forecast[s]?.[i]??0),0);
-              return (
-                <tr key={label} className="border-t border-border/60 hover:bg-muted/20">
-                  <td className="px-4 py-1.5 font-semibold">{label}</td>
-                  {skuCols.map(s=><td key={s} className="px-3 py-1.5 text-right font-mono">{Math.round(forecast[s]?.[i]??0).toLocaleString()}</td>)}
-                  <td className="px-4 py-1.5 text-right font-mono font-bold">{rowTotal.toLocaleString()}</td>
-                </tr>
-              );
-            })}
+            {skuData.map(s=>(
+              <tr key={s.sku} className="border-t border-border/60 hover:bg-muted/20">
+                <td className="px-4 py-1.5 font-semibold">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-sm" style={{backgroundColor:OPS_SKU_COLORS[s.sku]}}/>
+                    {s.sku}
+                  </div>
+                </td>
+                <td className="px-4 py-1.5 text-center text-muted-foreground">{grandTotal>0?Math.round(s.total/grandTotal*100):0}%</td>
+                {s.months.map((v,i)=><td key={i} className="px-3 py-1.5 text-right font-mono">{v.toLocaleString()}</td>)}
+                <td className="px-4 py-1.5 text-right font-mono font-bold">{s.total.toLocaleString()}</td>
+              </tr>
+            ))}
+            <tr className="border-t-2 border-border font-bold" style={{backgroundColor:"#1C2340",color:"#fff"}}>
+              <td className="px-4 py-2">TOTAL</td>
+              <td className="px-4 py-2 text-center">100%</td>
+              {months.map((label,i)=><td key={label} className="px-3 py-2 text-right font-mono">{skuData.reduce((a,s)=>a+(s.months[i]??0),0).toLocaleString()}</td>)}
+              <td className="px-4 py-2 text-right font-mono">{grandTotal.toLocaleString()}</td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -3009,8 +3046,9 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
         if (data && data.length > 0) {
           const bom: Record<string, Record<string, number>> = JSON.parse(JSON.stringify(BOM_QTY));
           for (const row of data) {
-            if (!bom[row.sku]) bom[row.sku] = {};
-            bom[row.sku][row.material] = Number(row.qty_per_case) || 0;
+            const sku = NEW_SKU_NAME_TO_CODE[row.sku] ?? row.sku;
+            if (!bom[sku]) bom[sku] = {};
+            bom[sku][row.material] = Number(row.qty_per_case) || 0;
           }
           setBomQty(bom);
           setBomFromDb(true);
@@ -3281,14 +3319,27 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
         let base = Object.fromEntries(SKUS.map(s=>[s, FORECAST_MONTHS_OPS.map(()=>0)]));
         const { data } = await (supabase.from("ops_published" as any) as any).select("value").eq("key", "production_plan").maybeSingle();
         if (data?.value && typeof data.value === "object" && Object.keys(data.value).length > 0) {
-          base = {...base, ...(data.value as Record<string, number[]>)};
+          const raw = data.value as Record<string, number[]>;
+          // Migrate old full-name keys → short codes and pad arrays to current horizon length
+          for (const [k, v] of Object.entries(raw)) {
+            const code = NEW_SKU_NAME_TO_CODE[k] ?? k;
+            const padded = [...(v ?? []), ...Array(Math.max(0, FORECAST_MONTHS_OPS.length - (v?.length ?? 0))).fill(0)];
+            base[code] = padded.slice(0, FORECAST_MONTHS_OPS.length);
+          }
         }
         const hasDraft = window.localStorage.getItem("baris.ops.prodPlanDraft") === "true";
         if (hasDraft) {
           try {
             const raw = window.localStorage.getItem(MANUAL_PROD_KEY);
             if (raw) {
-              const local = JSON.parse(raw);
+              const rawParsed = JSON.parse(raw);
+              // Migrate old names and pad arrays
+              const local: Record<string, number[]> = {};
+              for (const [k, v] of Object.entries(rawParsed)) {
+                const code = NEW_SKU_NAME_TO_CODE[k] ?? k;
+                const arr = v as number[];
+                local[code] = [...arr, ...Array(Math.max(0, FORECAST_MONTHS_OPS.length - arr.length)).fill(0)].slice(0, FORECAST_MONTHS_OPS.length);
+              }
               const localHasData = Object.values(local).some((arr: any) => Array.isArray(arr) && arr.some((v: number) => v > 0));
               if (localHasData) {
                 setManualProd({...base, ...local});
@@ -3484,7 +3535,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     setProdPlanDirty(true);
   }
   function clearAllManual(){
-    setManualProd(Object.fromEntries(SKUS.map(s=>[s, FORECAST_MONTHS_OPS.map(()=>0)])));
+    setManualProd(Object.fromEntries(dynamicProcSkus.map(s=>[s, FORECAST_MONTHS_OPS.map(()=>0)])));
     try { window.localStorage.removeItem("baris.ops.prodPlanDraft"); window.localStorage.removeItem(MANUAL_PROD_KEY); } catch {}
     setProdPlanDirty(true);
     toast.success("All production cleared");
@@ -3502,7 +3553,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     const state = salesForecastHook.state;
     const newSkus = state.newSkus ?? [];
     const skuCommitted = state.skuCommitted ?? [];
-    return newSkus.filter((s, i) => s.active && !!skuCommitted[i]).map(s => s.name);
+    return newSkus.filter((s, i) => s.active && !!skuCommitted[i]).map(s => NEW_SKU_NAME_TO_CODE[s.name] ?? s.name);
   }, [salesForecastHook.state]);
   const dynamicProcSkus = useMemo(() => {
     const base = [...PROC_SKUS];
@@ -3531,8 +3582,9 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
         out[sku][mk] = cases;
       }
       for (const ns of pm.newSkuBreakdown) {
-        if (!out[ns.name]) out[ns.name] = {};
-        out[ns.name][mk] = (out[ns.name][mk] ?? 0) + ns.cases;
+        const code = NEW_SKU_NAME_TO_CODE[ns.name] ?? ns.name;
+        if (!out[code]) out[code] = {};
+        out[code][mk] = (out[code][mk] ?? 0) + ns.cases;
       }
     }
     return out;
@@ -3844,7 +3896,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                   const wipCases=parseInt(w.cases)||0;
                   const skuTotal=(plan[sku]??[]).reduce((a,b)=>a+b,0);
                   const endStock = stockProj[sku]?.[stockProj[sku].length-1] ?? 0;
-                  const avgFcst = (fcstOps[sku]??[]).reduce((a,b)=>a+b,0)/12;
+                  const avgFcst = (fcstOps[sku]??[]).reduce((a,b)=>a+b,0)/FORECAST_MONTHS_OPS.length;
                   const endWoh = avgFcst>0?(endStock/avgFcst)*4:99;
                   const skuMinVal = skuMinRuns[sku] ?? 0;
                   return (
@@ -4253,7 +4305,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
             <div className="rounded-xl border-2 border-emerald-300 bg-emerald-50 px-4 py-3 flex items-center gap-3">
               <span className="text-xs font-semibold text-emerald-800">New material:</span>
               <input type="text" value={newMatName} onChange={e => setNewMatName(e.target.value)}
-                placeholder="e.g. Strawberry" className={`${inp} w-48`}
+                placeholder="e.g. Choc White" className={`${inp} w-48`}
                 onKeyDown={e => { if (e.key === "Enter") addNewMaterial(); }} autoFocus />
               <button onClick={addNewMaterial} className="rounded bg-emerald-600 px-3 py-1 text-[10px] font-semibold text-white">Add</button>
               <button onClick={() => { setShowAddMat(false); setNewMatName(""); }} className="rounded border border-border px-3 py-1 text-[10px] text-muted-foreground">Cancel</button>
