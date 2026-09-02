@@ -11,6 +11,13 @@ import { parseAccountfullyPdf } from "@/lib/accountfully-parser";
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'] as const;
 const PERIODS = ['2026-01','2026-02','2026-03','2026-04','2026-05','2026-06','2026-07','2026-08','2026-09','2026-10','2026-11','2026-12'];
 
+// ─── Multi-year horizon: P&L spans Jan 2026 → Dec 2028 (36 months) ──────────
+const YEARS = [2026, 2027, 2028] as const;
+const MONTHS36 = YEARS.flatMap(y => MONTHS.map(m => `${m} '${String(y).slice(2)}`)); // "Jan '26" … "Dec '28"
+const PERIODS36 = YEARS.flatMap(y => MONTHS.map((_, i) => `${y}-${String(i + 1).padStart(2, '0')}`));
+const yearOf = (idx: number) => YEARS[Math.floor(idx / 12)];
+const monthOf = (idx: number) => idx % 12; // 0..11
+
 const D = {
   gross_sales:  [138.56,203.76,196.70,112.42,278.11,163.93,183.46,168.81,147.77,195.14,183.16,145.82],
   net_sales:    [108.07,168.45,138.69, 73.22,232.70,115.91,127.43,133.36,101.91,160.82,141.57,113.01],
@@ -565,15 +572,20 @@ export function PNLTab({ realMonths, actuals, actualOnly }: { realMonths: number
   );
   const [scenario, setScenario] = useState<Scenario>("Normal");
   const [assumptionsOpen, setAssumptionsOpen] = useState(false);
+  const [yearFilter, setYearFilter] = useState<'all'|2026|2027|2028>('all');
+  const [expEditYear, setExpEditYear] = useState<number|null>(null);
+  const [expDraft, setExpDraft] = useState<Record<string, number[]>|null>(null);
   const childMap = useMemo(() => buildChildMap(PL_ROWS), []);
 
   const scenarioForecast = useFinanceScenarioForecast(scenario); // "2026-8" -> $ (not $K)
   const { julyGrossSales } = useJulyRealFromFulfillment();       // $ (not $K), or null
   const assumptions = useFinanceAssumptions();
 
-  const isRealIdx = (idx: number) => actuals[PERIODS[idx]]?.pnl_detail != null;
-  // In "Actual" mode show only real months; in "Forecast" mode show all 12.
-  const visibleMonthIdx = MONTHS.map((_, i) => i).filter(i => actualOnly ? isRealIdx(i) : true);
+  const isRealIdx = (idx: number) => actuals[PERIODS36[idx]]?.pnl_detail != null;
+  // Continuous Jan'26→Dec'28. Year filter narrows it; Actual mode keeps only real (Accountfully) months.
+  const allIdx = Array.from({ length: 36 }, (_, i) => i);
+  const yearIdx = yearFilter === 'all' ? allIdx : allIdx.filter(i => yearOf(i) === yearFilter);
+  const visibleMonthIdx = yearIdx.filter(i => actualOnly ? isRealIdx(i) : true);
 
   function toggle(id: string) {
     setCollapsed(prev => {
@@ -591,30 +603,36 @@ export function PNLTab({ realMonths, actuals, actualOnly }: { realMonths: number
     return isVisible(parent);
   }
 
-  // ── Build the forecast context for a given month index (0=Jan..11=Dec) ──
+  // ── Forecast context for a global month index (0=Jan'26 … 35=Dec'28) ──
+  // Gross sales are VIVO: pulled from the Sales scenario forecast, so any change in Sales flows here.
   function buildContext(idx: number): ForecastContext {
-    const monthNum = idx + 1;
-    const cogsPerUnit = assumptions.get('cogs_per_unit', 22.27);
+    const year = yearOf(idx);
+    const m0 = monthOf(idx);
+    const monthNum = m0 + 1;
     const logisticsPct = assumptions.get('logistics_pct_of_gross', 9.8) / 100;
     const deductionPct = assumptions.get('deduction_pct_overall', 19.78) / 100;
 
     let grossSalesK: number;
-    if (idx === 6) {
-      // July: real invoiced $ from Fulfillment, if available; else fall back to scenario forecast (unlikely to hit, Aug+ only)
+    if (year === 2026 && idx === 6) {
+      // July 2026: real invoiced $ from Fulfillment if available, else scenario forecast.
       grossSalesK = julyGrossSales != null ? julyGrossSales / 1000 : (scenarioForecast[`2026-7`] ?? 0) / 1000;
     } else {
-      grossSalesK = (scenarioForecast[`2026-${monthNum}`] ?? 0) / 1000;
+      grossSalesK = (scenarioForecast[`${year}-${monthNum}`] ?? 0) / 1000;
     }
+    // COGS: 2026 uses the $/case assumption; 2027/2028 use editable $/pote × 8.
+    const cogsPerUnit = year === 2026 ? assumptions.get('cogs_per_unit', 22.27) : loadCogsPote(year) * 8;
     const unitsSold = grossSalesK > 0 ? Math.round((grossSalesK * 1000) / 37) : 0; // 37 = PRICE_PER_CASE
 
-    return {
-      grossSales: grossSalesK,
-      unitsSold,
-      cogsPerUnit,
-      logisticsPct,
-      deductionPct,
-      fixedCostsK: loadExpenseOverrides(),
-    };
+    // Expenses: 2026 = flat monthly overrides; 2027/2028 = per-month matrix (live draft while editing).
+    let fixedCostsK: Record<string, number>;
+    if (year === 2026) {
+      fixedCostsK = loadExpenseOverrides();
+    } else {
+      const mat = (expEditYear === year && expDraft) ? expDraft : yearExpenseMatrix(year);
+      fixedCostsK = Object.fromEntries(Object.keys(DEFAULT_EXPENSE_K).map(k => [k, (mat[k]?.[m0]) ?? 0]));
+    }
+
+    return { grossSales: grossSalesK, unitsSold, cogsPerUnit, logisticsPct, deductionPct, fixedCostsK };
   }
 
   // Get value for a cell (month idx), in $K
@@ -774,6 +792,30 @@ export function PNLTab({ realMonths, actuals, actualOnly }: { realMonths: number
           className="rounded-full border border-border px-2 py-0.5 hover:bg-muted flex items-center gap-1">
           ⚙️ Assumptions
         </button>
+        <div className="flex items-center gap-1 ml-1">
+          <span className="text-[10px] uppercase tracking-wide">Año:</span>
+          {(['all', 2026, 2027, 2028] as const).map(y => (
+            <button key={String(y)} onClick={() => { setYearFilter(y); setExpEditYear(null); }}
+              className={`rounded-full border px-2 py-0.5 text-[11px] ${yearFilter === y ? "border-[#A3224A] bg-[#A3224A] text-white" : "border-border hover:bg-muted"}`}>
+              {y === 'all' ? 'Todos' : y}
+            </button>
+          ))}
+        </div>
+        {(yearFilter === 2027 || yearFilter === 2028) && (
+          expEditYear === yearFilter ? (
+            <span className="flex items-center gap-1">
+              <button onClick={() => { if (expDraft) saveYearExpenseOverrides(yearFilter, expDraft); setExpEditYear(null); }}
+                className="rounded-full border border-emerald-300 bg-emerald-50 text-emerald-700 px-2 py-0.5 hover:bg-emerald-100">🔒 Congelar cambios</button>
+              <button onClick={() => setExpEditYear(null)}
+                className="rounded-full border border-border px-2 py-0.5 hover:bg-muted">Cancelar</button>
+              <button onClick={() => { const def = yearFilter === 2028 ? EXP2028_MONTHLY : EXP2027_MONTHLY; setExpDraft(deepCopyMatrix(def)); }}
+                className="rounded-full border border-border px-2 py-0.5 hover:bg-muted text-muted-foreground">↺ Reset a Excel</button>
+            </span>
+          ) : (
+            <button onClick={() => { setExpEditYear(yearFilter); setExpDraft(deepCopyMatrix(yearExpenseMatrix(yearFilter))); }}
+              className="rounded-full border border-[#A3224A] text-[#A3224A] px-2 py-0.5 hover:bg-[#FFF5F7]">✏️ Editar expenses {yearFilter}</button>
+          )
+        )}
         <span className="flex-1" />
         <button onClick={() => setCollapsed(new Set())} className="rounded-full border border-border px-2 py-0.5 hover:bg-muted">Expand all</button>
         <button onClick={() => setCollapsed(new Set(PL_ROWS.filter(r=>r.kind==="group").map(r=>r.id)))} className="rounded-full border border-border px-2 py-0.5 hover:bg-muted">Collapse all</button>
@@ -789,9 +831,9 @@ export function PNLTab({ realMonths, actuals, actualOnly }: { realMonths: number
             <tr className="bg-muted/50 border-b border-border">
               <th className="text-left px-4 py-2.5 font-semibold text-[10px] uppercase tracking-wide text-muted-foreground w-52 min-w-[200px]">Line</th>
               {visibleMonthIdx.map((i) => (
-                <th key={MONTHS[i]} className="text-right px-2 py-2.5 text-[10px] uppercase tracking-wide w-12"
+                <th key={i} className="text-right px-2 py-2.5 text-[10px] uppercase tracking-wide w-12"
                   style={{color: isRealIdx(i) ? "#1C2340" : "#9CA3AF"}}>
-                  {MONTHS[i]}
+                  {MONTHS36[i]}
                   <div className="text-[8px] flex items-center justify-end gap-0.5">
                     {isRealIdx(i) && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 inline-block"/>}
                     {isRealIdx(i) ? "A" : i === 6 ? "Real GS" : "F"}
@@ -806,7 +848,7 @@ export function PNLTab({ realMonths, actuals, actualOnly }: { realMonths: number
             {PL_ROWS.filter(r => isVisible(r)).map(row => {
               if (row.kind === "section") return (
                 <tr key={row.id} className="bg-muted/20 border-t border-border">
-                  <td colSpan={16} className="px-4 py-1.5 text-[9px] font-bold uppercase tracking-widest text-muted-foreground">{row.label}</td>
+                  <td colSpan={visibleMonthIdx.length + 3} className="px-4 py-1.5 text-[9px] font-bold uppercase tracking-widest text-muted-foreground">{row.label}</td>
                 </tr>
               );
               if (row.id === "units_sold") {
@@ -878,6 +920,24 @@ export function PNLTab({ realMonths, actuals, actualOnly }: { realMonths: number
                   </td>
                   {vals.map((v, k) => {
                     const i = visibleMonthIdx[k];
+                    if (expEditYear != null && yearOf(i) === expEditYear && EXP_ITEM_IDS.has(row.id)) {
+                      const dv = Math.abs(expDraft?.[row.id]?.[monthOf(i)] ?? 0);
+                      return (
+                        <td key={k} className="px-1 py-0.5 text-right">
+                          <input type="number" step="0.1" value={dv === 0 ? "" : dv}
+                            onChange={e => {
+                              const nv = -Math.abs(parseFloat(e.target.value) || 0);
+                              setExpDraft(prev => {
+                                const base = prev ?? {};
+                                const arr = [...(base[row.id] ?? Array(12).fill(0))];
+                                arr[monthOf(i)] = nv;
+                                return { ...base, [row.id]: arr };
+                              });
+                            }}
+                            className="w-14 rounded border border-[#A3224A]/40 bg-[#FFF5F7] px-1 py-0.5 text-[11px] text-right font-mono" />
+                        </td>
+                      );
+                    }
                     return (
                     <td key={k} className={`text-right px-2 py-1.5 font-mono tabular-nums`}
                       style={{
@@ -908,8 +968,8 @@ export function PNLTab({ realMonths, actuals, actualOnly }: { realMonths: number
         </table>
       </div>
 
-      {/* ── Variance Analysis: Actual vs Forecast (Jul onwards, cumulative) ── */}
-      {(() => {
+      {/* ── Variance Analysis: Actual vs Forecast (Jul onwards, cumulative) — 2026 only ── */}
+      {(yearFilter === 'all' || yearFilter === 2026) && (() => {
         const varMonths: number[] = [];
         for (let i = 6; i < 12; i++) if (actuals[PERIODS[i]]?.pnl_detail) varMonths.push(i);
         if (!varMonths.length) return null;
@@ -1069,6 +1129,68 @@ function loadExpenseOverrides(): Record<string, number> {
 function saveExpenseOverrides(v: Record<string, number>) {
   try { localStorage.setItem("baris.finance.expenseK", JSON.stringify(v)); } catch {}
 }
+
+// ═══ 2027 monthly expense matrix (from Sales Budget 2027 Excel), $K, negative ═══
+// Mapped to P&L line ids. Monthly totals reconcile to the Excel "Expenses" row.
+const EXP2027_MONTHLY: Record<string, number[]> = {
+  broker_commissions: [-10,-10,-10,-12.4,-14.641,-10,-12.611,-11.087,-11.749,-10,-10,-10],
+  slotting_fees: [0,0,-44.359,-0.439,-0.439,-0.439,-0.439,-0.439,-0.439,-0.439,-0.439,-0.439],
+  demos_merchandising: [-2.75,-2.75,-2.75,-22.75,-2.75,-17.75,-17.75,-2.75,-2.75,-2.75,-2.75,-2.75],
+  digital_social: [-6,-6,-6,-26,-6,-26,-6,-6,-6,-6,-6,-6],
+  events_tradeshows: [0,0,-10,0,0,-10,0,0,0,-8,0,0],
+  product_samples: [-2,-2,-2,-2,-2,-2,-2,-2,-2,-2,-2,-2],
+  bank_charges: [-0.2,-0.2,-0.2,-0.2,-0.2,-0.2,-0.2,-0.2,-0.2,-0.2,-0.2,-0.2],
+  dues_subscriptions: [-1.5,-1.5,-1.5,-1.5,-1.5,-1.5,-1.5,-1.5,-1.5,-1.5,-1.5,-1.5],
+  rent: [-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1],
+  insurance: [-1,-1,-1,-6,-1,-1,-1,-5,-1,-1,-1,-1],
+  accounting_finance: [-2,-2,-2,-2,-2,-2,-2,-2,-2,-2,-2,-2],
+  quality_rd: [-11,0,-1.5,-11,0,0,-11,0,-5,-11,0,0],
+  taxes_licenses: [0,-2.5,0,0,0,0,0,0,0,0,0,0],
+  car_rental_uber: [-2,-10,-6,-6,-2,-10,-6,-6,-6,-6,-6,-6],
+  salaries_operations: [-24.21,-24.21,-24.21,-34.07,-28.07,-28.07,-28.07,-28.07,-28.07,-28.07,-28.07,-28.07],
+  utilities: [0,0,0,0,0,0,0,0,0,0,0,0],
+  business_consultation: [0,0,0,0,0,0,0,0,0,0,0,0],
+  legal_fees: [0,0,0,0,0,0,0,0,0,0,0,0],
+  flights: [0,0,0,0,0,0,0,0,0,0,0,0],
+  hotel: [0,0,0,0,0,0,0,0,0,0,0,0],
+  contractors: [0,0,0,0,0,0,0,0,0,0,0,0],
+  payroll_taxes: [0,0,0,0,0,0,0,0,0,0,0,0],
+  payroll_processing: [0,0,0,0,0,0,0,0,0,0,0,0],
+  printing_promotional: [0,0,0,0,0,0,0,0,0,0,0,0],
+  office_supplies: [0,0,0,0,0,0,0,0,0,0,0,0],
+  meals_entertainment: [0,0,0,0,0,0,0,0,0,0,0,0],
+  uncategorized: [0,0,0,0,0,0,0,0,0,0,0,0],
+  vehicle_expenses: [0,0,0,0,0,0,0,0,0,0,0,0],
+};
+// 2028 = 2027 grown by the same rate expenses grew 2026→2027 (+33.8%). Editable via Freeze.
+const EXP_GROWTH_27_28 = 1.3381;
+const EXP2028_MONTHLY: Record<string, number[]> = Object.fromEntries(
+  Object.entries(EXP2027_MONTHLY).map(([k, arr]) => [k, arr.map(v => +(v * EXP_GROWTH_27_28).toFixed(3))])
+);
+const EXP_ITEM_IDS = new Set(Object.keys(EXP2027_MONTHLY));
+const deepCopyMatrix = (m: Record<string, number[]>): Record<string, number[]> =>
+  Object.fromEntries(Object.entries(m).map(([k, a]) => [k, [...a]]));
+
+function loadYearExpenseOverrides(year: number): Record<string, number[]> | null {
+  try { const r = localStorage.getItem(`baris.finance.expense${year}`); return r ? JSON.parse(r) : null; }
+  catch { return null; }
+}
+function saveYearExpenseOverrides(year: number, v: Record<string, number[]>) {
+  try { localStorage.setItem(`baris.finance.expense${year}`, JSON.stringify(v)); } catch {}
+}
+// Effective monthly expense matrix for a forecast year (frozen overrides > Excel default).
+function yearExpenseMatrix(year: number): Record<string, number[]> {
+  const base = year === 2028 ? EXP2028_MONTHLY : EXP2027_MONTHLY;
+  const ov = loadYearExpenseOverrides(year);
+  return ov ? { ...base, ...ov } : base;
+}
+// COGS per pote for forecast years (editable in Assumptions). Engine uses $/case = perPote × 8.
+const DEFAULT_COGS_POTE: Record<number, number> = { 2027: 2.19, 2028: 2.10 };
+function loadCogsPote(year: number): number {
+  try { const r = localStorage.getItem(`baris.finance.cogsPote${year}`); return r != null ? Number(r) : (DEFAULT_COGS_POTE[year] ?? 2.19); }
+  catch { return DEFAULT_COGS_POTE[year] ?? 2.19; }
+}
+function saveCogsPote(year: number, v: number) { try { localStorage.setItem(`baris.finance.cogsPote${year}`, String(v)); } catch {} }
 
 // Pure function: given a forecast context, compute this month's Net Income in $K.
 // Mirrors PNLTab's getValue logic exactly, so Balance Sheet cash roll-forward stays consistent with the P&L.
@@ -1320,6 +1442,7 @@ function AssumptionsModal({ assumptions, onClose }: { assumptions: ReturnType<ty
   ];
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [expenseEdits, setExpenseEdits] = useState<Record<string, number>>(() => loadExpenseOverrides());
+  const [cogsDraft, setCogsDraft] = useState<Record<number, string>>({});
 
   async function handleSave(key: AssumptionKey) {
     const raw = edits[key]; if (raw == null) return;
@@ -1416,6 +1539,23 @@ function AssumptionsModal({ assumptions, onClose }: { assumptions: ReturnType<ty
                 </div>
               );
             })}
+
+            <div className="rounded-xl border border-border p-3 space-y-2">
+              <div className="text-xs font-semibold" style={{color:"#1C2340"}}>COGS por pote — años forecast</div>
+              <div className="text-[10px] text-muted-foreground">$/pote. El motor usa $/caja = pote × 8. 2026 usa el assumption de arriba (por caja).</div>
+              {[2027, 2028].map(y => (
+                <div key={y} className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-muted-foreground">COGS {y} ($/pote)</span>
+                  <div className="flex items-center gap-1.5">
+                    <input type="number" step="0.01" defaultValue={loadCogsPote(y)}
+                      onChange={e => setCogsDraft(prev => ({ ...prev, [y]: e.target.value }))}
+                      className="w-20 rounded-lg border border-border px-2 py-1 text-xs text-right font-mono" />
+                    <button onClick={() => { const v = parseFloat(cogsDraft[y] ?? String(loadCogsPote(y))); if (!isNaN(v)) { saveCogsPote(y, v); window.location.reload(); } }}
+                      className="rounded-lg bg-[#1C2340] text-white px-2 py-1 text-[10px] font-semibold hover:opacity-90">Save</button>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
