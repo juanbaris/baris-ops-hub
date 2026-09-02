@@ -243,155 +243,140 @@ export function aggregateAnnualByAccount(
 }
 
 // ─── Simulator overlays (temporary "what-if" plays over the Promo Calendar) ───
-// Two kinds of play, applied on top of the real Promo Calendar rows before
-// aggregation. They never touch the DB until the user explicitly applies them.
+// Applied on top of the real Promo Calendar rows before aggregation. Never touch
+// the DB until the user explicitly applies them.
+//
+// new_stores: adds stores to an account/SKU set from a given month. The velocity
+// and weeks are NOT entered — each month reuses whatever that account/SKU already
+// has in the Promo Calendar, so extra stores simply scale the units up. Optional
+// storesPerMonth ramps the added stores (e.g. +10/month up to a cap).
 export type SimPlay =
   | {
       id: string; kind: "new_stores"; active: boolean; label: string;
-      account: string; distributor: Distributor; skus: string[];
-      stores: number; vel: number; weeks: number;
-      fromYear: number; fromMonth: number; // effective from this month onward
+      account: string; skus: string[];
+      addStores: number;                 // stores added (target, or cap if ramping)
+      storesPerMonth?: number;           // if set, ramp: add this many per month up to addStores
+      fromYear: number; fromMonth: number;
     }
   | {
       id: string; kind: "vel_bump"; active: boolean; label: string;
-      account: string; sku: string; pct: number; // e.g. +10 => +10%
+      account: string; skus: string[]; pct: number;   // +10 => +10%
+      pctPerMonth?: number;               // if set, compound this % each month
       fromYear: number; fromMonth: number;
     };
 
 const WEEKS_PER_MONTH_DEFAULT = 4.345;
 function ym(year: number, month: number) { return year * 12 + month; }
 
-// Returns synthetic + modified rows reflecting the active plays.
+// stores added in the given month for a ramping/flat new_stores play
+function storesAddedAt(p: Extract<SimPlay, {kind:"new_stores"}>, monthsElapsed: number): number {
+  if (!p.storesPerMonth || p.storesPerMonth <= 0) return p.addStores;
+  return Math.min(p.addStores, p.storesPerMonth * (monthsElapsed + 1));
+}
+
+// cumulative pct bump in the given month for a ramping/flat vel_bump play
+function pctAt(p: Extract<SimPlay, {kind:"vel_bump"}>, monthsElapsed: number): number {
+  if (!p.pctPerMonth || p.pctPerMonth <= 0) return p.pct;
+  // linear accumulation of pctPerMonth, capped at pct if pct>0
+  const acc = p.pctPerMonth * (monthsElapsed + 1);
+  return p.pct > 0 ? Math.min(p.pct, acc) : acc;
+}
+
+// Returns modified rows reflecting the active plays (velocity/units scaled in place).
 export function applySimPlays(rows: PromoCalendarRow[], plays: SimPlay[]): PromoCalendarRow[] {
   const active = plays.filter(p => p.active);
   if (!active.length) return rows;
 
-  // 1) velocity bumps modify existing rows from their effective month onward
-  const out = rows.map(r => {
+  return rows.map(r => {
     let units = r.total_units ?? 0;
+    let stores = r.stores ?? 0;
     let touched = false;
-    for (const p of active) {
-      if (p.kind !== "vel_bump") continue;
-      if (p.account !== r.account_name || p.sku !== r.sku_code) continue;
-      if (ym(r.year, r.month) < ym(p.fromYear, p.fromMonth)) continue;
-      units = units * (1 + p.pct / 100);
-      touched = true;
-    }
-    return touched ? { ...r, total_units: Math.round(units * 1000) / 1000 } : r;
-  });
 
-  // 2) new-store plays add synthetic rows from their effective month to Dec 2028
-  const synthetic: PromoCalendarRow[] = [];
-  for (const p of active) {
-    if (p.kind !== "new_stores") continue;
-    for (let mm = ym(p.fromYear, p.fromMonth); mm <= ym(2028, 12); mm++) {
-      const year = Math.floor((mm - 1) / 12);
-      const month = ((mm - 1) % 12) + 1;
-      if (year < 2027) continue;
-      for (const sku of p.skus) {
-        const units = p.stores * p.vel * (p.weeks || WEEKS_PER_MONTH_DEFAULT);
-        synthetic.push({
-          id: `sim-${p.id}-${year}-${month}-${sku}`,
-          year, month, account_name: p.account, sku_code: sku,
-          distributor: p.distributor, stores: p.stores, reg_avg_vel: p.vel,
-          weeks: p.weeks || WEEKS_PER_MONTH_DEFAULT,
-          total_units: Math.round(units * 1000) / 1000,
-          reg_units: Math.round(units * 1000) / 1000, promo_units: 0,
-          promo_label: null, promo_weeks: null, lift_pct: null, unit_cost: null,
-          ad_dollars: null, total_cost: null, edlp_cost: null,
-        } as PromoCalendarRow);
+    for (const p of active) {
+      const elapsed = ym(r.year, r.month) - ym(p.fromYear, p.fromMonth);
+      if (elapsed < 0) continue;
+
+      if (p.kind === "vel_bump") {
+        if (p.account !== r.account_name || !p.skus.includes(r.sku_code)) continue;
+        const pct = pctAt(p, elapsed);
+        units = units * (1 + pct / 100);
+        touched = true;
+      } else { // new_stores — add stores, keep this month's velocity, scale units
+        if (p.account !== r.account_name || !p.skus.includes(r.sku_code)) continue;
+        const added = storesAddedAt(p, elapsed);
+        const baseStores = r.stores ?? 0;
+        if (baseStores > 0) {
+          const ratio = (baseStores + added) / baseStores;
+          units = units * ratio;
+          stores = baseStores + added;
+        } else {
+          // no existing stores that month → can't infer velocity; leave as is
+        }
+        touched = true;
       }
     }
-  }
-  return [...out, ...synthetic];
+    return touched ? { ...r, total_units: Math.round(units * 1000) / 1000, stores } : r;
+  });
 }
 
 export function hasActivePlays(plays: SimPlay[]) { return plays.some(p => p.active); }
 
-// Convert active plays into DB rows to persist (for "Apply to Promo Calendar").
-export function playsToPromoRows(plays: SimPlay[]): Partial<PromoCalendarRow>[] {
-  const rows: Partial<PromoCalendarRow>[] = [];
-  for (const p of plays.filter(x => x.active && x.kind === "new_stores") as Extract<SimPlay, {kind:"new_stores"}>[]) {
-    for (let mm = ym(p.fromYear, p.fromMonth); mm <= ym(2028, 12); mm++) {
-      const year = Math.floor((mm - 1) / 12);
-      const month = ((mm - 1) % 12) + 1;
-      if (year < 2027) continue;
-      for (const sku of p.skus) {
-        const units = p.stores * p.vel * (p.weeks || WEEKS_PER_MONTH_DEFAULT);
-        rows.push({
-          year, month, account_name: p.account, sku_code: sku, distributor: p.distributor,
-          stores: p.stores, reg_avg_vel: p.vel, weeks: p.weeks || WEEKS_PER_MONTH_DEFAULT,
-          total_units: Math.round(units * 1000) / 1000, reg_units: Math.round(units * 1000) / 1000, promo_units: 0,
-        });
-      }
+// Persist active new_stores plays into the Promo Calendar by writing the
+// scaled rows they produce (base row × store ratio) as real data.
+export function playsToPromoRows(rows: PromoCalendarRow[], plays: SimPlay[]): Partial<PromoCalendarRow>[] {
+  const newStorePlays = plays.filter(x => x.active && x.kind === "new_stores");
+  if (!newStorePlays.length) return [];
+  const applied = applySimPlays(rows, newStorePlays);
+  // Return only the rows that changed (upsert-style patches keyed by identity).
+  const baseById = new Map(rows.map(r => [r.id, r]));
+  const out: Partial<PromoCalendarRow>[] = [];
+  for (const r of applied) {
+    const orig = baseById.get(r.id);
+    if (orig && (orig.total_units !== r.total_units || orig.stores !== r.stores)) {
+      out.push({ year: r.year, month: r.month, account_name: r.account_name, sku_code: r.sku_code,
+        distributor: r.distributor, stores: r.stores, reg_avg_vel: r.reg_avg_vel, weeks: r.weeks,
+        total_units: r.total_units, reg_units: r.total_units, promo_units: r.promo_units ?? 0 });
     }
   }
-  return rows;
+  return out;
 }
 
-// Incremental impact of a single play (cases + revenue) over the base Promo Calendar.
+// Incremental impact of a single play (cases + revenue) over the base Promo Calendar,
+// derived from the diff between applying just this play and the base rows.
 export function computePlayImpact(play: SimPlay, rows: PromoCalendarRow[], accounts: SalesAccount[]): { cases: number; revenue: number } {
+  if (!play.active) return { cases: 0, revenue: 0 };
   const costMap = new Map<string, number>();
   accounts.forEach(a => costMap.set(`${a.year}|${a.account_name}`, a.delivered_cost));
-  const costFor = (year: number, account: string, dist: Distributor) =>
-    costMap.get(`${year}|${account}`) ?? DEFAULT_DELIVERED_COST[dist] ?? 4.62;
+  const costOf = (r: PromoCalendarRow) => costMap.get(`${r.year}|${r.account_name}`) ?? DEFAULT_DELIVERED_COST[r.distributor] ?? 4.62;
 
+  const applied = applySimPlays(rows, [play]);
+  const baseById = new Map(rows.map(r => [r.id, r]));
   let cases = 0, revenue = 0;
-  if (!play.active) return { cases: 0, revenue: 0 };
-
-  if (play.kind === "new_stores") {
-    for (let mm = ym(play.fromYear, play.fromMonth); mm <= ym(2028, 12); mm++) {
-      const year = Math.floor((mm - 1) / 12);
-      const month = ((mm - 1) % 12) + 1;
-      if (year < 2027) continue;
-      void month;
-      for (const sku of play.skus) {
-        const units = play.stores * play.vel * (play.weeks || WEEKS_PER_MONTH_DEFAULT);
-        cases += units / UNITS_PER_CASE;
-        revenue += units * costFor(year, play.account, play.distributor);
-      }
-    }
-  } else {
-    for (const r of rows) {
-      if (r.account_name !== play.account || r.sku_code !== play.sku) continue;
-      if (ym(r.year, r.month) < ym(play.fromYear, play.fromMonth)) continue;
-      const delta = (r.total_units ?? 0) * (play.pct / 100);
-      cases += delta / UNITS_PER_CASE;
-      revenue += delta * costFor(r.year, r.account_name, r.distributor);
-    }
+  for (const r of applied) {
+    const orig = baseById.get(r.id);
+    const deltaUnits = (r.total_units ?? 0) - (orig?.total_units ?? 0);
+    if (deltaUnits === 0) continue;
+    cases += deltaUnits / UNITS_PER_CASE;
+    revenue += deltaUnits * costOf(r);
   }
   return { cases: Math.round(cases), revenue: Math.round(revenue) };
 }
 
-// Per-month incremental cases from active plays. key = month label ("Jul 2027").
+// Per-month incremental cases from active plays, derived from the diff.
 export function playsMonthlyCaseDelta(
   rows: PromoCalendarRow[], accounts: SalesAccount[], plays: SimPlay[],
 ): Record<string, number> {
   const active = plays.filter(p => p.active);
   const out: Record<string, number> = {};
-  const add = (year: number, month: number, cases: number) => {
-    const label = monthLabel(year, month);
-    out[label] = (out[label] ?? 0) + cases;
-  };
-  for (const p of active) {
-    if (p.kind === "new_stores") {
-      for (let mm = ym(p.fromYear, p.fromMonth); mm <= ym(2028, 12); mm++) {
-        const year = Math.floor((mm - 1) / 12);
-        const month = ((mm - 1) % 12) + 1;
-        if (year < 2027) continue;
-        for (const _sku of p.skus) {
-          const units = p.stores * p.vel * (p.weeks || WEEKS_PER_MONTH_DEFAULT);
-          add(year, month, units / UNITS_PER_CASE);
-        }
-      }
-    } else {
-      for (const r of rows) {
-        if (r.account_name !== p.account || r.sku_code !== p.sku) continue;
-        if (ym(r.year, r.month) < ym(p.fromYear, p.fromMonth)) continue;
-        const delta = (r.total_units ?? 0) * (p.pct / 100);
-        add(r.year, r.month, delta / UNITS_PER_CASE);
-      }
-    }
+  if (!active.length) return out;
+  const applied = applySimPlays(rows, active);
+  const baseById = new Map(rows.map(r => [r.id, r]));
+  for (const r of applied) {
+    const orig = baseById.get(r.id);
+    const deltaUnits = (r.total_units ?? 0) - (orig?.total_units ?? 0);
+    if (deltaUnits === 0) continue;
+    const label = monthLabel(r.year, r.month);
+    out[label] = (out[label] ?? 0) + deltaUnits / UNITS_PER_CASE;
   }
   Object.keys(out).forEach(k => { out[k] = Math.round(out[k]); });
   return out;
