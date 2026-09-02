@@ -183,17 +183,23 @@ export function aggregatePromoCalendar(
 }
 
 // Merge DB-sourced months into a formula-driven forecast array (2027+ overrides).
+// scenarioFactor scales the Promo Calendar units: Normal=1, Pessimistic=1-pct, Optimistic=1+pct.
 export function mergeForecastWithDb<T extends { label: string; totalCases: number; revenue: number }>(
   forecast: T[],
   dbAgg: Record<string, DbMonthAgg>,
+  scenarioFactor = 1,
 ): T[] {
   return forecast.map(f => {
     const agg = dbAgg[f.label];
     if (!agg) return f;
+    const cases = Math.round(agg.totalCases * scenarioFactor);
     return {
       ...f,
-      baseCases: agg.totalCases, velDelta: 0, acctDelta: 0, newSkuDelta: 0,
-      totalCases: agg.totalCases, revenue: Math.round(agg.revenue),
+      baseCases: cases, velDelta: 0, acctDelta: 0, newSkuDelta: 0,
+      totalCases: cases, revenue: Math.round(agg.revenue * scenarioFactor),
+      // Budget line = Normal (Promo Calendar, unscaled) so it stays put as a reference.
+      budgetCases: agg.totalCases,
+      budget: Math.round(agg.revenue),
     } as T;
   });
 }
@@ -234,4 +240,91 @@ export function aggregateAnnualByAccount(
     out.set(key, (out.get(key) ?? 0) + rev);
   }
   return out;
+}
+
+// ─── Simulator overlays (temporary "what-if" plays over the Promo Calendar) ───
+// Two kinds of play, applied on top of the real Promo Calendar rows before
+// aggregation. They never touch the DB until the user explicitly applies them.
+export type SimPlay =
+  | {
+      id: string; kind: "new_stores"; active: boolean; label: string;
+      account: string; distributor: Distributor; skus: string[];
+      stores: number; vel: number; weeks: number;
+      fromYear: number; fromMonth: number; // effective from this month onward
+    }
+  | {
+      id: string; kind: "vel_bump"; active: boolean; label: string;
+      account: string; sku: string; pct: number; // e.g. +10 => +10%
+      fromYear: number; fromMonth: number;
+    };
+
+const WEEKS_PER_MONTH_DEFAULT = 4.345;
+function ym(year: number, month: number) { return year * 12 + month; }
+
+// Returns synthetic + modified rows reflecting the active plays.
+export function applySimPlays(rows: PromoCalendarRow[], plays: SimPlay[]): PromoCalendarRow[] {
+  const active = plays.filter(p => p.active);
+  if (!active.length) return rows;
+
+  // 1) velocity bumps modify existing rows from their effective month onward
+  const out = rows.map(r => {
+    let units = r.total_units ?? 0;
+    let touched = false;
+    for (const p of active) {
+      if (p.kind !== "vel_bump") continue;
+      if (p.account !== r.account_name || p.sku !== r.sku_code) continue;
+      if (ym(r.year, r.month) < ym(p.fromYear, p.fromMonth)) continue;
+      units = units * (1 + p.pct / 100);
+      touched = true;
+    }
+    return touched ? { ...r, total_units: Math.round(units * 1000) / 1000 } : r;
+  });
+
+  // 2) new-store plays add synthetic rows from their effective month to Dec 2028
+  const synthetic: PromoCalendarRow[] = [];
+  for (const p of active) {
+    if (p.kind !== "new_stores") continue;
+    for (let mm = ym(p.fromYear, p.fromMonth); mm <= ym(2028, 12); mm++) {
+      const year = Math.floor((mm - 1) / 12);
+      const month = ((mm - 1) % 12) + 1;
+      if (year < 2027) continue;
+      for (const sku of p.skus) {
+        const units = p.stores * p.vel * (p.weeks || WEEKS_PER_MONTH_DEFAULT);
+        synthetic.push({
+          id: `sim-${p.id}-${year}-${month}-${sku}`,
+          year, month, account_name: p.account, sku_code: sku,
+          distributor: p.distributor, stores: p.stores, reg_avg_vel: p.vel,
+          weeks: p.weeks || WEEKS_PER_MONTH_DEFAULT,
+          total_units: Math.round(units * 1000) / 1000,
+          reg_units: Math.round(units * 1000) / 1000, promo_units: 0,
+          promo_label: null, promo_weeks: null, lift_pct: null, unit_cost: null,
+          ad_dollars: null, total_cost: null, edlp_cost: null,
+        } as PromoCalendarRow);
+      }
+    }
+  }
+  return [...out, ...synthetic];
+}
+
+export function hasActivePlays(plays: SimPlay[]) { return plays.some(p => p.active); }
+
+// Convert active plays into DB rows to persist (for "Apply to Promo Calendar").
+export function playsToPromoRows(plays: SimPlay[]): Partial<PromoCalendarRow>[] {
+  const rows: Partial<PromoCalendarRow>[] = [];
+  for (const p of plays.filter(x => x.active && x.kind === "new_stores") as Extract<SimPlay, {kind:"new_stores"}>[]) {
+    for (let mm = ym(p.fromYear, p.fromMonth); mm <= ym(2028, 12); mm++) {
+      const year = Math.floor((mm - 1) / 12);
+      const month = ((mm - 1) % 12) + 1;
+      if (year < 2027) continue;
+      for (const sku of p.skus) {
+        const units = p.stores * p.vel * (p.weeks || WEEKS_PER_MONTH_DEFAULT);
+        rows.push({
+          year, month, account_name: p.account, sku_code: sku, distributor: p.distributor,
+          stores: p.stores, reg_avg_vel: p.vel, weeks: p.weeks || WEEKS_PER_MONTH_DEFAULT,
+          total_units: Math.round(units * 1000) / 1000, reg_units: Math.round(units * 1000) / 1000, promo_units: 0,
+        });
+      }
+    }
+  }
+  return rows;
 }
