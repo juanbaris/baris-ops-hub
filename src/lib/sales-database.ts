@@ -362,3 +362,65 @@ export function computePlayImpact(play: SimPlay, rows: PromoCalendarRow[], accou
   }
   return { cases: Math.round(cases), revenue: Math.round(revenue) };
 }
+
+// Per-month incremental cases from active plays. key = month label ("Jul 2027").
+export function playsMonthlyCaseDelta(
+  rows: PromoCalendarRow[], accounts: SalesAccount[], plays: SimPlay[],
+): Record<string, number> {
+  const active = plays.filter(p => p.active);
+  const out: Record<string, number> = {};
+  const add = (year: number, month: number, cases: number) => {
+    const label = monthLabel(year, month);
+    out[label] = (out[label] ?? 0) + cases;
+  };
+  for (const p of active) {
+    if (p.kind === "new_stores") {
+      for (let mm = ym(p.fromYear, p.fromMonth); mm <= ym(2028, 12); mm++) {
+        const year = Math.floor((mm - 1) / 12);
+        const month = ((mm - 1) % 12) + 1;
+        if (year < 2027) continue;
+        for (const _sku of p.skus) {
+          const units = p.stores * p.vel * (p.weeks || WEEKS_PER_MONTH_DEFAULT);
+          add(year, month, units / UNITS_PER_CASE);
+        }
+      }
+    } else {
+      for (const r of rows) {
+        if (r.account_name !== p.account || r.sku_code !== p.sku) continue;
+        if (ym(r.year, r.month) < ym(p.fromYear, p.fromMonth)) continue;
+        const delta = (r.total_units ?? 0) * (p.pct / 100);
+        add(r.year, r.month, delta / UNITS_PER_CASE);
+      }
+    }
+  }
+  Object.keys(out).forEach(k => { out[k] = Math.round(out[k]); });
+  return out;
+}
+
+// Merge using the OVERLAY agg (already includes plays) but expose the per-month
+// delta in acctDelta so the simulator's Monthly Detail shows the extra units,
+// with revenue already reflecting the boosted total at real per-account prices.
+export function mergeForecastWithDbAndDelta<T extends { label: string; totalCases: number; revenue: number }>(
+  forecast: T[],
+  dbAggSim: Record<string, DbMonthAgg>,   // aggregation of effectivePromo (base + plays)
+  dbAggBase: Record<string, DbMonthAgg>,  // aggregation of real Promo Calendar (base only)
+  monthlyDelta: Record<string, number>,
+  scenarioFactor = 1,
+): T[] {
+  return forecast.map(f => {
+    const agg = dbAggSim[f.label];
+    if (!agg) return f;
+    const base = dbAggBase[f.label];
+    const scaledTotal = Math.round(agg.totalCases * scenarioFactor);
+    const scaledBase = Math.round((base?.totalCases ?? agg.totalCases) * scenarioFactor);
+    const delta = monthlyDelta[f.label] ?? (scaledTotal - scaledBase);
+    return {
+      ...f,
+      baseCases: scaledBase, velDelta: 0, acctDelta: delta, newSkuDelta: 0,
+      totalCases: scaledTotal,
+      revenue: Math.round(agg.revenue * scenarioFactor),
+      budgetCases: Math.round(base?.totalCases ?? agg.totalCases),
+      budget: Math.round(base?.revenue ?? agg.revenue),
+    } as T;
+  });
+}
