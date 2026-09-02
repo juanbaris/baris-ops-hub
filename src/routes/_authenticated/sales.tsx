@@ -18,7 +18,7 @@ import {
   insertSalesAccount, deleteSalesAccount, insertPromoRows, deletePromoRows,
   aggregateByAccountMonth, aggregateAnnualByAccount,
   fetchAccountActuals, upsertAccountActual,
-  applySimPlays, playsToPromoRows,
+  applySimPlays, playsToPromoRows, computePlayImpact,
   type SalesAccount, type PromoCalendarRow, type DbMonthAgg, type AccountActual, type SimPlay,
 } from "@/lib/sales-database";
 
@@ -625,9 +625,11 @@ function labelToYM(label:string){ // "Jul 2027" → {year, month}
   return { year:parseInt(yr), month:mi };
 }
 
-function SimuladorTab({plays,setPlays,accountNames,forecastMonths,onApplyNewStores,detailView,skuView}:{
+function SimuladorTab({plays,setPlays,accountNames,forecastMonths,onApplyNewStores,playImpacts,totalImpact,detailView,skuView}:{
   plays:SimPlay[]; setPlays:(p:SimPlay[])=>void; accountNames:string[]; forecastMonths:{label:string}[];
-  onApplyNewStores:(p:SimPlay)=>void; detailView?:ReactNode; skuView?:ReactNode;
+  onApplyNewStores:(p:SimPlay)=>void;
+  playImpacts:Map<string,{cases:number;revenue:number}>; totalImpact:{cases:number;revenue:number};
+  detailView?:ReactNode; skuView?:ReactNode;
 }) {
   const monthOptions = forecastMonths.filter(m=>{const y=labelToYM(m.label).year; return y>=2027;}).map(m=>m.label);
   const defaultFrom = monthOptions[0] ?? "Jan 2027";
@@ -662,12 +664,26 @@ function SimuladorTab({plays,setPlays,accountNames,forecastMonths,onApplyNewStor
   return (
     <div className="space-y-5">
       <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-700">
-        🧪 <strong>Modo simulación.</strong> Todo lo que agregues acá es un <strong>overlay temporal</strong> sobre el Promo Calendar real: cambiás la vista de Summary, Monthly Detail y By SKU en vivo, pero <strong>no toca la data</strong> hasta que apliques una jugada. Ideal para probar "¿qué pasa si…?".
+        🧪 <strong>Modo simulación.</strong> Las jugadas viven <strong>solo acá dentro</strong> — mueven las cards de impacto y las vistas embebidas de Monthly Detail / By SKU de abajo, pero <strong>no tocan el Monthly Detail real</strong> de la solapa. Cuando una jugada te convence, tocás <strong>"Aplicar al Promo Calendar"</strong> y ahí sí pasa a ser data real.
       </div>
 
       {activeCount>0 && (
-        <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3">
-          <p className="text-sm font-bold text-amber-900">🔬 {activeCount} jugada{activeCount===1?"":"s"} activa{activeCount===1?"":"s"} — el forecast que ves incluye estos cambios.</p>
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+          <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Δ Cases incremental</p>
+            <p className="text-2xl font-bold font-mono" style={{color:"#10B981"}}>+{totalImpact.cases.toLocaleString()}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">{activeCount} jugada{activeCount===1?"":"s"} activa{activeCount===1?"":"s"}</p>
+          </div>
+          <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Δ Revenue incremental</p>
+            <p className="text-2xl font-bold font-mono" style={{color:"#A3224A"}}>+${Math.round(totalImpact.revenue/1000).toLocaleString()}K</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Sobre el forecast base</p>
+          </div>
+          <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Δ Revenue exacto</p>
+            <p className="text-2xl font-bold font-mono" style={{color:"#1C2340"}}>+${totalImpact.revenue.toLocaleString()}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">2027 + 2028 acumulado</p>
+          </div>
         </div>
       )}
 
@@ -710,17 +726,27 @@ function SimuladorTab({plays,setPlays,accountNames,forecastMonths,onApplyNewStor
         <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
           <div className="px-5 py-3 border-b border-border bg-muted/30"><p className="text-sm font-bold" style={{color:"#1C2340"}}>Jugadas</p></div>
           <div className="divide-y divide-border">
-            {plays.map(p=>(
+            {plays.map(p=>{
+              const im=playImpacts.get(p.id);
+              return (
               <div key={p.id} className={`px-5 py-3 flex items-center gap-3 ${p.active?"":"opacity-40"}`}>
                 <button onClick={()=>toggle(p.id)} className={`rounded-full px-3 py-0.5 text-xs font-bold ${p.active?"text-white":"border border-border text-muted-foreground"}`} style={p.active?{backgroundColor:"#10B981"}:{}}>{p.active?"ON":"OFF"}</button>
                 <span className="text-sm flex-1">{p.label}</span>
+                {im && (
+                  <span className="text-xs font-mono whitespace-nowrap">
+                    <span style={{color:"#10B981"}}>+{im.cases.toLocaleString()} cs</span>
+                    <span className="text-muted-foreground mx-1">·</span>
+                    <span style={{color:"#A3224A"}}>+${Math.round(im.revenue/1000).toLocaleString()}K</span>
+                  </span>
+                )}
                 {p.kind==="new_stores" && (
-                  <button onClick={()=>{ if(window.confirm("¿Escribir esta jugada en el Promo Calendar de forma permanente?")) onApplyNewStores(p); }}
+                  <button onClick={()=>{ if(window.confirm("¿Escribir esta jugada en el Promo Calendar de forma permanente? Pasa a ser data real y aparece en el Monthly Detail de la solapa.")) onApplyNewStores(p); }}
                     className="rounded-full border border-[#1C2340] px-3 py-0.5 text-xs font-semibold text-[#1C2340] hover:bg-[#1C2340]/5">Aplicar al Promo Calendar</button>
                 )}
                 <button onClick={()=>remove(p.id)} className="text-muted-foreground hover:text-red-500 text-lg leading-none">×</button>
               </div>
-            ))}
+              );
+            })}
           </div>
           <p className="px-5 py-3 text-xs text-muted-foreground border-t border-border">
             Los <strong>vel. bumps</strong> son solo simulación (no se persisten). Las <strong>tiendas nuevas</strong> se pueden aplicar al Promo Calendar y ahí pasan a ser data real.
@@ -1363,10 +1389,13 @@ function SalesPage() {
       setSimPlays(prev=>prev.filter(p=>p.id!==play.id)); // ya es data real, sacamos el overlay
     }catch(e){ console.error(e); window.alert("No se pudo aplicar al Promo Calendar."); }
   }
-  const dbAgg = useMemo(()=>aggregatePromoCalendar(effectivePromo,dbAccounts),[effectivePromo,dbAccounts]);
+  const dbAgg = useMemo(()=>aggregatePromoCalendar(dbPromo,dbAccounts),[dbPromo,dbAccounts]);
   const dbSkuByMonth = useMemo(()=>dbSkuByMonthFromAgg(dbAgg),[dbAgg]);
-  const byAccountMonth = useMemo(()=>aggregateByAccountMonth(effectivePromo,dbAccounts),[effectivePromo,dbAccounts]);
-  const annualByAccount = useMemo(()=>aggregateAnnualByAccount(effectivePromo,dbAccounts),[effectivePromo,dbAccounts]);
+  const byAccountMonth = useMemo(()=>aggregateByAccountMonth(dbPromo,dbAccounts),[dbPromo,dbAccounts]);
+  const annualByAccount = useMemo(()=>aggregateAnnualByAccount(dbPromo,dbAccounts),[dbPromo,dbAccounts]);
+  // Simulator overlay: only feeds the simulator's own embedded views + impact cards.
+  const dbAggSim = useMemo(()=>aggregatePromoCalendar(effectivePromo,dbAccounts),[effectivePromo,dbAccounts]);
+  const dbSkuByMonthSim = useMemo(()=>dbSkuByMonthFromAgg(dbAggSim),[dbAggSim]);
   const [dbActuals,setDbActuals] = useState<AccountActual[]>([]);
   useEffect(()=>{
     let cancelled=false;
@@ -1479,6 +1508,19 @@ function SalesPage() {
   // it covers — currently 2027-2028. Used by Summary / Monthly Detail / By SKU.
   const dbMergedForecast = useMemo(()=>mergeForecastWithDb(forecast,dbAgg,scenarioFactor),[forecast,dbAgg,scenarioFactor]);
   const dbMergedSkuTabForecast = useMemo(()=>mergeForecastWithDb(skuTabForecast,dbAgg,scenarioFactor),[skuTabForecast,dbAgg,scenarioFactor]);
+  // Simulator-only forecasts (with overlay) for the embedded views inside the Simulador tab.
+  const simMergedForecast = useMemo(()=>mergeForecastWithDb(forecast,dbAggSim,scenarioFactor),[forecast,dbAggSim,scenarioFactor]);
+  const simMergedSkuForecast = useMemo(()=>mergeForecastWithDb(skuTabForecast,dbAggSim,scenarioFactor),[skuTabForecast,dbAggSim,scenarioFactor]);
+  const playImpacts = useMemo(()=>{
+    const map=new Map<string,{cases:number;revenue:number}>();
+    simPlays.forEach(p=>map.set(p.id,computePlayImpact(p,dbPromo,dbAccounts)));
+    return map;
+  },[simPlays,dbPromo,dbAccounts]);
+  const totalImpact = useMemo(()=>{
+    let cases=0,revenue=0;
+    simPlays.forEach(p=>{ if(p.active){ const im=playImpacts.get(p.id); if(im){cases+=im.cases;revenue+=im.revenue;} }});
+    return {cases,revenue};
+  },[simPlays,playImpacts]);
 
   function clearCommitted(){
     setVelCommitted(velCommitted.map(()=>false));
@@ -1574,10 +1616,11 @@ function SalesPage() {
       {tab==="simulador"     && <SimuladorTab plays={simPlays} setPlays={setSimPlays}
                                   accountNames={simAccountNames} forecastMonths={FORECAST_MONTHS}
                                   onApplyNewStores={applyNewStoresPlay}
-                                  detailView={<DetalleTab forecast={dbMergedForecast} reals={mergedReals} history={history} committedCount={committedCount} onRealUpdate={(l,v)=>setReals(r=>({...r,[l]:v}))}/>}
-                                  skuView={<SKUTab forecast={dbMergedSkuTabForecast} newSkus={skuTabNewSkus}
+                                  playImpacts={playImpacts} totalImpact={totalImpact}
+                                  detailView={<DetalleTab forecast={simMergedForecast} reals={mergedReals} history={history} committedCount={committedCount} onRealUpdate={(l,v)=>setReals(r=>({...r,[l]:v}))}/>}
+                                  skuView={<SKUTab forecast={simMergedSkuForecast} newSkus={skuTabNewSkus}
                                     mixOverrides={mixOverrides} mixOverrideActive={mixOverrideActive&&(committedCount===0||mixCommitted)}
-                                    committedCount={committedCount} dbSkuByMonth={dbSkuByMonth}/>}/>}
+                                    committedCount={committedCount} dbSkuByMonth={dbSkuByMonthSim}/>}/>}
       {tab==="estacionalidad"&& <SeasonalityTab seasonIdx={seasonIdx} onSeasonIdxChange={setSeasonIdx}
                                   velChains={velChains} onVelChainsChange={setVelChains}
                                   promoMultipliers={promoMultipliers} onPromoMultipliersChange={setPromoMultipliers}/>}
