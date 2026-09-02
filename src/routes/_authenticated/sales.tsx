@@ -284,7 +284,7 @@ function SummaryTab({forecast,scenario,reals,history,committedCount=0}:{forecast
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
           {label:"Forecast 12m (cases)",value:totalFcst.toLocaleString(),sub:`Scenario ${scenario}`,color:"#A3224A"},
-          {label:"Revenue forecast 12m",value:`$${Math.round(totalRev/1000)}K`,sub:`@$${PRICE_PER_CASE}/case`,color:"#1C2340"},
+          {label:"Revenue forecast 12m",value:`$${Math.round(totalRev/1000)}K`,sub:`@$${totalFcst>0?(totalRev/totalFcst).toFixed(2):PRICE_PER_CASE}/case`,color:"#1C2340"},
           {label:"vs Budget",value:`${((totalFcst/totalBudget-1)*100).toFixed(1)}%`,sub:"Pessimistic baseline",color:totalFcst>=totalBudget?"#10B981":"#EF4444"},
           {label:"Months with actuals",value:`${coveredMonths}/${forecast.length}`,sub:"Update monthly",color:"#6B7280"},
         ].map((k,i)=>(
@@ -368,7 +368,14 @@ function DetalleTab({forecast,reals,onRealUpdate,history,committedCount=0}:{fore
   const histCases = histRows.reduce((s,h)=>s+h.cases,0);
   const histRev   = histRows.reduce((s,h)=>s+h.revenue,0);
   const fcstCases = fcstRows.reduce((s,f)=>s+(reals[f.label]??f.totalCases),0);
-  const fcstRev   = fcstRows.reduce((s,f)=>s+(reals[f.label]??f.totalCases)*PRICE_PER_CASE,0);
+  // Use each month's own revenue (real $/case from Promo Calendar); if the user
+  // typed an actual case count, scale that month's real price by it.
+  const fcstRev   = fcstRows.reduce((s,f)=>{
+    const real=reals[f.label];
+    if(real==null) return s+(f.revenue??f.totalCases*PRICE_PER_CASE);
+    const perCase = f.totalCases>0 ? (f.revenue??f.totalCases*PRICE_PER_CASE)/f.totalCases : PRICE_PER_CASE;
+    return s+real*perCase;
+  },0);
   const visCases  = histCases+fcstCases;
   const visRev    = histRev+fcstRev;
   const monthCount= histRows.length+fcstRows.length;
