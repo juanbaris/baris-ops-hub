@@ -5,13 +5,16 @@ import { PageHeader } from "@/components/app-shell";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import { useSalesForecast } from "@/hooks/use-sales-forecast";
-import { calcForecast, skuForecastByMonthKey, forecastFromState, committedForecastFromState, productionRequirements, DEFAULT_VEL_CHAINS, NEW_RETAILERS, type Scenario as SalesScenario } from "@/lib/sales-forecast";
+import { calcForecast, skuForecastByMonthKey, forecastFromState, committedForecastFromState, productionRequirements, DEFAULT_VEL_CHAINS, NEW_RETAILERS, FORECAST_MONTHS, skuForecast as skuForecastFormula, DEFAULT_MIX_PCT, type Scenario as SalesScenario, type ForecastRow } from "@/lib/sales-forecast";
 import { buildLotMap, resolveCogs, type LotCard } from "@/lib/fp-shared";
+import { EXTENDED_SKUS, fetchSalesAccounts, fetchPromoCalendar, aggregatePromoCalendar, dbSkuByMonthFromAgg, mergeForecastWithDb, type SalesAccount, type PromoCalendarRow } from "@/lib/sales-database";
 
 // Map full new-SKU names (from sales-forecast.ts DEFAULT_NEW_SKUS) → short codes used everywhere
 const NEW_SKU_NAME_TO_CODE: Record<string, string> = {
-  "Strawberry & White": "VS", "Strawberry Caramel": "CS",
-  "Strawberry Yogurt": "GS", "Raspberry Yogurt": "GR",
+  "Strawberry & White": "VS", "Strawberry vainilla": "VS", "Strawberry Vainilla": "VS",
+  "Strawberry Caramel": "CS", "Strawberry caramel": "CS",
+  "Strawberry Yogurt": "GS", "Strawberry yogurt": "GS",
+  "Raspberry Yogurt": "GR", "Raspberry yogurt": "GR",
 };
 
 type FPRow = Database["public"]["Tables"]["fp_movements"]["Row"];
@@ -2517,14 +2520,17 @@ const PAY_TERM_KEY = "baris.ops.payTerms.v1";
 
 
 // Fixed forecast horizon matching Sales tab: Aug 2026 → Dec 2028
+// FORECAST_MONTHS_OPS_FULL uses "Aug 2026" to match DB monthLabel keys (dbSkuByMonth).
+// FORECAST_MONTHS_OPS uses "Aug 26" for compact column headers.
 const FORECAST_MONTHS_OPS: string[] = [];
+const FORECAST_MONTHS_OPS_FULL: string[] = [];
 const FORECAST_KEYS_OPS: string[] = [];
 (() => {
   const MONTHS_EN = ["","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   let y = 2026, m = 8;
-  while (y < 2029 || (y === 2029 && m === 1)) {
-    if (y === 2029) break;
+  while (y < 2029) {
     FORECAST_MONTHS_OPS.push(`${MONTHS_EN[m]} ${String(y).slice(-2)}`);
+    FORECAST_MONTHS_OPS_FULL.push(`${MONTHS_EN[m]} ${y}`);
     FORECAST_KEYS_OPS.push(`${y}-${String(m).padStart(2, "0")}`);
     m++; if (m > 12) { m = 1; y++; }
   }
@@ -2582,6 +2588,10 @@ const FORECAST_HORIZON_MONTHS = (() => {
   }
   return out;
 })();
+// Reverse lookup: month-key → full label for DB matching
+const MK_TO_FULL_LABEL: Record<string,string> = Object.fromEntries(
+  FORECAST_KEYS_OPS.map((mk, i) => [mk, FORECAST_MONTHS_OPS_FULL[i]])
+);
 
 type FifoLot = { id: string; qty: number; remaining: number; costPerUnit: number; monthArrived: string; label: string };
 type ForecastMonthResult = {
@@ -3548,6 +3558,25 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   const { bySkuMonthKey, production: salesProduction } = salesForecastHook;
   const [planScenario, setPlanScenario] = useState<SalesScenario>("Normal");
 
+  // ── Promo Calendar: same data source as Sales → By SKU ──
+  const [dbAccounts, setDbAccounts] = useState<SalesAccount[]>([]);
+  const [dbPromo, setDbPromo] = useState<PromoCalendarRow[]>([]);
+  useEffect(() => {
+    (async () => {
+      try {
+        const [accs, rows] = await Promise.all([fetchSalesAccounts(supabase), fetchPromoCalendar(supabase)]);
+        setDbAccounts(accs); setDbPromo(rows);
+      } catch (e) { console.error("Promo calendar load error:", e); }
+    })();
+  }, []);
+  const dbAgg = useMemo(() => aggregatePromoCalendar(dbPromo, dbAccounts), [dbPromo, dbAccounts]);
+  const dbSkuByMonth = useMemo(() => dbSkuByMonthFromAgg(dbAgg), [dbAgg]);
+  const scenarioPct = useMemo(() => {
+    try { const v = window.localStorage.getItem("baris.sales.scenarioPct"); if (v) return parseFloat(v) || 25; } catch {} return 25;
+  }, []);
+  const scenarioFactor = planScenario === "Pessimistic" ? 1 - scenarioPct / 100
+    : planScenario === "Optimistic" ? 1 + scenarioPct / 100 : 1;
+
   // Derive dynamic SKU list: base SKUs + committed new SKUs from simulator
   const committedNewSkus = useMemo(() => {
     const state = salesForecastHook.state;
@@ -3556,39 +3585,62 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     return newSkus.filter((s, i) => s.active && !!skuCommitted[i]).map(s => NEW_SKU_NAME_TO_CODE[s.name] ?? s.name);
   }, [salesForecastHook.state]);
   const dynamicProcSkus = useMemo(() => {
+    // PROC_SKUS already includes all 10 codes (XD..GS).
+    // Only add truly new SKUs from the simulator that aren't already mapped.
     const base = [...PROC_SKUS];
-    // NEW_FIXED_SKUS are confirmed launches — always included regardless of the Sales Simulator
-    // toggle, defaulting to 0 stock/forecast/BOM until real data comes in.
-    for (const name of [...NEW_FIXED_SKUS, ...committedNewSkus]) {
-      if (!base.includes(name)) base.push(name);
+    for (const name of committedNewSkus) {
+      const code = NEW_SKU_NAME_TO_CODE[name] ?? name;
+      if (!base.includes(code)) base.push(code);
     }
     return base;
   }, [committedNewSkus]);
 
-  // Recalculate forecast with selected planScenario — mirrors Sales by SKU for that scenario
+  // Build forecast EXACTLY matching Sales → By SKU: use Promo Calendar DB as primary,
+  // formula forecast as fallback for months not in the DB.
   const planSkuByMonthKey = useMemo(() => {
+    // Formula-based forecast (2026 months not covered by Promo Calendar)
     const state = salesForecastHook.state;
     const modState = { ...state, scenario: planScenario };
     const committed = committedForecastFromState(modState);
-    const forecast = committed ?? forecastFromState(modState);
+    const formulaForecast = committed ?? forecastFromState(modState);
     const newSkus = (modState.newSkus ?? []).map((s: any, i: number) =>
       committed ? { ...s, active: s.active && !!(modState.skuCommitted ?? [])[i] } : s);
-    const prod = productionRequirements(forecast, newSkus, modState.mixOverrides ?? {}, !!modState.mixOverrideActive && !!modState.mixCommitted);
-    const out: Record<string, Record<string, number>> = {};
+    const prod = productionRequirements(formulaForecast, newSkus, modState.mixOverrides ?? {}, !!modState.mixOverrideActive && !!modState.mixCommitted);
+
+    // Build per-SKU per-monthKey from formula
+    const formula: Record<string, Record<string, number>> = {};
     for (const pm of prod) {
       const mk = `${pm.year}-${String(pm.month).padStart(2, "0")}`;
       for (const [sku, cases] of Object.entries(pm.skuBreakdown)) {
-        if (!out[sku]) out[sku] = {};
-        out[sku][mk] = cases;
+        if (!formula[sku]) formula[sku] = {};
+        formula[sku][mk] = cases;
       }
       for (const ns of pm.newSkuBreakdown) {
         const code = NEW_SKU_NAME_TO_CODE[ns.name] ?? ns.name;
-        if (!out[code]) out[code] = {};
-        out[code][mk] = (out[code][mk] ?? 0) + ns.cases;
+        if (!formula[code]) formula[code] = {};
+        formula[code][mk] = (formula[code][mk] ?? 0) + ns.cases;
+      }
+    }
+
+    // Merge: DB wins when it has data for a month-label, formula is fallback
+    const out: Record<string, Record<string, number>> = {};
+    for (const sku of dynamicProcSkus) {
+      out[sku] = {};
+      for (let i = 0; i < FORECAST_KEYS_OPS.length; i++) {
+        const mk = FORECAST_KEYS_OPS[i];
+        const label = FORECAST_MONTHS_OPS_FULL[i]; // "Aug 2026" — matches DB monthLabel
+        const dbRow = dbSkuByMonth[label];
+        if (dbRow && Object.keys(dbRow).length > 0) {
+          // DB has data for this month — use it (with scenario factor)
+          out[sku][mk] = Math.round((dbRow[sku] ?? 0) * scenarioFactor);
+        } else {
+          // Fallback to formula
+          out[sku][mk] = Math.round(formula[sku]?.[mk] ?? 0);
+        }
       }
     }
     return out;
-  }, [salesForecastHook.state, planScenario]);
+  }, [salesForecastHook.state, planScenario, dbSkuByMonth, scenarioFactor, dynamicProcSkus]);
   const fcstOps = useMemo(()=>buildOpsForecast(planSkuByMonthKey, dynamicProcSkus),[planSkuByMonthKey, dynamicProcSkus]);
 
   // Stock from Lot Master (all warehouses) — same source as FP Stock, so Schedule "available"
