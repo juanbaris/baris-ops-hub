@@ -18,7 +18,8 @@ import {
   insertSalesAccount, deleteSalesAccount, insertPromoRows, deletePromoRows,
   aggregateByAccountMonth, aggregateAnnualByAccount,
   fetchAccountActuals, upsertAccountActual,
-  applySimPlays, playsToPromoRows, computePlayImpact,
+  applySimPlays, computePlayImpact,
+  playsMonthlyCaseDelta, mergeForecastWithDbAndDelta,
   type SalesAccount, type PromoCalendarRow, type DbMonthAgg, type AccountActual, type SimPlay,
 } from "@/lib/sales-database";
 
@@ -398,7 +399,7 @@ function DetalleTab({forecast,reals,onRealUpdate,history,committedCount=0,scenar
                   <td className="px-4 py-1.5 font-semibold" style={{color:"#1C2340"}}>{f.label}</td>
                   <td className="px-4 py-1.5 text-right font-mono text-muted-foreground">{f.baseCases.toLocaleString()}</td>
                   <td className="px-4 py-1.5 text-right font-mono text-muted-foreground">{f.velDelta>0?`+${f.velDelta}`:"—"}</td>
-                  <td className="px-4 py-1.5 text-right font-mono text-muted-foreground">{f.acctDelta>0?`+${f.acctDelta}`:"—"}</td>
+                  <td className={`px-4 py-1.5 text-right font-mono ${f.acctDelta>0?"font-semibold text-emerald-600":"text-muted-foreground"}`}>{f.acctDelta>0?`+${f.acctDelta.toLocaleString()}`:"—"}</td>
                   <td className="px-4 py-1.5 text-right font-mono font-bold" style={{color:"#1C2340"}}>{(real??f.totalCases).toLocaleString()}</td>
                   <td className="px-4 py-1.5 text-right font-mono">${Math.round(f.revenue/1000)}K</td>
                   <td className="px-4 py-1.5 text-right font-mono text-muted-foreground">${Math.round(f.budget/1000)}K</td>
@@ -616,8 +617,8 @@ function Collapsible({title,subtitle,badge,defaultOpen=true,actions,children}:{
 }
 
 // ─── Simulador Tab (overlay sobre Promo Calendar · temporal hasta aplicar) ────
-type NewStoresDraft = { account:string; distributor:string; skus:string; stores:number; vel:number; weeks:number; fromLabel:string };
-type VelBumpDraft   = { account:string; sku:string; pct:number; fromLabel:string };
+type NewStoresDraft = { account:string; skus:string; addStores:number; storesPerMonth:number; fromLabel:string };
+type VelBumpDraft   = { account:string; skus:string; pct:number; pctPerMonth:number; fromLabel:string };
 
 function labelToYM(label:string){ // "Jul 2027" → {year, month}
   const [mon,yr]=label.split(" ");
@@ -625,17 +626,20 @@ function labelToYM(label:string){ // "Jul 2027" → {year, month}
   return { year:parseInt(yr), month:mi };
 }
 
-function SimuladorTab({plays,setPlays,accountNames,forecastMonths,onApplyNewStores,playImpacts,totalImpact,detailView,skuView}:{
+function SimuladorTab({plays,setPlays,accountNames,forecastMonths,onApplyNewStores,playImpacts,totalImpact,onAiParse,detailView,skuView}:{
   plays:SimPlay[]; setPlays:(p:SimPlay[])=>void; accountNames:string[]; forecastMonths:{label:string}[];
   onApplyNewStores:(p:SimPlay)=>void;
   playImpacts:Map<string,{cases:number;revenue:number}>; totalImpact:{cases:number;revenue:number};
+  onAiParse:(text:string)=>Promise<void>;
   detailView?:ReactNode; skuView?:ReactNode;
 }) {
   const monthOptions = forecastMonths.filter(m=>{const y=labelToYM(m.label).year; return y>=2027;}).map(m=>m.label);
   const defaultFrom = monthOptions[0] ?? "Jan 2027";
 
-  const [ns,setNs] = useState<NewStoresDraft>({account:accountNames[0]??"",distributor:"UNFI",skus:"XD, PW, HM",stores:100,vel:2,weeks:4.345,fromLabel:defaultFrom});
-  const [vb,setVb] = useState<VelBumpDraft>({account:accountNames[0]??"",sku:"XD",pct:10,fromLabel:defaultFrom});
+  const [ns,setNs] = useState<NewStoresDraft>({account:accountNames[0]??"",skus:"XD, PW, HM",addStores:100,storesPerMonth:0,fromLabel:defaultFrom});
+  const [vb,setVb] = useState<VelBumpDraft>({account:accountNames[0]??"",skus:"XD",pct:10,pctPerMonth:0,fromLabel:defaultFrom});
+  const [aiText,setAiText] = useState("");
+  const [aiLoading,setAiLoading] = useState(false);
 
   const inp="rounded-lg border border-border bg-background px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-primary/30";
 
@@ -643,18 +647,28 @@ function SimuladorTab({plays,setPlays,accountNames,forecastMonths,onApplyNewStor
     const {year,month}=labelToYM(ns.fromLabel);
     const skus=ns.skus.split(",").map(s=>s.trim()).filter(Boolean);
     if(!ns.account||!skus.length){ window.alert("Completá cuenta y al menos un SKU."); return; }
+    const ramp = ns.storesPerMonth>0;
     const play:SimPlay={id:`ns-${Date.now()}`,kind:"new_stores",active:true,
-      label:`+${ns.stores} tiendas ${ns.account} (${skus.join("/")}) desde ${ns.fromLabel}`,
-      account:ns.account,distributor:ns.distributor as any,skus,stores:ns.stores,vel:ns.vel,weeks:ns.weeks,fromYear:year,fromMonth:month};
+      label:`${ramp?`+${ns.storesPerMonth}/mes hasta `:"+"}${ns.addStores} tiendas ${ns.account} (${skus.join("/")}) desde ${ns.fromLabel}`,
+      account:ns.account,skus,addStores:ns.addStores,storesPerMonth:ramp?ns.storesPerMonth:undefined,fromYear:year,fromMonth:month};
     setPlays([...plays,play]);
   }
   function addVelBump(){
     const {year,month}=labelToYM(vb.fromLabel);
-    if(!vb.account||!vb.sku){ window.alert("Completá cuenta y SKU."); return; }
+    const skus=vb.skus.split(",").map(s=>s.trim()).filter(Boolean);
+    if(!vb.account||!skus.length){ window.alert("Completá cuenta y SKU."); return; }
+    const ramp = vb.pctPerMonth>0;
     const play:SimPlay={id:`vb-${Date.now()}`,kind:"vel_bump",active:true,
-      label:`${vb.pct>0?"+":""}${vb.pct}% velocity ${vb.sku} en ${vb.account} desde ${vb.fromLabel}`,
-      account:vb.account,sku:vb.sku,pct:vb.pct,fromYear:year,fromMonth:month};
+      label:`${ramp?`+${vb.pctPerMonth}%/mes${vb.pct>0?` hasta ${vb.pct}%`:""}`:`${vb.pct>0?"+":""}${vb.pct}%`} velocity ${skus.join("/")} en ${vb.account} desde ${vb.fromLabel}`,
+      account:vb.account,skus,pct:vb.pct,pctPerMonth:ramp?vb.pctPerMonth:undefined,fromYear:year,fromMonth:month};
     setPlays([...plays,play]);
+  }
+  async function runAi(){
+    if(!aiText.trim()) return;
+    setAiLoading(true);
+    try{ await onAiParse(aiText.trim()); setAiText(""); }
+    catch(e){ console.error(e); window.alert("No pude interpretar eso. Probá reformularlo más simple."); }
+    setAiLoading(false);
   }
   function toggle(id:string){ setPlays(plays.map(p=>p.id===id?{...p,active:!p.active}:p)); }
   function remove(id:string){ setPlays(plays.filter(p=>p.id!==id)); }
@@ -687,37 +701,52 @@ function SimuladorTab({plays,setPlays,accountNames,forecastMonths,onApplyNewStor
         </div>
       )}
 
+      {/* Jugada con IA — lenguaje natural */}
+      <div className="rounded-2xl border-2 border-dashed border-violet-300 bg-violet-50/40 shadow-sm overflow-hidden">
+        <div className="px-5 py-3 border-b border-violet-200 bg-violet-50">
+          <p className="text-sm font-bold" style={{color:"#6D28D9"}}>✨ Simulador con IA — escribilo en tus palabras</p>
+          <p className="text-xs text-violet-700">Contame la jugada en lenguaje natural y la armo sola. Ej: "en Sprouts, XD y PW, desde marzo 2027 subir 10 tiendas por mes hasta llegar a 100" · "subir velocity de XD y WD 4% por mes en RF Ind desde Jun 2027".</p>
+        </div>
+        <div className="p-4 flex gap-2 items-start">
+          <textarea value={aiText} onChange={e=>setAiText(e.target.value)} rows={2}
+            placeholder="Describí la jugada…"
+            className="flex-1 rounded-lg border border-violet-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-violet-400 resize-none"/>
+          <button onClick={runAi} disabled={aiLoading}
+            className="rounded-full px-4 py-2 text-xs font-semibold text-white disabled:opacity-50 self-stretch" style={{backgroundColor:"#7C3AED"}}>
+            {aiLoading?"Pensando…":"✨ Armar jugada"}
+          </button>
+        </div>
+      </div>
+
       {/* Jugada 1 — abrir tiendas nuevas */}
       <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
         <div className="px-5 py-3 border-b border-border bg-muted/30">
           <p className="text-sm font-bold" style={{color:"#1C2340"}}>Abrir tiendas nuevas</p>
-          <p className="text-xs text-muted-foreground">Suma unidades desde el mes elegido en adelante. Ej: 100 tiendas de Whole Foods, 3 SKUs, velocity 2, desde Jul 2027.</p>
+          <p className="text-xs text-muted-foreground">Agrega tiendas a una cuenta/SKU desde el mes elegido. Usa la <strong>velocity que ese SKU ya tiene cada mes</strong> — solo cambia la cantidad de tiendas. Opcional: rampa de X tiendas/mes hasta un tope.</p>
         </div>
-        <div className="p-4 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 items-end">
+        <div className="p-4 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 items-end">
           <label className="text-xs">Cuenta<select value={ns.account} onChange={e=>setNs({...ns,account:e.target.value})} className={`${inp} w-full mt-1`}>{accountNames.map(a=><option key={a}>{a}</option>)}</select></label>
-          <label className="text-xs">Distribuidor<select value={ns.distributor} onChange={e=>setNs({...ns,distributor:e.target.value})} className={`${inp} w-full mt-1`}><option>UNFI</option><option>KEHE</option><option>Rainforest</option></select></label>
           <label className="text-xs">SKUs (coma)<input value={ns.skus} onChange={e=>setNs({...ns,skus:e.target.value})} className={`${inp} w-full mt-1`}/></label>
-          <label className="text-xs">Stores<input type="number" value={ns.stores} onChange={e=>setNs({...ns,stores:parseFloat(e.target.value)||0})} className={`${inp} w-full mt-1 font-mono`}/></label>
-          <label className="text-xs">Velocity<input type="number" step="0.1" value={ns.vel} onChange={e=>setNs({...ns,vel:parseFloat(e.target.value)||0})} className={`${inp} w-full mt-1 font-mono`}/></label>
+          <label className="text-xs">Tiendas (tope)<input type="number" value={ns.addStores} onChange={e=>setNs({...ns,addStores:parseFloat(e.target.value)||0})} className={`${inp} w-full mt-1 font-mono`}/></label>
+          <label className="text-xs">Tiendas/mes (rampa, 0=fijo)<input type="number" value={ns.storesPerMonth} onChange={e=>setNs({...ns,storesPerMonth:parseFloat(e.target.value)||0})} className={`${inp} w-full mt-1 font-mono`}/></label>
           <label className="text-xs">Desde<select value={ns.fromLabel} onChange={e=>setNs({...ns,fromLabel:e.target.value})} className={`${inp} w-full mt-1`}>{monthOptions.map(m=><option key={m}>{m}</option>)}</select></label>
           <button onClick={addNewStores} className="rounded-full px-4 py-2 text-xs font-semibold text-white" style={{backgroundColor:"#10B981"}}>+ Simular</button>
         </div>
       </div>
 
-      {/* Jugada 2 — subir velocity puntual */}
+      {/* Jugada 2 — subir velocity */}
       <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
         <div className="px-5 py-3 border-b border-border bg-muted/30">
-          <p className="text-sm font-bold" style={{color:"#1C2340"}}>Subir velocity puntual</p>
-          <p className="text-xs text-muted-foreground">Multiplica las unidades de una cuenta/SKU desde el mes elegido. Ej: +10% velocity de XD en Sprouts desde Jul 2027.</p>
+          <p className="text-sm font-bold" style={{color:"#1C2340"}}>Subir velocity</p>
+          <p className="text-xs text-muted-foreground">Multiplica las unidades de una cuenta/SKU desde el mes elegido. Opcional: +X%/mes acumulado hasta un tope.</p>
         </div>
-        <div className="p-4 grid grid-cols-2 md:grid-cols-4 gap-3 items-end">
+        <div className="p-4 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 items-end">
           <label className="text-xs">Cuenta<select value={vb.account} onChange={e=>setVb({...vb,account:e.target.value})} className={`${inp} w-full mt-1`}>{accountNames.map(a=><option key={a}>{a}</option>)}</select></label>
-          <label className="text-xs">SKU<select value={vb.sku} onChange={e=>setVb({...vb,sku:e.target.value})} className={`${inp} w-full mt-1`}>{[...EXTENDED_SKUS].map(s=><option key={s}>{s}</option>)}</select></label>
-          <label className="text-xs">% cambio<input type="number" value={vb.pct} onChange={e=>setVb({...vb,pct:parseFloat(e.target.value)||0})} className={`${inp} w-full mt-1 font-mono`}/></label>
-          <div className="flex gap-2 items-end">
-            <label className="text-xs flex-1">Desde<select value={vb.fromLabel} onChange={e=>setVb({...vb,fromLabel:e.target.value})} className={`${inp} w-full mt-1`}>{monthOptions.map(m=><option key={m}>{m}</option>)}</select></label>
-            <button onClick={addVelBump} className="rounded-full px-4 py-2 text-xs font-semibold text-white" style={{backgroundColor:"#10B981"}}>+ Simular</button>
-          </div>
+          <label className="text-xs">SKUs (coma)<input value={vb.skus} onChange={e=>setVb({...vb,skus:e.target.value})} className={`${inp} w-full mt-1`}/></label>
+          <label className="text-xs">% total (0=solo rampa)<input type="number" value={vb.pct} onChange={e=>setVb({...vb,pct:parseFloat(e.target.value)||0})} className={`${inp} w-full mt-1 font-mono`}/></label>
+          <label className="text-xs">%/mes (rampa, 0=fijo)<input type="number" value={vb.pctPerMonth} onChange={e=>setVb({...vb,pctPerMonth:parseFloat(e.target.value)||0})} className={`${inp} w-full mt-1 font-mono`}/></label>
+          <label className="text-xs">Desde<select value={vb.fromLabel} onChange={e=>setVb({...vb,fromLabel:e.target.value})} className={`${inp} w-full mt-1`}>{monthOptions.map(m=><option key={m}>{m}</option>)}</select></label>
+          <button onClick={addVelBump} className="rounded-full px-4 py-2 text-xs font-semibold text-white" style={{backgroundColor:"#10B981"}}>+ Simular</button>
         </div>
       </div>
 
@@ -1383,11 +1412,53 @@ function SalesPage() {
     if(play.kind!=="new_stores") return;
     try{
       const {supabase:sb}=await import("@/integrations/supabase/client");
-      const rows=playsToPromoRows([play]);
-      const created=await insertPromoRows(sb,rows);
-      setDbPromo(prev=>[...prev,...created]);
-      setSimPlays(prev=>prev.filter(p=>p.id!==play.id)); // ya es data real, sacamos el overlay
+      // The play scales existing rows; persist those changes as updates.
+      const applied=applySimPlays(dbPromo,[play]);
+      const baseById=new Map(dbPromo.map(r=>[r.id,r]));
+      const changed=applied.filter(r=>{const o=baseById.get(r.id);return o&&(o.total_units!==r.total_units||o.stores!==r.stores);});
+      for(const r of changed){
+        await updatePromoCalendarRow(sb,r.id,{stores:r.stores,total_units:r.total_units,reg_units:r.total_units});
+      }
+      setDbPromo(prev=>prev.map(r=>{const u=changed.find(c=>c.id===r.id);return u?u:r;}));
+      setSimPlays(prev=>prev.filter(p=>p.id!==play.id));
     }catch(e){ console.error(e); window.alert("No se pudo aplicar al Promo Calendar."); }
+  }
+  // IA: interpretar lenguaje natural → una o más jugadas del simulador.
+  async function aiParsePlay(text:string){
+    const skuList=["XD","PW","HM","WM","WD","Matcha","VS","CS","GR","GS"];
+    const monthLabels=FORECAST_MONTHS.filter(m=>m.year>=2027).map(m=>m.label);
+    const sys=`Sos un parser de jugadas de simulación de ventas. Convertí el pedido del usuario en JSON.
+Cuentas válidas: ${simAccountNames.join(", ")}.
+SKUs válidos: ${skuList.join(", ")}.
+Meses válidos (formato exacto): ${monthLabels.join(", ")}.
+Dos tipos de jugada:
+1. "new_stores": abrir tiendas. Campos: {kind:"new_stores", account, skus:[...], addStores (número tope de tiendas), storesPerMonth (rampa por mes, 0 si es fijo), fromLabel}.
+2. "vel_bump": subir velocity. Campos: {kind:"vel_bump", account, skus:[...], pct (% total tope, 0 si solo rampa), pctPerMonth (rampa %/mes, 0 si fijo), fromLabel}.
+Respondé SOLO con un array JSON de jugadas, sin texto ni markdown. Si algo no matchea exactamente una cuenta/sku/mes, elegí el más parecido de las listas.`;
+    const resp=await fetch("https://api.anthropic.com/v1/messages",{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1000,
+        messages:[{role:"user",content:`${sys}\n\nPedido: "${text}"`}]}),
+    });
+    const data=await resp.json();
+    const raw=(data.content??[]).filter((b:any)=>b.type==="text").map((b:any)=>b.text).join("").replace(/```json|```/g,"").trim();
+    const parsed=JSON.parse(raw);
+    const arr=Array.isArray(parsed)?parsed:[parsed];
+    const newPlays:SimPlay[]=arr.map((p:any,i:number)=>{
+      const ym=(FORECAST_MONTHS.find(m=>m.label===p.fromLabel))??FORECAST_MONTHS.find(m=>m.year>=2027)!;
+      const skus=(Array.isArray(p.skus)?p.skus:[p.skus]).filter(Boolean);
+      if(p.kind==="new_stores"){
+        const ramp=Number(p.storesPerMonth)>0;
+        return {id:`ai-${Date.now()}-${i}`,kind:"new_stores",active:true,
+          label:`${ramp?`+${p.storesPerMonth}/mes hasta `:"+"}${p.addStores} tiendas ${p.account} (${skus.join("/")}) desde ${ym.label}`,
+          account:p.account,skus,addStores:Number(p.addStores)||0,storesPerMonth:ramp?Number(p.storesPerMonth):undefined,fromYear:ym.year,fromMonth:ym.month} as SimPlay;
+      }
+      const ramp=Number(p.pctPerMonth)>0;
+      return {id:`ai-${Date.now()}-${i}`,kind:"vel_bump",active:true,
+        label:`${ramp?`+${p.pctPerMonth}%/mes${Number(p.pct)>0?` hasta ${p.pct}%`:""}`:`${Number(p.pct)>0?"+":""}${p.pct}%`} velocity ${skus.join("/")} en ${p.account} desde ${ym.label}`,
+        account:p.account,skus,pct:Number(p.pct)||0,pctPerMonth:ramp?Number(p.pctPerMonth):undefined,fromYear:ym.year,fromMonth:ym.month} as SimPlay;
+    });
+    setSimPlays(prev=>[...prev,...newPlays]);
   }
   const dbAgg = useMemo(()=>aggregatePromoCalendar(dbPromo,dbAccounts),[dbPromo,dbAccounts]);
   const dbSkuByMonth = useMemo(()=>dbSkuByMonthFromAgg(dbAgg),[dbAgg]);
@@ -1509,8 +1580,9 @@ function SalesPage() {
   const dbMergedForecast = useMemo(()=>mergeForecastWithDb(forecast,dbAgg,scenarioFactor),[forecast,dbAgg,scenarioFactor]);
   const dbMergedSkuTabForecast = useMemo(()=>mergeForecastWithDb(skuTabForecast,dbAgg,scenarioFactor),[skuTabForecast,dbAgg,scenarioFactor]);
   // Simulator-only forecasts (with overlay) for the embedded views inside the Simulador tab.
-  const simMergedForecast = useMemo(()=>mergeForecastWithDb(forecast,dbAggSim,scenarioFactor),[forecast,dbAggSim,scenarioFactor]);
-  const simMergedSkuForecast = useMemo(()=>mergeForecastWithDb(skuTabForecast,dbAggSim,scenarioFactor),[skuTabForecast,dbAggSim,scenarioFactor]);
+  const simMonthlyDelta = useMemo(()=>playsMonthlyCaseDelta(dbPromo,dbAccounts,simPlays),[dbPromo,dbAccounts,simPlays]);
+  const simMergedForecast = useMemo(()=>mergeForecastWithDbAndDelta(forecast,dbAggSim,dbAgg,simMonthlyDelta,scenarioFactor),[forecast,dbAggSim,dbAgg,simMonthlyDelta,scenarioFactor]);
+  const simMergedSkuForecast = useMemo(()=>mergeForecastWithDbAndDelta(skuTabForecast,dbAggSim,dbAgg,simMonthlyDelta,scenarioFactor),[skuTabForecast,dbAggSim,dbAgg,simMonthlyDelta,scenarioFactor]);
   const playImpacts = useMemo(()=>{
     const map=new Map<string,{cases:number;revenue:number}>();
     simPlays.forEach(p=>map.set(p.id,computePlayImpact(p,dbPromo,dbAccounts)));
@@ -1616,6 +1688,7 @@ function SalesPage() {
       {tab==="simulador"     && <SimuladorTab plays={simPlays} setPlays={setSimPlays}
                                   accountNames={simAccountNames} forecastMonths={FORECAST_MONTHS}
                                   onApplyNewStores={applyNewStoresPlay}
+                                  onAiParse={aiParsePlay}
                                   playImpacts={playImpacts} totalImpact={totalImpact}
                                   detailView={<DetalleTab forecast={simMergedForecast} reals={mergedReals} history={history} committedCount={committedCount} onRealUpdate={(l,v)=>setReals(r=>({...r,[l]:v}))}/>}
                                   skuView={<SKUTab forecast={simMergedSkuForecast} newSkus={skuTabNewSkus}
