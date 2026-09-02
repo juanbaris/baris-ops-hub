@@ -3,7 +3,8 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useInvoicedActuals } from "@/hooks/use-invoiced-actuals";
 import { supabase } from "@/integrations/supabase/client";
 import { useSalesForecast } from "@/hooks/use-sales-forecast";
-import { forecastFromState, committedForecastFromState, type Scenario } from "@/lib/sales-forecast";
+import { forecastFromState, type Scenario } from "@/lib/sales-forecast";
+import { fetchSalesAccounts, fetchPromoCalendar, aggregatePromoCalendar, type DbMonthAgg } from "@/lib/sales-database";
 import { RunwayTab } from "@/components/runway/runway-tab";
 import { parseAccountfullyPdf } from "@/lib/accountfully-parser";
 
@@ -109,21 +110,46 @@ function useFinanceRevenue() {
   }, [byLabel, effectiveForecast, isCommitted, scenario, loading]);
 }
 
-// ─── Finance-local scenario picker (Pessimistic/Normal/Optimistic) ────────────
-// This does NOT touch the shared Sales forecast state/localStorage — it's a
-// read-only "what if" lens purely for the Finance P&L, using the same levers
-// (velocity, retailers, seasonality, promo) the Sales team already configured.
+// ─── Promo Calendar + Accounts from Supabase (same DB Sales uses) ─────────────
+function useSalesDbAgg() {
+  const [agg, setAgg] = useState<Record<string, DbMonthAgg>>({});
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [accs, rows] = await Promise.all([fetchSalesAccounts(supabase), fetchPromoCalendar(supabase)]);
+        if (!cancelled) setAgg(aggregatePromoCalendar(rows, accs));
+      } catch (e) { console.error("Finance: Sales DB load error", e); }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  return agg;
+}
+
+// ─── Gross sales for the P&L = the SAME series Sales shows in Monthly Detail ───
+// Lever forecast MERGED with the Promo Calendar + Accounts DB, which overrides
+// every month it covers (2027-2028). scenarioFactor scales the DB months exactly
+// like Sales (Normal=1, Pessimistic=1-pct, Optimistic=1+pct; pct from Sales settings).
 function useFinanceScenarioForecast(scenarioOverride: Scenario) {
   const { state } = useSalesForecast();
+  const dbAgg = useSalesDbAgg();
   return useMemo(() => {
-    const s = { ...state, scenario: scenarioOverride };
-    // COMMITTED forecast = what Sales shows as the active production & finance forecast.
-    // Falls back to the active forecast only if nothing is committed.
-    const rows = committedForecastFromState(s) ?? forecastFromState(s);
+    const base = forecastFromState({ ...state, scenario: scenarioOverride });
+    let pct = 25;
+    try { const v = localStorage.getItem("baris.sales.scenarioPct"); if (v != null) pct = parseFloat(v) || 25; } catch { /* ignore */ }
+    const factor = scenarioOverride === "Pessimistic" ? 1 - pct / 100 : scenarioOverride === "Optimistic" ? 1 + pct / 100 : 1;
     const byMonthKey: Record<string, number> = {}; // "2026-8" / "2027-3" -> gross sales $ (not $K)
-    for (const r of rows) byMonthKey[`${r.year}-${r.month}`] = r.revenue;
+    // 1) Lever forecast fills every month (covers 2026 forecast months).
+    for (const r of base) byMonthKey[`${r.year}-${r.month}`] = r.revenue;
+    // 2) Promo Calendar + Accounts OVERRIDE every month they cover (2027-2028) — keyed by
+    //    year-month directly, so it always wins regardless of label formatting. This is the
+    //    exact value Sales shows in Monthly Detail / Sales P&L (Total Units × Delivered Cost).
+    for (const label in dbAgg) {
+      const a = dbAgg[label];
+      byMonthKey[`${a.year}-${a.month}`] = Math.round(a.revenue * factor);
+    }
     return byMonthKey;
-  }, [state, scenarioOverride]);
+  }, [state, scenarioOverride, dbAgg]);
 }
 
 // ─── July real Gross Sales from Fulfillment (Invoiced pipeline) ──────────────
@@ -717,9 +743,10 @@ export function PNLTab({ realMonths, actuals, actualOnly }: { realMonths: number
 
     if (row.kind === "pct") {
       if (row.id === "t-gp-pct") {
-        const ns = getValue(PL_ROWS.find(r => r.id === "t-income")!, idx) ?? 1;
+        // Gross Margin % over GROSS SALES (Total 4000), so it matches the %GS column.
+        const gross = getValue(PL_ROWS.find(r => r.id === "t-4000")!, idx) ?? 1;
         const gp = getValue(PL_ROWS.find(r => r.id === "t-gp")!, idx) ?? 0;
-        return ns !== 0 ? gp / ns : 0;
+        return gross !== 0 ? gp / gross : 0;
       }
       return null;
     }
