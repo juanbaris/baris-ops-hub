@@ -3,7 +3,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useInvoicedActuals } from "@/hooks/use-invoiced-actuals";
 import { supabase } from "@/integrations/supabase/client";
 import { useSalesForecast } from "@/hooks/use-sales-forecast";
-import { forecastFromState, type Scenario } from "@/lib/sales-forecast";
+import { forecastFromState, committedForecastFromState, type Scenario } from "@/lib/sales-forecast";
 import { RunwayTab } from "@/components/runway/runway-tab";
 import { parseAccountfullyPdf } from "@/lib/accountfully-parser";
 
@@ -116,8 +116,11 @@ function useFinanceRevenue() {
 function useFinanceScenarioForecast(scenarioOverride: Scenario) {
   const { state } = useSalesForecast();
   return useMemo(() => {
-    const rows = forecastFromState({ ...state, scenario: scenarioOverride });
-    const byMonthKey: Record<string, number> = {}; // "2026-8" -> gross sales $ (not $K)
+    const s = { ...state, scenario: scenarioOverride };
+    // COMMITTED forecast = what Sales shows as the active production & finance forecast.
+    // Falls back to the active forecast only if nothing is committed.
+    const rows = committedForecastFromState(s) ?? forecastFromState(s);
+    const byMonthKey: Record<string, number> = {}; // "2026-8" / "2027-3" -> gross sales $ (not $K)
     for (const r of rows) byMonthKey[`${r.year}-${r.month}`] = r.revenue;
     return byMonthKey;
   }, [state, scenarioOverride]);
@@ -1225,14 +1228,26 @@ type MonthFin = {
   hasPnl: boolean;
 };
 
+// Year-aware forecast inputs (shared by P&L, Balance, Cash Flow so all three agree).
+function cogsPerCaseFor(year: number, get: (k: any, d?: number) => number): number {
+  return year === 2026 ? get('cogs_per_unit', 22.27) : loadCogsPote(year) * 8;
+}
+function fixedCostsForIdx(idx: number): Record<string, number> {
+  const year = yearOf(idx);
+  if (year === 2026) return loadExpenseOverrides();
+  const mat = yearExpenseMatrix(year);
+  const m0 = monthOf(idx);
+  return Object.fromEntries(Object.keys(DEFAULT_EXPENSE_K).map(k => [k, (mat[k]?.[m0]) ?? 0]));
+}
+
 function buildFinanceForecast(
   actuals: Record<string, any>,
   fcGrossByMonth: Record<number, number>,
   get: (k: any, d?: number) => number,
   invAdjust?: Record<number, number>,
 ): MonthFin[] {
-  const bsAt = (i: number) => actuals[PERIODS[i]]?.bs_detail as Record<string,number> | undefined;
-  const pnlAt = (i: number) => actuals[PERIODS[i]]?.pnl_detail as Record<string,number> | undefined;
+  const bsAt = (i: number) => actuals[PERIODS36[i]]?.bs_detail as Record<string,number> | undefined;
+  const pnlAt = (i: number) => actuals[PERIODS36[i]]?.pnl_detail as Record<string,number> | undefined;
   const bankKeys = ['bofa_x6854','citi_bank','mercury_checking','mercury_treasury'];
   const ccKeys = ['boa_3724','boa_7830','boa_8781','citi_credit','mercury_credit'];
 
@@ -1242,8 +1257,8 @@ function buildFinanceForecast(
   const mixRF = get('sales_mix_rainforest', 22.3) / 100;
   const cogsPerCaseK = get('cogs_per_unit', 22.27) / 1000;
 
-  const latestBsIdx = (() => { let m=-1; for (let i=0;i<12;i++) if (bsAt(i)) m=i; return m; })();
-  const latestPnlIdx = (() => { let m=-1; for (let i=0;i<12;i++) if (pnlAt(i)) m=i; return m; })();
+  const latestBsIdx = (() => { let m=-1; for (let i=0;i<36;i++) if (bsAt(i)) m=i; return m; })();
+  const latestPnlIdx = (() => { let m=-1; for (let i=0;i<36;i++) if (pnlAt(i)) m=i; return m; })();
 
   // Gross sales ($K) for a month: real P&L if present, else forecast.
   const grossK = (i: number) => {
@@ -1262,8 +1277,8 @@ function buildFinanceForecast(
     const gsK = fcGrossByMonth[i] ?? 0;
     const ctx: ForecastContext = {
       grossSales: gsK, unitsSold: gsK>0 ? Math.round(gsK*1000/37) : 0,
-      cogsPerUnit: get('cogs_per_unit',22.27), logisticsPct: get('logistics_pct_of_gross',9.8)/100,
-      deductionPct: dedPct, fixedCostsK: loadExpenseOverrides(),
+      cogsPerUnit: cogsPerCaseFor(yearOf(i), get), logisticsPct: get('logistics_pct_of_gross',9.8)/100,
+      deductionPct: dedPct, fixedCostsK: fixedCostsForIdx(i),
     };
     return computeMonthlyNetIncome(ctx);
   };
@@ -1318,7 +1333,7 @@ function buildFinanceForecast(
   };
 
   const out: MonthFin[] = [];
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < 36; i++) {
     const bs = bsAt(i); const pnl = pnlAt(i);
     const isBsReal = !!bs; const isPnlReal = !!pnl;
     const isForecast = !isBsReal && latestBsIdx >= 0 && i > latestBsIdx;
@@ -1342,7 +1357,7 @@ function buildFinanceForecast(
       ar = cur * mixKU + (cur + prev) * mixRF;
 
       // Inventory: use FIFO bridge from Operations if available
-      const periodKey = PERIODS[i]; // e.g. "2026-08"
+      const periodKey = PERIODS36[i]; // e.g. "2026-08" / "2027-05"
       const fifoMonth = fifoInv?.[periodKey];
       if (fifoMonth) {
         // FIFO bridge: real inventory from lot-level FIFO simulation ($K)
@@ -1405,7 +1420,7 @@ function buildFinanceForecast(
       grossSales = gsK;
       deductions = -gsK * dedPct;
       netSales = grossSales + deductions;
-      cogsTotal = -((unitsSold*get('cogs_per_unit',22.27))/1000) - gsK*get('logistics_pct_of_gross',9.8)/100;
+      cogsTotal = -((unitsSold*cogsPerCaseFor(yearOf(i),get))/1000) - gsK*get('logistics_pct_of_gross',9.8)/100;
       grossMargin = netSales + cogsTotal;
       ebitda = netIncomeFcst(i);           // NOI (other income ~0 in forecast)
       sgaTot = ebitda - grossMargin;
@@ -1610,11 +1625,12 @@ function CashFlowTab({ actuals, actualOnly, scenario, invAdjust }: { actuals: Re
   const { julyGrossSales } = useJulyRealFromFulfillment();
   const scenarioForecast = useFinanceScenarioForecast(scenario); // "2026-8" -> $ (not $K)
   const assumptions = useFinanceAssumptions();
+  const [yearFilter, setYearFilter] = useState<'all'|2026|2027|2028>('all');
 
-  const fcGrossByMonth: Record<number, number> = {};
-  for (let mo = 1; mo <= 12; mo++) {
-    const v = scenarioForecast[`2026-${mo}`];
-    if (v != null) fcGrossByMonth[mo-1] = v/1000;
+  const fcGrossByMonth: Record<number, number> = {}; // 0=Jan'26 … 35=Dec'28
+  for (let idx = 0; idx < 36; idx++) {
+    const v = scenarioForecast[`${yearOf(idx)}-${monthOf(idx)+1}`];
+    if (v != null) fcGrossByMonth[idx] = v/1000;
   }
   if (julyGrossSales != null) fcGrossByMonth[6] = julyGrossSales/1000;
 
@@ -1627,19 +1643,21 @@ function CashFlowTab({ actuals, actualOnly, scenario, invAdjust }: { actuals: Re
   const isReal = (i: number) => S[i].isBsReal || S[i].isPnlReal;
   const hasBS = (i: number) => S[i].ar != null && S[i].inventory != null && S[i].cash != null;
 
-  // In Actual mode show only real months; in Forecast mode show all 12.
-  const visIdx = MONTHS.map((_,i)=>i).filter(i => actualOnly ? isReal(i) : true);
+  // Continuous Jan'26→Dec'28, narrowed by the year filter; Actual mode keeps only real months.
+  const cfAllIdx = Array.from({length:36},(_,i)=>i);
+  const cfYearIdx = yearFilter==='all' ? cfAllIdx : cfAllIdx.filter(i=>yearOf(i)===yearFilter);
+  const visIdx = cfYearIdx.filter(i => actualOnly ? isReal(i) : true);
 
   // Real Other Income ($K) per month, from the P&L — this is "Interest / Other Income".
   const otherIncomeK = (i: number): number|null => {
-    const d = actuals[PERIODS[i]]?.pnl_detail;
+    const d = actuals[PERIODS36[i]]?.pnl_detail;
     if (d) return Number(d.other_income ?? 0)/1000;
     return S[i].hasPnl ? 0 : null; // forecast: assume ~0 unless modeled
   };
   // Capital Contributions ($K) for a month, from the Balance Sheet.
   const capitalK = (i: number): number|null => (S[i].isBsReal || S[i].isForecast) ? S[i].capital : null;
 
-  const N = 12;
+  const N = 36;
   const netIncome: (number|null)[] = [], dAR: (number|null)[] = [], dInv: (number|null)[] = [],
         dAP: (number|null)[] = [], cfo: (number|null)[] = [], cfi: (number|null)[] = [],
         dCapital: (number|null)[] = [], interest: (number|null)[] = [],
@@ -1679,7 +1697,7 @@ function CashFlowTab({ actuals, actualOnly, scenario, invAdjust }: { actuals: Re
   useChart(cashCanvas, () => ({
     type: 'line',
     data: {
-      labels: MONTHS,
+      labels: MONTHS36,
       datasets: [
         { label: 'Cash EOP (real)', data: cashEop.map((v,i)=>S[i].isBsReal?v:null), borderColor:'#1C2340', backgroundColor:'rgba(28,35,64,0.1)', tension:0.3, fill:true, pointRadius:5, spanGaps:true },
         { label: 'Cash EOP (forecast)', data: cashEop.map((v,i)=>{
@@ -1688,7 +1706,7 @@ function CashFlowTab({ actuals, actualOnly, scenario, invAdjust }: { actuals: Re
           }),
           borderColor:'#A3224A', backgroundColor:'rgba(163,34,74,0.08)', borderDash:[4,3], tension:0.3, fill:true, spanGaps:true,
           pointRadius: cashEop.map((_,i)=>S[i].isForecast?4:0) },
-        { label: 'Runway = 0', data: MONTHS.map(()=>0), borderColor:'#DC2626', borderDash:[5,5], pointRadius:0, fill:false }
+        { label: 'Runway = 0', data: MONTHS36.map(()=>0), borderColor:'#DC2626', borderDash:[5,5], pointRadius:0, fill:false }
       ]
     },
     options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{ position:'bottom', labels:{ boxWidth:12, font:{ size:11 } } } }, scales:{ y:{ ticks:{ callback:(v:number)=>'$'+v+'K' } } } }
@@ -1717,6 +1735,18 @@ function CashFlowTab({ actuals, actualOnly, scenario, invAdjust }: { actuals: Re
         <span>· <strong>Cash EOP (Dec 26 forecast):</strong> {fmtK(decCash)}</span>
       </div>
 
+      <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
+        <div className="flex items-center gap-1">
+          <span className="text-[10px] uppercase tracking-wide">Año:</span>
+          {(['all', 2026, 2027, 2028] as const).map(y => (
+            <button key={String(y)} onClick={() => setYearFilter(y)}
+              className={`rounded-full border px-2 py-0.5 text-[11px] ${yearFilter === y ? "border-[#A3224A] bg-[#A3224A] text-white" : "border-border hover:bg-muted"}`}>
+              {y === 'all' ? 'Todos' : y}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
         <div className="text-sm font-semibold mb-3" style={{color:"#1C2340"}}>
           Cash trend month by month <span className="text-[10px] font-normal text-muted-foreground">derived from P&L (Net Income) + Balance Sheet (working-capital changes) · dashed/pink = forecast</span>
@@ -1730,8 +1760,8 @@ function CashFlowTab({ actuals, actualOnly, scenario, invAdjust }: { actuals: Re
             <tr className="border-b border-border bg-muted/50">
               <th className="text-left px-4 py-2.5 text-[10px] uppercase tracking-wide text-muted-foreground w-52">Line</th>
               {visIdx.map((i) => (
-                <th key={MONTHS[i]} className="text-right px-2 py-2.5 text-[10px] uppercase w-12"
-                  style={{color: isReal(i) ? "#1C2340" : "#C9A3B5"}}>{MONTHS[i]}</th>
+                <th key={i} className="text-right px-2 py-2.5 text-[10px] uppercase w-12"
+                  style={{color: isReal(i) ? "#1C2340" : "#C9A3B5"}}>{MONTHS36[i]}</th>
               ))}
               <th className="text-right px-2 py-2.5 text-[10px] uppercase text-muted-foreground w-14">{actualOnly ? "YTD" : "FY"}</th>
             </tr>
@@ -1852,6 +1882,7 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario, invAdjust = {},
   const { julyGrossSales } = useJulyRealFromFulfillment();
   const scenarioForecast = useFinanceScenarioForecast(scenario);
   const assumptions = useFinanceAssumptions();
+  const [yearFilter, setYearFilter] = useState<'all'|2026|2027|2028>('all');
 
   const setInvAdjust: React.Dispatch<React.SetStateAction<Record<number,number>>> = onInvAdjustChange ?? (() => {});
 
@@ -1866,8 +1897,8 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario, invAdjust = {},
     return withBs.length ? Math.max(...withBs) : -1;
   }, [bsByPeriod]);
 
-  const fcGrossByMonth: Record<number, number> = {}; // month index 0-11 -> $K, Gross Sales
-  for (let mo = 1; mo <= 12; mo++) { const v = scenarioForecast[`2026-${mo}`]; if (v != null) fcGrossByMonth[mo-1] = v/1000; }
+  const fcGrossByMonth: Record<number, number> = {}; // 0=Jan'26 … 35=Dec'28 -> $K, Gross Sales
+  for (let idx = 0; idx < 36; idx++) { const v = scenarioForecast[`${yearOf(idx)}-${monthOf(idx)+1}`]; if (v != null) fcGrossByMonth[idx] = v/1000; }
   if (julyGrossSales != null) fcGrossByMonth[6] = julyGrossSales/1000;
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1896,8 +1927,10 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario, invAdjust = {},
   const forecastNetIncEq = (idx: number) => S[idx].netIncEq ?? 0;
   const forecastEquityK = (idx: number) => S[idx].totalEquity ?? 0;
 
-  const isRealMonthFn = (idx: number) => !!bsByPeriod[PERIODS[idx]];
-  const visIdx = MONTHS.map((_,i)=>i).filter(i => actualOnly ? isRealMonthFn(i) : true);
+  const isRealMonthFn = (idx: number) => !!bsByPeriod[PERIODS36[idx]];
+  const bsAllIdx = Array.from({length:36},(_,i)=>i);
+  const bsYearIdx = yearFilter==='all' ? bsAllIdx : bsAllIdx.filter(i=>yearOf(i)===yearFilter);
+  const visIdx = bsYearIdx.filter(i => actualOnly ? isRealMonthFn(i) : true);
 
   const childMap = useMemo(() => {
     const map: Record<string, string[]> = {};
@@ -2030,6 +2063,15 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario, invAdjust = {},
       <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
         <button onClick={() => setCollapsed(new Set())} className="rounded-full border border-border px-2 py-0.5 hover:bg-muted">Expand all</button>
         <button onClick={() => setCollapsed(new Set(BS_ROWS.filter(r=>r.kind==="group").map(r=>r.id)))} className="rounded-full border border-border px-2 py-0.5 hover:bg-muted">Collapse all</button>
+        <div className="flex items-center gap-1">
+          <span className="text-[10px] uppercase tracking-wide">Año:</span>
+          {(['all', 2026, 2027, 2028] as const).map(y => (
+            <button key={String(y)} onClick={() => setYearFilter(y)}
+              className={`rounded-full border px-2 py-0.5 text-[11px] ${yearFilter === y ? "border-[#A3224A] bg-[#A3224A] text-white" : "border-border hover:bg-muted"}`}>
+              {y === 'all' ? 'Todos' : y}
+            </button>
+          ))}
+        </div>
         {Object.keys(invAdjust).length > 0 && (
           <button onClick={() => setInvAdjust({})} className="rounded-full border border-amber-300 bg-amber-50 text-amber-700 px-2 py-0.5 hover:bg-amber-100">↺ Reset inventory edits</button>
         )}
@@ -2046,9 +2088,9 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario, invAdjust = {},
             <tr className="bg-muted/50 border-b border-border">
               <th className="text-left px-4 py-2.5 font-semibold text-[10px] uppercase tracking-wide text-muted-foreground min-w-[240px]">Line</th>
               {visIdx.map((i) => (
-                <th key={MONTHS[i]} className="text-right px-2 py-2.5 text-[10px] uppercase tracking-wide w-12"
+                <th key={i} className="text-right px-2 py-2.5 text-[10px] uppercase tracking-wide w-12"
                   style={{color: isRealMonth(i) ? "#1C2340" : "#9CA3AF"}}>
-                  {MONTHS[i]}
+                  {MONTHS36[i]}
                   <div className="text-[8px]">{isRealMonth(i) ? "A" : "F"}</div>
                 </th>
               ))}
