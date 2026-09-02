@@ -626,6 +626,110 @@ function labelToYM(label:string){ // "Jul 2027" → {year, month}
   return { year:parseInt(yr), month:mi };
 }
 
+// ─── Parser de lenguaje natural para el simulador (sin API) ───────────────────
+function normTxt(s:string){ return s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,""); }
+const MONTH_WORDS: Record<string,number> = {
+  enero:1,febrero:2,marzo:3,abril:4,mayo:5,junio:6,julio:7,agosto:8,septiembre:9,setiembre:9,octubre:10,noviembre:11,diciembre:12,
+  january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12,
+  ene:1,feb:2,mar:3,abr:4,jun:6,jul:7,ago:8,sep:9,sept:9,oct:10,nov:11,dic:12,jan:1,apr:4,aug:8,dec:12,
+};
+function findMonthsIn(text:string){
+  const t=normTxt(text);
+  const res:{num:number;year:number;pos:number}[]=[];
+  for(const [name,num] of Object.entries(MONTH_WORDS)){
+    let idx=0;
+    while((idx=t.indexOf(name,idx))!==-1){
+      // avoid matching "mar" inside "marzo": require word boundary-ish
+      const before=idx>0?t[idx-1]:" ";
+      const after=t[idx+name.length]??" ";
+      const boundaryOk=/[^a-z]/.test(before)&&/[^a-z]/.test(after);
+      if(boundaryOk){
+        const tail=t.slice(idx,idx+name.length+8);
+        const ym=tail.match(/20(2[6-9]|3\d)/);
+        res.push({num,year:ym?parseInt(ym[0]):0,pos:idx});
+      }
+      idx+=name.length;
+    }
+  }
+  res.sort((a,b)=>a.pos-b.pos);
+  return res;
+}
+function matchAccountName(text:string, accounts:string[]){
+  const t=normTxt(text);
+  let best:string|null=null, bestScore=0;
+  for(const a of accounts){
+    const tokens=normTxt(a).split(/\s+/).filter(x=>x.length>=2);
+    let score=0;
+    for(const tok of tokens){
+      if(t.includes(tok)) score+=2;
+      else if(tok.length>=3 && t.includes(tok.slice(0,3))) score+=1;
+    }
+    if(t.includes("independ")&&tokens.includes("ind")) score+=2;
+    if(score>bestScore){ bestScore=score; best=a; }
+  }
+  return bestScore>=2?best:null;
+}
+function findSkusIn(text:string){
+  const t=text.toUpperCase();
+  if(/\bTODOS\b|\bALL\b/.test(t)) return ["XD","PW","HM","WM","WD","Matcha","VS","CS","GR","GS"];
+  const out:string[]=[];
+  for(const s of ["XD","PW","HM","WM","WD","MATCHA","VS","CS","GR","GS"]){
+    if(new RegExp("\\b"+s+"\\b").test(t)) out.push(s==="MATCHA"?"Matcha":s);
+  }
+  return out;
+}
+function parseNaturalPlay(text:string, accounts:string[]):SimPlay|null{
+  const t=normTxt(text);
+  const account=matchAccountName(text,accounts);
+  const skus=findSkusIn(text);
+  const months=findMonthsIn(text);
+  if(!account||!skus.length||!months.length) return null;
+
+  const from=months[0];
+  const fromYear=from.year||2027, fromMonth=from.num;
+  const to=months[1];
+  // "misma/igual velocity" es una aclaración, no una jugada de velocity.
+  const mentionsStores=/tiendas?|stores?/.test(t);
+  const wantsVelChange=/(sub|baj|aument|increment|reduc|\+|\-)\w*\s+(?:la\s+)?velocit/.test(t)
+    || /velocit\w*\s+(?:de\s+)?[a-z]/.test(t) && /%/.test(t);
+  const isVel = !mentionsStores && (wantsVelChange || /velocit/.test(t));
+
+  if(isVel){
+    const rampM=t.match(/(\d+(?:\.\d+)?)\s*%?\s*(?:por|\/)\s*mes/);
+    const pctPerMonth=rampM?parseFloat(rampM[1]):0;
+    let pct=0;
+    const capM=t.match(/hasta\s+(?:llegar\s+a\s+)?(\d+(?:\.\d+)?)\s*%/);
+    if(capM) pct=parseFloat(capM[1]);
+    else if(!pctPerMonth){ const single=t.match(/(\d+(?:\.\d+)?)\s*%/); if(single) pct=parseFloat(single[1]); }
+    const ramp=pctPerMonth>0;
+    return {id:`ai-${Date.now()}`,kind:"vel_bump",active:true,
+      label:`${ramp?`+${pctPerMonth}%/mes${pct>0?` hasta ${pct}%`:""}`:`+${pct}%`} velocity ${skus.join("/")} en ${account} desde ${MONTHS_SHORT[fromMonth-1]} ${fromYear}`,
+      account,skus,pct,pctPerMonth:ramp?pctPerMonth:undefined,fromYear,fromMonth};
+  }
+
+  // new_stores
+  const rampM=t.match(/(\d+)\s*(?:stores?|tiendas?)?\s*(?:por|\/)\s*mes/);
+  const storesPerMonth=rampM?parseInt(rampM[1]):0;
+  let addStores=0;
+  const capM=t.match(/hasta\s+(?:llegar\s+a\s+)?(?:las?\s+)?(\d{1,4})(?!\d)/);
+  if(capM && parseInt(capM[1])<=2000) addStores=parseInt(capM[1]);
+  if(!addStores){
+    if(storesPerMonth>0 && to && to.year){
+      const span=(to.year*12+to.num)-(fromYear*12+fromMonth)+1;
+      addStores=storesPerMonth*Math.max(1,span);
+    } else {
+      const anyN=t.match(/(\d{1,4})\s*(?:stores?|tiendas?)/);
+      addStores=anyN?parseInt(anyN[1]):(storesPerMonth||0);
+    }
+  }
+  if(!addStores && !storesPerMonth) return null;
+  const ramp=storesPerMonth>0;
+  return {id:`ai-${Date.now()}`,kind:"new_stores",active:true,
+    label:`${ramp?`+${storesPerMonth}/mes hasta `:"+"}${addStores} tiendas ${account} (${skus.join("/")}) desde ${MONTHS_SHORT[fromMonth-1]} ${fromYear}`,
+    account,skus,addStores,storesPerMonth:ramp?storesPerMonth:undefined,fromYear,fromMonth};
+}
+
+
 function SimuladorTab({plays,setPlays,accountNames,forecastMonths,onApplyNewStores,playImpacts,totalImpact,onAiParse,detailView,skuView}:{
   plays:SimPlay[]; setPlays:(p:SimPlay[])=>void; accountNames:string[]; forecastMonths:{label:string}[];
   onApplyNewStores:(p:SimPlay)=>void;
@@ -704,8 +808,8 @@ function SimuladorTab({plays,setPlays,accountNames,forecastMonths,onApplyNewStor
       {/* Jugada con IA — lenguaje natural */}
       <div className="rounded-2xl border-2 border-dashed border-violet-300 bg-violet-50/40 shadow-sm overflow-hidden">
         <div className="px-5 py-3 border-b border-violet-200 bg-violet-50">
-          <p className="text-sm font-bold" style={{color:"#6D28D9"}}>✨ Simulador con IA — escribilo en tus palabras</p>
-          <p className="text-xs text-violet-700">Contame la jugada en lenguaje natural y la armo sola. Ej: "en Sprouts, XD y PW, desde marzo 2027 subir 10 tiendas por mes hasta llegar a 100" · "subir velocity de XD y WD 4% por mes en RF Ind desde Jun 2027".</p>
+          <p className="text-sm font-bold" style={{color:"#6D28D9"}}>✨ Escribilo en tus palabras</p>
+          <p className="text-xs text-violet-700">Contame la jugada en lenguaje natural (español o inglés) y la armo sola. Ej: "en RF Ind, XD y PW, desde mayo 2027 subir 10 tiendas por mes hasta diciembre 2027" · "subir velocity de XD y WD 4% por mes en Sprouts desde junio 2027".</p>
         </div>
         <div className="p-4 flex gap-2 items-start">
           <textarea value={aiText} onChange={e=>setAiText(e.target.value)} rows={2}
@@ -1423,42 +1527,12 @@ function SalesPage() {
       setSimPlays(prev=>prev.filter(p=>p.id!==play.id));
     }catch(e){ console.error(e); window.alert("No se pudo aplicar al Promo Calendar."); }
   }
-  // IA: interpretar lenguaje natural → una o más jugadas del simulador.
+  // Lenguaje natural → jugadas del simulador. Parser local (sin API): entiende
+  // español e inglés, cuentas/SKUs/meses reales, rampas y topes.
   async function aiParsePlay(text:string){
-    const skuList=["XD","PW","HM","WM","WD","Matcha","VS","CS","GR","GS"];
-    const monthLabels=FORECAST_MONTHS.filter(m=>m.year>=2027).map(m=>m.label);
-    const sys=`Sos un parser de jugadas de simulación de ventas. Convertí el pedido del usuario en JSON.
-Cuentas válidas: ${simAccountNames.join(", ")}.
-SKUs válidos: ${skuList.join(", ")}.
-Meses válidos (formato exacto): ${monthLabels.join(", ")}.
-Dos tipos de jugada:
-1. "new_stores": abrir tiendas. Campos: {kind:"new_stores", account, skus:[...], addStores (número tope de tiendas), storesPerMonth (rampa por mes, 0 si es fijo), fromLabel}.
-2. "vel_bump": subir velocity. Campos: {kind:"vel_bump", account, skus:[...], pct (% total tope, 0 si solo rampa), pctPerMonth (rampa %/mes, 0 si fijo), fromLabel}.
-Respondé SOLO con un array JSON de jugadas, sin texto ni markdown. Si algo no matchea exactamente una cuenta/sku/mes, elegí el más parecido de las listas.`;
-    const resp=await fetch("https://api.anthropic.com/v1/messages",{
-      method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1000,
-        messages:[{role:"user",content:`${sys}\n\nPedido: "${text}"`}]}),
-    });
-    const data=await resp.json();
-    const raw=(data.content??[]).filter((b:any)=>b.type==="text").map((b:any)=>b.text).join("").replace(/```json|```/g,"").trim();
-    const parsed=JSON.parse(raw);
-    const arr=Array.isArray(parsed)?parsed:[parsed];
-    const newPlays:SimPlay[]=arr.map((p:any,i:number)=>{
-      const ym=(FORECAST_MONTHS.find(m=>m.label===p.fromLabel))??FORECAST_MONTHS.find(m=>m.year>=2027)!;
-      const skus=(Array.isArray(p.skus)?p.skus:[p.skus]).filter(Boolean);
-      if(p.kind==="new_stores"){
-        const ramp=Number(p.storesPerMonth)>0;
-        return {id:`ai-${Date.now()}-${i}`,kind:"new_stores",active:true,
-          label:`${ramp?`+${p.storesPerMonth}/mes hasta `:"+"}${p.addStores} tiendas ${p.account} (${skus.join("/")}) desde ${ym.label}`,
-          account:p.account,skus,addStores:Number(p.addStores)||0,storesPerMonth:ramp?Number(p.storesPerMonth):undefined,fromYear:ym.year,fromMonth:ym.month} as SimPlay;
-      }
-      const ramp=Number(p.pctPerMonth)>0;
-      return {id:`ai-${Date.now()}-${i}`,kind:"vel_bump",active:true,
-        label:`${ramp?`+${p.pctPerMonth}%/mes${Number(p.pct)>0?` hasta ${p.pct}%`:""}`:`${Number(p.pct)>0?"+":""}${p.pct}%`} velocity ${skus.join("/")} en ${p.account} desde ${ym.label}`,
-        account:p.account,skus,pct:Number(p.pct)||0,pctPerMonth:ramp?Number(p.pctPerMonth):undefined,fromYear:ym.year,fromMonth:ym.month} as SimPlay;
-    });
-    setSimPlays(prev=>[...prev,...newPlays]);
+    const play=parseNaturalPlay(text,simAccountNames);
+    if(!play) throw new Error("no parse");
+    setSimPlays(prev=>[...prev,play]);
   }
   const dbAgg = useMemo(()=>aggregatePromoCalendar(dbPromo,dbAccounts),[dbPromo,dbAccounts]);
   const dbSkuByMonth = useMemo(()=>dbSkuByMonthFromAgg(dbAgg),[dbAgg]);
