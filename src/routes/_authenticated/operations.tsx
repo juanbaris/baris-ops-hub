@@ -2407,9 +2407,11 @@ const RAW_MATS = [
   "Choc White (Corinthian)","Cocoa Butter","Hazelnut Butter","Pistachio Paste",
   "Matcha Powder","Spirulina","Sea Salt","Soy Lecithin",
 ];
+// Only SKUs with confirmed packaging get Cup/Lid entries
+const PACK_SKUS = PROC_SKUS.filter(s => !["GR","GS"].includes(s));
 const PACK_MATS = [
-  ...PROC_SKUS.map(s=>`Cup - ${PROC_SKU_LABEL[s]}`),
-  ...PROC_SKUS.map(s=>`Lid - ${PROC_SKU_LABEL[s]}`),
+  ...PACK_SKUS.map(s=>`Cup - ${PROC_SKU_LABEL[s]}`),
+  ...PACK_SKUS.map(s=>`Lid - ${PROC_SKU_LABEL[s]}`),
   "Sealers (Momar)","Master Cases (8u)",
 ];
 const ALL_INGS = [...RAW_MATS, ...PACK_MATS];
@@ -2429,10 +2431,16 @@ const BOM_QTY: Record<string, Record<string, number>> = (()=>{
     // "Upload new BOM for everyone" once the real recipe is ready).
     VS: {}, CS: {}, GR: {}, GS: {},
   };
-  for (const s of PROC_SKUS) {
+  for (const s of PACK_SKUS) {
     b[s] = b[s] || {};
     b[s][`Cup - ${PROC_SKU_LABEL[s]}`] = 8;
     b[s][`Lid - ${PROC_SKU_LABEL[s]}`] = 8;
+    b[s]["Sealers (Momar)"] = 8;
+    b[s]["Master Cases (8u)"] = 1;
+  }
+  // GR/GS get master cases + sealers but no cups/lids yet
+  for (const s of PROC_SKUS.filter(x => !PACK_SKUS.includes(x))) {
+    b[s] = b[s] || {};
     b[s]["Sealers (Momar)"] = 8;
     b[s]["Master Cases (8u)"] = 1;
   }
@@ -2452,7 +2460,7 @@ const DEFAULT_LEAD_MAT: Record<string,number> = (()=>{
   const o:Record<string,number>={};
   for (const m of RAW_MATS) o[m] = m==="IQF Raspberries" ? 12
     : ["Choc Extra Dark (Revere 70%)","Choc Dark (Duluth)","Choc Milk (Valcour)","Choc White (Corinthian)"].includes(m) ? 10 : 6;
-  for (const s of PROC_SKUS){ o[`Cup - ${PROC_SKU_LABEL[s]}`]=12; o[`Lid - ${PROC_SKU_LABEL[s]}`]=12; }
+  for (const s of PACK_SKUS){ o[`Cup - ${PROC_SKU_LABEL[s]}`]=12; o[`Lid - ${PROC_SKU_LABEL[s]}`]=12; }
   o["Sealers (Momar)"]=6; o["Master Cases (8u)"]=6;
   return o;
 })();
@@ -2464,7 +2472,7 @@ const RAW_PRICES: Record<string,number> = {
 };
 const DEFAULT_ING_PRICES: Record<string,number> = (()=>{
   const o:Record<string,number>={...RAW_PRICES};
-  for (const s of PROC_SKUS){ o[`Cup - ${PROC_SKU_LABEL[s]}`]=0.095; o[`Lid - ${PROC_SKU_LABEL[s]}`]=0.092; }
+  for (const s of PACK_SKUS){ o[`Cup - ${PROC_SKU_LABEL[s]}`]=0.095; o[`Lid - ${PROC_SKU_LABEL[s]}`]=0.092; }
   o["Sealers (Momar)"]=0.030; o["Master Cases (8u)"]=0.36;
   return o;
 })();
@@ -3185,7 +3193,20 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     const hardcoded = new Set(ALL_INGS);
     return dbMaterials.filter(m => m.active && !hardcoded.has(m.material)).map(m => m.material);
   }, [dbMaterials]);
-  const allMaterialsList = useMemo(() => [...RAW_MATS, ...extraMaterials, ...PACK_MATS], [extraMaterials]);
+  // Hidden materials — persisted so deletes survive reload
+  const [hiddenMaterials, setHiddenMaterials] = useState<Set<string>>(() => {
+    try { const v = window.localStorage.getItem("baris.ops.hiddenMats"); if (v) return new Set(JSON.parse(v)); } catch {}
+    return new Set();
+  });
+  // Live material lists used by ALL tabs
+  const rawMatsLive = useMemo(() =>
+    [...RAW_MATS, ...extraMaterials].filter(m => !hiddenMaterials.has(m)),
+    [extraMaterials, hiddenMaterials]);
+  const packMatsLive = useMemo(() =>
+    PACK_MATS.filter(m => !hiddenMaterials.has(m)),
+    [hiddenMaterials]);
+  const allMaterialsList = useMemo(() => [...rawMatsLive, ...packMatsLive], [rawMatsLive, packMatsLive]);
+  const isRawMatLive = (m: string) => rawMatsLive.includes(m);
 
   const [matScrap, setMatScrap] = useState<Record<string,number>>(() => ({...DEFAULT_SCRAP}));
   const [matOverfill, setMatOverfill] = useState<Record<string,number>>(() => ({...DEFAULT_OVERFILL}));
@@ -3218,19 +3239,25 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   // Add new material
   const [showAddMat, setShowAddMat] = useState(false);
   const [newMatName, setNewMatName] = useState("");
+  const [newMatUom, setNewMatUom] = useState("lbs");
+  const [newMatPackSize, setNewMatPackSize] = useState("");
   async function addNewMaterial() {
     const name = newMatName.trim();
     if (!name) return;
     if (allMaterialsList.includes(name)) { toast.error("Material already exists"); return; }
     const nextOrder = dbMaterials.length > 0 ? Math.max(...dbMaterials.map(m => m.sort_order)) + 1 : 100;
+    const uom = newMatUom || "lbs";
+    const packSize = parseFloat(newMatPackSize) || 0;
     const { error } = await supabase.from("ops_raw_materials" as any).insert({
-      material: name, unit: "lbs", scrap_pct: 0, overfill_pct: 0,
+      material: name, unit: uom, scrap_pct: 0, overfill_pct: 0,
       lead_time_weeks: 4, payment_terms: "lead", default_price: 0, active: true, sort_order: nextOrder,
     });
     if (error) { toast.error("Failed to add material: " + error.message); return; }
-    setDbMaterials(prev => [...prev, { material: name, scrap_pct: 0, overfill_pct: 0, lead_time_weeks: 4, payment_terms: "lead", default_price: 0, unit: "lbs", active: true, sort_order: nextOrder }]);
-    setNewMatName(""); setShowAddMat(false);
-    toast.success(`✅ "${name}" added to materials`);
+    setDbMaterials(prev => [...prev, { material: name, scrap_pct: 0, overfill_pct: 0, lead_time_weeks: 4, payment_terms: "lead", default_price: 0, unit: uom, active: true, sort_order: nextOrder }]);
+    // Set pack size in ING_PACK_SIZES for this session
+    ING_PACK_SIZES[name] = packSize;
+    setNewMatName(""); setNewMatUom("lbs"); setNewMatPackSize(""); setShowAddMat(false);
+    toast.success(`✅ "${name}" added`);
   }
 
   // Rename material
@@ -3280,13 +3307,27 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   }
 
   async function deleteMaterial(mat: string) {
-    if (!confirm(`Delete "${mat}"? This removes it from Raw Materials, BOM, and any Forecast POs referencing it.`)) return;
+    if (!confirm(`Delete "${mat}"? This removes it from Raw Materials, BOM, and all tabs.`)) return;
     await supabase.from("ops_raw_materials" as any).delete().eq("material", mat);
     await supabase.from("ops_bom" as any).delete().eq("material", mat);
-    // Don't delete forecast POs — just warn
     const affectedPOs = ipForecastPOs.filter(p => p.material === mat);
     if (affectedPOs.length > 0) toast("⚠️ " + affectedPOs.length + " Forecast PO(s) still reference this material");
     setDbMaterials(prev => prev.filter(m => m.material !== mat));
+    setHiddenMaterials(prev => {
+      const next = new Set([...prev, mat]);
+      try { window.localStorage.setItem("baris.ops.hiddenMats", JSON.stringify([...next])); } catch {}
+      return next;
+    });
+    setBomQty(prev => {
+      const out = { ...prev };
+      for (const sku of Object.keys(out)) delete out[sku][mat];
+      return out;
+    });
+    setIngPrices(prev => { const n = { ...prev }; delete n[mat]; return n; });
+    setMatScrap(prev => { const n = { ...prev }; delete n[mat]; return n; });
+    setMatOverfill(prev => { const n = { ...prev }; delete n[mat]; return n; });
+    setLeadTimes(prev => { const n = { ...prev }; delete n[mat]; return n; });
+    setPayTerms(prev => { const n = { ...prev }; delete n[mat]; return n; });
     toast.success(`🗑️ "${mat}" deleted`);
   }
   const WIP_KEY="baris.ops.wip.v1";
@@ -3338,7 +3379,14 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
           }
         }
         const hasDraft = window.localStorage.getItem("baris.ops.prodPlanDraft") === "true";
-        if (hasDraft) {
+        const serverTs = data?.published_at ? new Date(data.published_at).getTime() : 0;
+        const localTs = parseInt(window.localStorage.getItem("baris.ops.prodPlanVersion") ?? "0") || 0;
+        // If server is newer than local draft, discard draft
+        if (hasDraft && serverTs > localTs) {
+          try { window.localStorage.removeItem("baris.ops.prodPlanDraft"); window.localStorage.removeItem(MANUAL_PROD_KEY);
+            window.localStorage.setItem("baris.ops.prodPlanVersion", String(serverTs)); } catch {}
+        }
+        if (hasDraft && serverTs <= localTs) {
           try {
             const raw = window.localStorage.getItem(MANUAL_PROD_KEY);
             if (raw) {
@@ -3367,17 +3415,18 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   }, []);
 
   async function publishProdPlan() {
+    const version = Date.now();
     const { error } = await supabase.from("ops_published" as any).upsert({
       key: "production_plan", value: manualProd, published_at: new Date().toISOString(),
     });
     if (error) { toast.error("Failed to publish plan: " + error.message); return; }
-    // Clear draft flag — next load (any tab/user) will use Supabase
     try {
+      window.localStorage.setItem("baris.ops.prodPlanVersion", String(version));
       window.localStorage.removeItem("baris.ops.prodPlanDraft");
       window.localStorage.removeItem(MANUAL_PROD_KEY);
     } catch {}
     setProdPlanDirty(false);
-    toast.success("✅ Production plan published for all users");
+    toast.success("✅ Production plan published — other users will see it on next reload");
   }
   async function publishProdCosts() {
     const { error } = await supabase.from("ops_published" as any).upsert({
@@ -3406,7 +3455,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   }, []);
 
   async function addIpForecastPO() {
-    const firstRawMat = RAW_MATS[0];
+    const firstRawMat = rawMatsLive[0] ?? RAW_MATS[0];
     const lt = leadTimes[firstRawMat] ?? 4;
     const now = new Date(); now.setDate(1);
     const buyKey = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`;
@@ -3437,7 +3486,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     if (!confirmingPO) return;
     const po = confirmingPO;
     const ipMat = PROC_TO_IP_MAT[po.material] ?? po.material;
-    const isRaw = RAW_MATS.includes(po.material);
+    const isRaw = isRawMatLive(po.material);
     const cpu = po.qty > 0 ? (po.matCost + po.freight) / po.qty : 0;
     const estRecv = po.mRecv ? `${po.mRecv}-01` : null;
     const estPay = po.mPay ? `${po.mPay}-01` : null;
@@ -4105,14 +4154,14 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
               </thead>
               <tbody>
                 {allMaterialsList.filter(mat=>dynamicProcSkus.some(sku=>(bomQty[sku]?.[mat]??0)>0) || extraMaterials.includes(mat)).map(mat=>{
-                  const raw=isRawMat(mat) || extraMaterials.includes(mat);
+                  const raw=isRawMatLive(mat);
                   return (
                     <tr key={mat} className="border-t border-border/60 hover:bg-muted/20">
                       <td className="px-4 py-1.5 font-medium sticky left-0 bg-card">{mat}</td>
                       <td className="px-2 py-1.5 text-center text-[10px] text-muted-foreground">{raw?"lbs":"units"}</td>
                       {dynamicProcSkus.map(sku=>{
                         const qty=bomQty[sku]?.[mat]??0;
-                        const rawTotal=[...RAW_MATS,...extraMaterials].reduce((s,m)=>s+(bomQty[sku]?.[m]??0),0);
+                        const rawTotal=rawMatsLive.reduce((s,m)=>s+(bomQty[sku]?.[m]??0),0);
                         const pct = raw && rawTotal>0 ? (qty/rawTotal)*100 : 0;
                         if (bomView==="pct" && !raw) {
                           return <td key={sku} className="px-2 py-1 text-center text-muted-foreground">{qty>0?qty:"—"}</td>;
@@ -4138,7 +4187,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                   <tr className="border-t border-border bg-muted/10">
                     <td className="px-4 py-1.5 text-[10px] uppercase tracking-wide text-muted-foreground" colSpan={2}>Σ % (raw)</td>
                     {dynamicProcSkus.map(sku=>{
-                      const rawTotal=[...RAW_MATS,...extraMaterials].reduce((s,m)=>s+(bomQty[sku]?.[m]??0),0);
+                      const rawTotal=rawMatsLive.reduce((s,m)=>s+(bomQty[sku]?.[m]??0),0);
                       const sum=rawTotal>0?100:0;
                       return <td key={sku} className={`px-2 py-1.5 text-center font-mono text-[10px] ${sum>0?"text-emerald-600":"text-muted-foreground"}`}>{sum?sum.toFixed(0)+"%":"—"}</td>;
                     })}
@@ -4339,13 +4388,21 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
 
           {/* Add material form */}
           {showAddMat && (
-            <div className="rounded-xl border-2 border-emerald-300 bg-emerald-50 px-4 py-3 flex items-center gap-3">
+            <div className="rounded-xl border-2 border-emerald-300 bg-emerald-50 px-4 py-3 flex flex-wrap items-center gap-3">
               <span className="text-xs font-semibold text-emerald-800">New material:</span>
               <input type="text" value={newMatName} onChange={e => setNewMatName(e.target.value)}
-                placeholder="e.g. Choc White" className={`${inp} w-48`}
+                placeholder="e.g. Coconut Oil" className={`${inp} w-48`}
                 onKeyDown={e => { if (e.key === "Enter") addNewMaterial(); }} autoFocus />
+              <select value={newMatUom} onChange={e => setNewMatUom(e.target.value)} className={`${inp} w-20`}>
+                <option value="lbs">lbs</option><option value="units">units</option><option value="kg">kg</option><option value="gal">gal</option>
+              </select>
+              <div className="flex items-center gap-1">
+                <span className="text-[10px] text-emerald-700">Pack:</span>
+                <input type="number" min={0} step={1} value={newMatPackSize} onChange={e => setNewMatPackSize(e.target.value)}
+                  placeholder="0" className={`${inp} w-20 text-right`} />
+              </div>
               <button onClick={addNewMaterial} className="rounded bg-emerald-600 px-3 py-1 text-[10px] font-semibold text-white">Add</button>
-              <button onClick={() => { setShowAddMat(false); setNewMatName(""); }} className="rounded border border-border px-3 py-1 text-[10px] text-muted-foreground">Cancel</button>
+              <button onClick={() => { setShowAddMat(false); setNewMatName(""); setNewMatUom("lbs"); setNewMatPackSize(""); }} className="rounded border border-border px-3 py-1 text-[10px] text-muted-foreground">Cancel</button>
             </div>
           )}
 
@@ -4384,10 +4441,10 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                 {allMaterialsList.map(ing=>{
                   const inv=parseInt(ingInv[ing])||0;
                   const price=ingPrices[ing]??0;
-                  const raw=isRawMat(ing) || extraMaterials.includes(ing);
+                  const raw=isRawMatLive(ing);
                   const sc=matScrap[ing]??0, ov=matOverfill[ing]??0;
                   const factor=(1+sc/100)*(1+ov/100);
-                  const isExtra = extraMaterials.includes(ing);
+                  const isExtra = !RAW_MATS.includes(ing) && !PACK_MATS.includes(ing);
                   return (
                     <tr key={ing} className="border-t border-border/60 hover:bg-muted/20">
                       <td className="px-4 py-2 font-medium sticky left-0 bg-card">
@@ -4397,7 +4454,13 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                         {isExtra && <span className="ml-1 rounded px-1.5 py-0.5 text-[9px] font-semibold bg-emerald-100 text-emerald-700">NEW</span>}
                       </td>
                       <td className="px-3 py-2 text-center text-[10px] text-muted-foreground">{raw?"Raw":"Pack"}</td>
-                      <td className="px-3 py-2 text-center text-[10px] text-muted-foreground">{raw?"lbs":"units"}</td>
+                      <td className="px-3 py-2 text-center">
+                        <select value={dbMaterials.find(m=>m.material===ing)?.unit ?? (raw?"lbs":"units")}
+                          onChange={e=>{saveRawMatField(ing,"unit",e.target.value);setDbMaterials(prev=>prev.map(m=>m.material===ing?{...m,unit:e.target.value}:m));}}
+                          className={`${inp} text-[10px] w-16`}>
+                          <option value="lbs">lbs</option><option value="units">units</option><option value="kg">kg</option><option value="gal">gal</option>
+                        </select>
+                      </td>
                       <td className="px-3 py-2 text-center">
                         <input type="number" min={0} step={1} value={sc}
                           onChange={e=>setMatScrapAndSave(ing, parseFloat(e.target.value)||0)} className={`${inp} w-14 text-center`}/>
@@ -4419,7 +4482,12 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                           <option value="lead1m">30d after receipt</option>
                         </select>
                       </td>
-                      <td className="px-3 py-2 text-right font-mono text-muted-foreground">{(ING_PACK_SIZES[ing]??0).toLocaleString()}</td>
+                      <td className="px-3 py-2 text-right">
+                        <input type="number" min={0} step={1}
+                          value={dbMaterials.find(m=>m.material===ing)?.pack_size ?? ING_PACK_SIZES[ing] ?? 0}
+                          onChange={e=>{const v=parseFloat(e.target.value)||0;saveRawMatField(ing,"pack_size",v);setDbMaterials(prev=>prev.map(m=>m.material===ing?{...m,pack_size:v}:m));ING_PACK_SIZES[ing]=v;}}
+                          className={`${inp} w-20 text-right`}/>
+                      </td>
                       <td className="px-3 py-2 text-right">
                         <input type="number" step="0.001" value={price}
                           onChange={e=>handleIngPriceChange(ing, parseFloat(e.target.value)||0)} className={`${inp} w-20 text-right`}/>
@@ -4642,7 +4710,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                     </tr>
                   </thead>
                   <tbody>
-                    {RAW_MATS.filter(g => FR.some(r => (r.ipStock[g]?.qty ?? 0) > 0 || (r.ipReceived[g] ?? 0) > 0)).map(g => (
+                    {rawMatsLive.filter(g => FR.some(r => (r.ipStock[g]?.qty ?? 0) > 0 || (r.ipReceived[g] ?? 0) > 0)).map(g => (
                       <tr key={g} className="border-t border-border/60">
                         <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{g}</td>
                         {FR.map(r => {
@@ -4712,7 +4780,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
         }
         const scopeCases = scopeRange ? totalByMonth.slice(scopeRange[0], scopeRange[1]+1).reduce((a,b)=>a+b,0) : 0;
         // All raw materials to show (hardcoded + extras)
-        const rawMatsToShow = [...RAW_MATS, ...extraMaterials];
+        const rawMatsToShow = rawMatsLive;
 
         return (
         <div className="space-y-4">
@@ -4807,7 +4875,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                       <td className="px-3 py-1.5">
                         <select value={po.material} onChange={e => updateIpForecastPO(po.id, "material", e.target.value)}
                           className={`${inp} w-full`}>
-                          {[...RAW_MATS,...extraMaterials].map(m => <option key={m} value={m}>{m}</option>)}
+                          {rawMatsLive.map(m => <option key={m} value={m}>{m}</option>)}
                         </select>
                       </td>
                       <td className="px-3 py-1.5"><input type="number" value={po.qty || ""} onChange={e => updateIpForecastPO(po.id, "qty", Number(e.target.value) || 0)} className={`${inp} w-20 text-right`} placeholder="0" /></td>
@@ -4855,11 +4923,11 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                     <div className="flex flex-col gap-1">
                       <label className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Material</label>
                       <select value={confirmingPO.material} onChange={e => setConfirmingPO({...confirmingPO, material: e.target.value})} className={inp}>
-                        {[...RAW_MATS,...extraMaterials].map(m => <option key={m} value={m}>{m}</option>)}
+                        {rawMatsLive.map(m => <option key={m} value={m}>{m}</option>)}
                       </select>
                     </div>
                     <div className="flex flex-col gap-1">
-                      <label className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Quantity ({RAW_MATS.includes(confirmingPO.material) ? "lbs" : "units"})</label>
+                      <label className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Quantity ({isRawMatLive(confirmingPO.material) ? "lbs" : "units"})</label>
                       <input type="number" value={confirmingPO.qty || ""} onChange={e => setConfirmingPO({...confirmingPO, qty: Number(e.target.value)||0})} className={`${inp} text-right`} />
                     </div>
                     <div className="flex flex-col gap-1">
@@ -4891,7 +4959,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                   </div>
                   <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-2 text-xs text-emerald-800">
                     <strong>IP movement material name:</strong> {PROC_TO_IP_MAT[confirmingPO.material] ?? confirmingPO.material}<br/>
-                    <strong>Will create:</strong> In · Procurement · {confirmingPO.qty.toLocaleString()} {RAW_MATS.includes(confirmingPO.material) ? "lbs" : "units"} · ${(confirmingPO.matCost + confirmingPO.freight).toLocaleString()} total · Ordered (not received, not paid)
+                    <strong>Will create:</strong> In · Procurement · {confirmingPO.qty.toLocaleString()} {isRawMatLive(confirmingPO.material) ? "lbs" : "units"} · ${(confirmingPO.matCost + confirmingPO.freight).toLocaleString()} total · Ordered (not received, not paid)
                   </div>
                 </div>
                 <div className="px-5 py-3 border-t border-border flex justify-end gap-2">
@@ -4986,7 +5054,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                     </tr>
                   </thead>
                   <tbody>
-                    {RAW_MATS.filter(g => FR.some(r => (r.ipReceived[g] ?? 0) > 0 || (r.ipConsumed[g] ?? 0) > 0)).map(g => (
+                    {rawMatsLive.filter(g => FR.some(r => (r.ipReceived[g] ?? 0) > 0 || (r.ipConsumed[g] ?? 0) > 0)).map(g => (
                       <React.Fragment key={g}>
                         <tr className="border-t border-border/60">
                           <td className="px-4 py-1 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}} rowSpan={2}>{g}</td>
@@ -5021,7 +5089,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                   </tr>
                 </thead>
                 <tbody>
-                  {RAW_MATS.map(g => {
+                  {rawMatsLive.map(g => {
                     const lots = last?.ipLots[g] ?? [];
                     if (lots.length === 0) return null;
                     return lots.map((l, i) => (
