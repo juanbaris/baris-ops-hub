@@ -32,6 +32,7 @@ export type SalesAccount = {
   dist_allowance_pct: number | null;
   payment_terms_pct: number | null;
   fulfillment_cost: number | null;
+  cogs_per_unit: number | null;
 };
 
 export type PromoCalendarRow = {
@@ -238,6 +239,16 @@ export function aggregateAnnualByAccount(
     const rev = (r.total_units ?? 0) * cost;
     const key = `${r.year}|${r.account_name}`;
     out.set(key, (out.get(key) ?? 0) + rev);
+  }
+  return out;
+}
+
+// Annual unit totals per account per year. key = `${year}|${account_name}`.
+export function aggregateAnnualUnitsByAccount(rows: PromoCalendarRow[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const r of rows) {
+    const key = `${r.year}|${r.account_name}`;
+    out.set(key, (out.get(key) ?? 0) + (r.total_units ?? 0));
   }
   return out;
 }
