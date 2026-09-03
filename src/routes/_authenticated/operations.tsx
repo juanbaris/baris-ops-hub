@@ -3376,7 +3376,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     (async () => {
       try {
         let base = Object.fromEntries(SKUS.map(s=>[s, FORECAST_MONTHS_OPS.map(()=>0)]));
-        const { data } = await (supabase.from("ops_published" as any) as any).select("value").eq("key", "production_plan").maybeSingle();
+        const { data } = await (supabase.from("ops_published" as any) as any).select("value, published_at").eq("key", "production_plan").maybeSingle();
         if (data?.value && typeof data.value === "object" && Object.keys(data.value).length > 0) {
           const raw = data.value as Record<string, number[]>;
           // Migrate old full-name keys → short codes and pad arrays to current horizon length
