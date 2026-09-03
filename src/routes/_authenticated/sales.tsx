@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Fragment, useEffect, useRef, useState, useMemo, type ReactNode } from "react";
 import { useInvoicedActuals, type MonthActual } from "@/hooks/use-invoiced-actuals";
+import { useInvoicedBreakdown } from "@/hooks/use-invoiced-breakdown";
 import { supabase } from "@/integrations/supabase/client";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -1107,65 +1108,111 @@ function PromoCalendarTab({rows,accounts,byAccountMonth,loading,onUpdated,onInse
   );
 }
 
-// ─── Sales Breakdown Tab (por Retail / DC / SKU · units y facturación) ────────
-function SalesBreakdownTab({rows,accounts,assumptions,loading}:{
-  rows:PromoCalendarRow[];accounts:SalesAccount[];assumptions:Record<string,number>;loading:boolean;
+// ─── Sales Breakdown Tab (mes a mes · units/$ · forecast vs real) ─────────────
+const UNITS_PER_CASE_LOCAL = 8;
+function SalesBreakdownTab({rows,accounts,assumptions,actualBySku,actualByDist,loading}:{
+  rows:PromoCalendarRow[];accounts:SalesAccount[];assumptions:Record<string,number>;
+  actualBySku:Record<string,Record<string,number>>;actualByDist:Record<string,Record<string,number>>;loading:boolean;
 }) {
   const years = Array.from(new Set(rows.map(r=>r.year))).sort();
   const [year,setYear] = useState<number>(years[0]??2027);
-  const [pmode,setPmode] = useState<"year"|"quarter"|"month">("year");
-  const [q,setQ] = useState<number>(1);
-  const [month,setMonth] = useState<number>(1);
-  const [open,setOpen] = useState<Record<string,boolean>>({retail:true,dc:false,sku:false});
+  const [metric,setMetric] = useState<"units"|"value">("value");
+  const [gran,setGran] = useState<"month"|"quarter">("month");
+  const [open,setOpen] = useState<Record<string,boolean>>({retail:true,dc:true,sku:false});
 
-  const monthKeys = useMemo(()=>monthKeysForPeriod(pmode,year,q,month),[pmode,year,q,month]);
   const byRetail = useMemo(()=>breakdownByRetail(rows,accounts,assumptions),[rows,accounts,assumptions]);
   const byDC = useMemo(()=>breakdownByDistributor(rows,accounts,assumptions),[rows,accounts,assumptions]);
   const bySku = useMemo(()=>breakdownBySku(rows,accounts,assumptions),[rows,accounts,assumptions]);
 
-  const periodLabel = pmode==="year"?`${year}`:pmode==="quarter"?`Q${q} ${year}`:`${MONTHS_SHORT[month-1]} ${year}`;
-  const fmt=(v:number)=>`$${Math.round(v).toLocaleString()}`;
+  // Column set: 12 months or 4 quarters
+  const periods = gran==="month"
+    ? MONTHS_SHORT.map((m,i)=>({label:m,keys:[`${year}-${String(i+1).padStart(2,"0")}`]}))
+    : [1,2,3,4].map(q=>({label:`Q${q}`,keys:[0,1,2].map(o=>`${year}-${String((q-1)*3+o+1).padStart(2,"0")}`)}));
 
-  function Section({id,title,data,showUnits}:{id:string;title:string;data:BreakdownRow[];showUnits:boolean}){
+  const fmt=(v:number)=> metric==="value" ? `$${Math.round(v).toLocaleString()}` : Math.round(v).toLocaleString();
+  const cellVal=(row:BreakdownRow,keys:string[])=>{
+    const s=sumOverMonths(row,keys);
+    return metric==="value"?s.revenue:s.units;
+  };
+  // real (pipeline) lookups — cases. For "value" we approximate cases→$ via delivered cost of that DC.
+  const distCost=(d:string)=>deliveredCostOf(assumptions,d);
+  const realDistVal=(dist:string,keys:string[])=>{
+    const m=actualByDist[dist]??{};
+    const cases=keys.reduce((s,k)=>s+(m[k]??0),0);
+    return metric==="value"? cases*UNITS_PER_CASE_LOCAL*distCost(dist) : cases*UNITS_PER_CASE_LOCAL;
+  };
+  const realSkuVal=(sku:string,keys:string[])=>{
+    const m=actualBySku[sku]??{};
+    const cases=keys.reduce((s,k)=>s+(m[k]??0),0);
+    // SKU real in $ has no single DC price; use a blended avg delivered cost
+    const avg=(distCost("UNFI")+distCost("KEHE")+distCost("Rainforest"))/3;
+    return metric==="value"? cases*UNITS_PER_CASE_LOCAL*avg : cases*UNITS_PER_CASE_LOCAL;
+  };
+
+  function Section({id,title,data,compareReal}:{id:string;title:string;data:BreakdownRow[];compareReal:null|((key:string,keys:string[])=>number)}){
     const isOpen=open[id];
-    const rowsSummed = data.map(r=>({key:r.key,...sumOverMonths(r,monthKeys)})).filter(r=>r.units!==0||r.revenue!==0).sort((a,b)=>b.revenue-a.revenue);
-    const totU=rowsSummed.reduce((s,r)=>s+r.units,0);
-    const totR=rowsSummed.reduce((s,r)=>s+r.revenue,0);
+    const rowsSorted=[...data].sort((a,b)=>{
+      const ta=sumOverMonths(a,periods.flatMap(p=>p.keys)); const tb=sumOverMonths(b,periods.flatMap(p=>p.keys));
+      return (metric==="value"?tb.revenue-ta.revenue:tb.units-ta.units);
+    });
+    const grandByPeriod=periods.map(p=>rowsSorted.reduce((s,r)=>s+cellVal(r,p.keys),0));
+    const grandTotal=grandByPeriod.reduce((a,b)=>a+b,0);
+
     return (
       <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
         <button onClick={()=>setOpen(o=>({...o,[id]:!o[id]}))} className="w-full px-5 py-3 flex items-center gap-3 bg-muted/30 hover:bg-muted/50 text-left">
           <span className="text-xs text-muted-foreground transition-transform" style={{transform:isOpen?"rotate(90deg)":"none"}}>▶</span>
           <span className="font-bold text-sm" style={{color:"#1C2340"}}>{title}</span>
-          <span className="text-xs text-muted-foreground">{rowsSummed.length} filas · {periodLabel}</span>
-          <span className="ml-auto font-mono font-semibold text-sm" style={{color:"#A3224A"}}>{fmt(totR)}</span>
+          {compareReal && <span className="text-[10px] rounded-full bg-emerald-100 text-emerald-700 px-2 py-0.5 font-semibold">forecast vs real</span>}
+          <span className="ml-auto font-mono font-semibold text-sm" style={{color:"#A3224A"}}>{fmt(grandTotal)}</span>
         </button>
         {isOpen && (
           <div className="overflow-x-auto">
             <table className="w-full text-xs min-w-max">
               <thead>
-                <tr className="text-[10px] uppercase tracking-wide text-muted-foreground border-b border-border">
-                  <th className="px-4 py-2 text-left">{title.split(" ").pop()}</th>
-                  {showUnits && <th className="px-4 py-2 text-right">Units</th>}
-                  <th className="px-4 py-2 text-right">Facturación</th>
-                  <th className="px-4 py-2 text-right">% del total</th>
+                <tr className="text-[10px] uppercase tracking-wide text-muted-foreground border-b border-border bg-muted/20">
+                  <th className="px-3 py-2 text-left sticky left-0 bg-muted/20 z-10">{title.split(" ").pop()}</th>
+                  {periods.map(p=><th key={p.label} className="px-3 py-2 text-right">{p.label}</th>)}
+                  <th className="px-3 py-2 text-right font-bold border-l border-border">Total</th>
                 </tr>
               </thead>
               <tbody>
-                {rowsSummed.map(r=>(
-                  <tr key={r.key} className="border-t border-border/60 hover:bg-muted/20">
-                    <td className="px-4 py-1.5 font-semibold" style={{color:"#1C2340"}}>{r.key}</td>
-                    {showUnits && <td className="px-4 py-1.5 text-right font-mono">{r.units.toLocaleString()}</td>}
-                    <td className="px-4 py-1.5 text-right font-mono">{fmt(r.revenue)}</td>
-                    <td className="px-4 py-1.5 text-right font-mono text-muted-foreground">{totR>0?Math.round(r.revenue/totR*100):0}%</td>
-                  </tr>
-                ))}
+                {rowsSorted.map(r=>{
+                  const vals=periods.map(p=>cellVal(r,p.keys));
+                  const tot=vals.reduce((a,b)=>a+b,0);
+                  if(tot===0) return null;
+                  const realVals=compareReal?periods.map(p=>compareReal(r.key,p.keys)):null;
+                  const realTot=realVals?realVals.reduce((a,b)=>a+b,0):0;
+                  return (
+                    <Fragment key={r.key}>
+                      <tr className="border-t border-border/60 hover:bg-muted/10">
+                        <td className="px-3 py-1.5 font-semibold sticky left-0 bg-card z-10" style={{color:"#1C2340"}}>{r.key}<span className="text-[9px] text-muted-foreground ml-1">fcst</span></td>
+                        {vals.map((v,i)=><td key={i} className="px-3 py-1.5 text-right font-mono">{v?fmt(v):"—"}</td>)}
+                        <td className="px-3 py-1.5 text-right font-mono font-bold border-l border-border" style={{color:"#A3224A"}}>{fmt(tot)}</td>
+                      </tr>
+                      {realVals && (
+                        <>
+                          <tr className="bg-emerald-50/30">
+                            <td className="px-3 py-1 sticky left-0 bg-emerald-50/30 z-10 text-[11px] text-emerald-700 pl-6">real</td>
+                            {realVals.map((v,i)=><td key={i} className="px-3 py-1 text-right font-mono text-emerald-700">{v?fmt(v):"—"}</td>)}
+                            <td className="px-3 py-1 text-right font-mono font-semibold text-emerald-700 border-l border-border">{fmt(realTot)}</td>
+                          </tr>
+                          <tr className="border-b border-border/60">
+                            <td className="px-3 py-1 sticky left-0 bg-card z-10 text-[11px] text-muted-foreground pl-6">Δ</td>
+                            {periods.map((p,i)=>{const d=realVals[i]-vals[i];return <td key={i} className={`px-3 py-1 text-right font-mono text-[11px] ${d>=0?"text-emerald-600":"text-red-500"}`}>{realVals[i]===0?"—":(d>=0?"+":"")+fmt(d)}</td>;})}
+                            <td className={`px-3 py-1 text-right font-mono text-[11px] font-semibold border-l border-border ${realTot-tot>=0?"text-emerald-600":"text-red-500"}`}>{realTot===0?"—":(realTot-tot>=0?"+":"")+fmt(realTot-tot)}</td>
+                          </tr>
+                        </>
+                      )}
+                    </Fragment>
+                  );
+                })}
               </tbody>
               <tfoot>
                 <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
-                  <td className="px-4 py-2 font-semibold">TOTAL</td>
-                  {showUnits && <td className="px-4 py-2 text-right font-mono font-bold">{totU.toLocaleString()}</td>}
-                  <td className="px-4 py-2 text-right font-mono font-bold">{fmt(totR)}</td>
-                  <td className="px-4 py-2 text-right font-mono">100%</td>
+                  <td className="px-3 py-2 font-semibold sticky left-0 z-10" style={{backgroundColor:"#1C2340"}}>TOTAL</td>
+                  {grandByPeriod.map((v,i)=><td key={i} className="px-3 py-2 text-right font-mono font-bold text-emerald-400">{fmt(v)}</td>)}
+                  <td className="px-3 py-2 text-right font-mono font-bold border-l border-slate-600">{fmt(grandTotal)}</td>
                 </tr>
               </tfoot>
             </table>
@@ -1178,7 +1225,7 @@ function SalesBreakdownTab({rows,accounts,assumptions,loading}:{
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-700">
-        📊 Facturación desglosada por <strong>Retail</strong>, <strong>Distribuidor</strong> y <strong>SKU</strong>. Facturación = Units × Delivered Cost. Filtrá por año, quarter o mes. (Ventas del distribuidor, con el shift de 1 mes aplicado.)
+        📊 Facturación mes a mes por <strong>Retail</strong>, <strong>Distribuidor</strong> y <strong>SKU</strong>. En DC y SKU se compara <strong>forecast vs real</strong> (el real sale del pipeline de Fulfillment invoiced, a medida que se cargan órdenes). Retail queda solo forecast. Toggle Units/$ y vista Mensual/Quarter.
       </div>
 
       <div className="flex flex-wrap gap-3 items-center">
@@ -1190,31 +1237,28 @@ function SalesBreakdownTab({rows,accounts,assumptions,loading}:{
           ))}
         </div>
         <div className="flex gap-1 rounded-lg bg-muted p-1">
-          {([["year","Año"],["quarter","Quarter"],["month","Mes"]] as const).map(([id,lbl])=>(
-            <button key={id} onClick={()=>setPmode(id)}
-              className={`rounded px-3 py-1 text-xs font-semibold ${pmode===id?"text-white":"text-muted-foreground"}`}
-              style={pmode===id?{backgroundColor:"#A3224A"}:{}}>{lbl}</button>
+          {([["value","$ Value"],["units","Units"]] as const).map(([id,lbl])=>(
+            <button key={id} onClick={()=>setMetric(id)}
+              className={`rounded px-3 py-1 text-xs font-semibold ${metric===id?"text-white":"text-muted-foreground"}`}
+              style={metric===id?{backgroundColor:"#A3224A"}:{}}>{lbl}</button>
           ))}
         </div>
-        {pmode==="quarter" && (
-          <select value={q} onChange={e=>setQ(parseInt(e.target.value))} className="rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold focus:outline-none">
-            {[1,2,3,4].map(n=><option key={n} value={n}>Q{n}</option>)}
-          </select>
-        )}
-        {pmode==="month" && (
-          <select value={month} onChange={e=>setMonth(parseInt(e.target.value))} className="rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold focus:outline-none">
-            {MONTHS_SHORT.map((m,i)=><option key={m} value={i+1}>{m}</option>)}
-          </select>
-        )}
+        <div className="flex gap-1 rounded-lg bg-muted p-1">
+          {([["month","Mensual"],["quarter","Quarter"]] as const).map(([id,lbl])=>(
+            <button key={id} onClick={()=>setGran(id)}
+              className={`rounded px-3 py-1 text-xs font-semibold ${gran===id?"text-white":"text-muted-foreground"}`}
+              style={gran===id?{backgroundColor:"#1C2340"}:{}}>{lbl}</button>
+          ))}
+        </div>
       </div>
 
       {loading ? (
         <div className="rounded-2xl border border-border bg-card p-6 text-center text-xs text-muted-foreground">Cargando…</div>
       ) : (
         <div className="space-y-3">
-          <Section id="retail" title="Por Retail" data={byRetail} showUnits={true}/>
-          <Section id="dc" title="Por Distribuidor" data={byDC} showUnits={true}/>
-          <Section id="sku" title="Por SKU" data={bySku} showUnits={true}/>
+          <Section id="retail" title="Por Retail" data={byRetail} compareReal={null}/>
+          <Section id="dc" title="Por Distribuidor" data={byDC} compareReal={realDistVal}/>
+          <Section id="sku" title="Por SKU" data={bySku} compareReal={realSkuVal}/>
         </div>
       )}
     </div>
@@ -1301,6 +1345,7 @@ function SalesPage() {
   const [scenario,setScenario] = useState<"Pessimistic"|"Normal"|"Optimistic">("Normal");
   const [reals,setReals] = useState<Record<string,number>>({});
   const {byLabel, casesByLabel, loading:loadingActuals} = useInvoicedActuals();
+  const {bySkuMonth:actualBySku, byDistMonth:actualByDist} = useInvoicedBreakdown();
   const history: HistRow[] = useMemo(()=>Object.values(byLabel)
     .sort((a,b)=>a.year-b.year||a.month-b.month)
     .filter(a=>a.year>=2026&&(a.cases>0||a.revenue>0))
@@ -1569,7 +1614,7 @@ function SalesPage() {
                                   promoMultipliers={promoMultipliers} onPromoMultipliersChange={setPromoMultipliers}/>}
       {tab==="accounts"      && <AccountsTab accounts={dbAccounts} promoRows={dbPromo} assumptions={assumptions} onAssumptionChange={changeAssumption} loading={dbLoading} onUpdated={refreshAccount} onInserted={addAccounts} onDeleted={removeAccounts}/>}
       {tab==="promocal"      && <PromoCalendarTab rows={dbPromo} accounts={dbAccounts} byAccountMonth={byAccountMonth} loading={dbLoading} onUpdated={refreshPromoRow} onInserted={addPromoRows} onDeleted={removePromoRows}/>}
-      {tab==="breakdown"     && <SalesBreakdownTab rows={displayPromo} accounts={dbAccounts} assumptions={assumptions} loading={dbLoading}/>}
+      {tab==="breakdown"     && <SalesBreakdownTab rows={displayPromo} accounts={dbAccounts} assumptions={assumptions} actualBySku={actualBySku} actualByDist={actualByDist} loading={dbLoading}/>}
     </div>
   );
 }
