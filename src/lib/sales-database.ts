@@ -188,6 +188,7 @@ export function shiftPromoOneMonthEarlier(rows: PromoCalendarRow[]): PromoCalend
 export function aggregatePromoCalendar(
   rows: PromoCalendarRow[],
   accounts: SalesAccount[],
+  assumptions?: Record<string, number>,
 ): Record<string, DbMonthAgg> {
   const costMap = new Map<string, number>();
   accounts.forEach(a => costMap.set(`${a.year}|${a.account_name}`, a.delivered_cost));
@@ -196,7 +197,7 @@ export function aggregatePromoCalendar(
   for (const r of rows) {
     const label = monthLabel(r.year, r.month);
     if (!out[label]) out[label] = { label, year: r.year, month: r.month, totalCases: 0, revenue: 0, bySku: {} };
-    const cost = costMap.get(`${r.year}|${r.account_name}`) ?? DEFAULT_DELIVERED_COST[r.distributor] ?? 4.62;
+    const cost = assumptions ? deliveredCostOf(assumptions, r.distributor) : (costMap.get(`${r.year}|${r.account_name}`) ?? DEFAULT_DELIVERED_COST[r.distributor] ?? 4.62);
     const units = r.total_units ?? 0;
     const cases = units / UNITS_PER_CASE;
     out[label].totalCases += cases;
@@ -237,12 +238,13 @@ export function dbSkuByMonthFromAgg(dbAgg: Record<string, DbMonthAgg>): Record<s
 export function aggregateByAccountMonth(
   rows: PromoCalendarRow[],
   accounts: SalesAccount[],
+  assumptions?: Record<string, number>,
 ): Map<string, number> {
   const costMap = new Map<string, number>();
   accounts.forEach(a => costMap.set(`${a.year}|${a.account_name}`, a.delivered_cost));
   const out = new Map<string, number>();
   for (const r of rows) {
-    const cost = costMap.get(`${r.year}|${r.account_name}`) ?? DEFAULT_DELIVERED_COST[r.distributor] ?? 4.62;
+    const cost = assumptions ? deliveredCostOf(assumptions, r.distributor) : (costMap.get(`${r.year}|${r.account_name}`) ?? DEFAULT_DELIVERED_COST[r.distributor] ?? 4.62);
     const rev = (r.total_units ?? 0) * cost;
     const key = `${r.year}|${r.month}|${r.account_name}`;
     out.set(key, (out.get(key) ?? 0) + rev);
@@ -254,12 +256,13 @@ export function aggregateByAccountMonth(
 export function aggregateAnnualByAccount(
   rows: PromoCalendarRow[],
   accounts: SalesAccount[],
+  assumptions?: Record<string, number>,
 ): Map<string, number> {
   const costMap = new Map<string, number>();
   accounts.forEach(a => costMap.set(`${a.year}|${a.account_name}`, a.delivered_cost));
   const out = new Map<string, number>();
   for (const r of rows) {
-    const cost = costMap.get(`${r.year}|${r.account_name}`) ?? DEFAULT_DELIVERED_COST[r.distributor] ?? 4.62;
+    const cost = assumptions ? deliveredCostOf(assumptions, r.distributor) : (costMap.get(`${r.year}|${r.account_name}`) ?? DEFAULT_DELIVERED_COST[r.distributor] ?? 4.62);
     const rev = (r.total_units ?? 0) * cost;
     const key = `${r.year}|${r.account_name}`;
     out.set(key, (out.get(key) ?? 0) + rev);
@@ -292,6 +295,7 @@ function buildBreakdown(
   rows: PromoCalendarRow[],
   accounts: SalesAccount[],
   groupBy: (r: PromoCalendarRow) => string,
+  assumptions?: Record<string, number>,
 ): BreakdownRow[] {
   const costMap = new Map<string, number>();
   accounts.forEach(a => costMap.set(`${a.year}|${a.account_name}`, a.delivered_cost));
@@ -301,7 +305,7 @@ function buildBreakdown(
     if (!map.has(g)) map.set(g, { key: g, unitsByMonth: {}, revByMonth: {} });
     const row = map.get(g)!;
     const mk = mkKey(r.year, r.month);
-    const cost = costMap.get(`${r.year}|${r.account_name}`) ?? DEFAULT_DELIVERED_COST[r.distributor] ?? 4.62;
+    const cost = assumptions ? deliveredCostOf(assumptions, r.distributor) : (costMap.get(`${r.year}|${r.account_name}`) ?? DEFAULT_DELIVERED_COST[r.distributor] ?? 4.62);
     const units = r.total_units ?? 0;
     row.unitsByMonth[mk] = (row.unitsByMonth[mk] ?? 0) + units;
     row.revByMonth[mk] = (row.revByMonth[mk] ?? 0) + units * cost;
@@ -309,14 +313,14 @@ function buildBreakdown(
   return Array.from(map.values()).sort((a, b) => a.key.localeCompare(b.key));
 }
 
-export function breakdownByRetail(rows: PromoCalendarRow[], accounts: SalesAccount[]): BreakdownRow[] {
-  return buildBreakdown(rows, accounts, r => r.account_name);
+export function breakdownByRetail(rows: PromoCalendarRow[], accounts: SalesAccount[], assumptions?: Record<string, number>): BreakdownRow[] {
+  return buildBreakdown(rows, accounts, r => r.account_name, assumptions);
 }
-export function breakdownByDistributor(rows: PromoCalendarRow[], accounts: SalesAccount[]): BreakdownRow[] {
-  return buildBreakdown(rows, accounts, r => r.distributor);
+export function breakdownByDistributor(rows: PromoCalendarRow[], accounts: SalesAccount[], assumptions?: Record<string, number>): BreakdownRow[] {
+  return buildBreakdown(rows, accounts, r => r.distributor, assumptions);
 }
-export function breakdownBySku(rows: PromoCalendarRow[], accounts: SalesAccount[]): BreakdownRow[] {
-  return buildBreakdown(rows, accounts, r => r.sku_code);
+export function breakdownBySku(rows: PromoCalendarRow[], accounts: SalesAccount[], assumptions?: Record<string, number>): BreakdownRow[] {
+  return buildBreakdown(rows, accounts, r => r.sku_code, assumptions);
 }
 
 // Sum a breakdown row's units/revenue over a set of month keys (period filter).
@@ -337,4 +341,55 @@ export function monthKeysForPeriod(mode: "year" | "quarter" | "month", year: num
     return [mkKey(year, start), mkKey(year, start + 1), mkKey(year, start + 2)];
   }
   return Array.from({ length: 12 }, (_, i) => mkKey(year, i + 1));
+}
+
+// ─── Assumptions centrales (fuente única de verdad) ───────────────────────────
+export type Assumptions = Record<string, number>;
+
+export async function fetchAssumptions(supabase: any): Promise<Assumptions> {
+  const { data, error } = await supabase.from("sales_assumptions").select("key,value").limit(1000);
+  if (error) { console.error("fetchAssumptions error:", error); return {}; }
+  const out: Assumptions = {};
+  (data ?? []).forEach((r: any) => { out[r.key] = Number(r.value); });
+  return out;
+}
+
+export async function updateAssumption(supabase: any, key: string, value: number) {
+  const { error } = await supabase.from("sales_assumptions")
+    .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: "key" });
+  if (error) throw error;
+}
+
+// Convenience getters with sane fallbacks
+export function deliveredCostOf(a: Assumptions, dist: string): number {
+  return a[`delivered_cost.${dist}`] ?? (dist === "Rainforest" ? 4.8125 : 4.62);
+}
+export function distPctOf(a: Assumptions, kind: "dist_fees" | "dist_allowance" | "payment_terms", dist: string): number {
+  return a[`${kind}.${dist}`] ?? 0;
+}
+export function cogsOf(a: Assumptions, sku: string): number { return a[`cogs.${sku}`] ?? 0; }
+export function fulfillmentPerUnit(a: Assumptions): number { return a["fulfillment_per_unit"] ?? 0.5; }
+
+// ─── Per-account P&L inputs from the Promo Calendar ───────────────────────────
+// For a given year, per account: total units, regular units, promo units,
+// promo cost (sum of total_cost), and units split by SKU (for COGS).
+export type AccountPnLInputs = {
+  totalUnits: number; regUnits: number; promoUnits: number; promoCost: number;
+  unitsBySku: Record<string, number>;
+};
+
+export function accountPnLInputs(rows: PromoCalendarRow[], year: number): Map<string, AccountPnLInputs> {
+  const map = new Map<string, AccountPnLInputs>();
+  for (const r of rows) {
+    if (r.year !== year) continue;
+    if (!map.has(r.account_name)) map.set(r.account_name, { totalUnits: 0, regUnits: 0, promoUnits: 0, promoCost: 0, unitsBySku: {} });
+    const m = map.get(r.account_name)!;
+    const u = r.total_units ?? 0;
+    m.totalUnits += u;
+    m.regUnits += r.reg_units ?? 0;
+    m.promoUnits += r.promo_units ?? 0;
+    m.promoCost += r.total_cost ?? 0;
+    m.unitsBySku[r.sku_code] = (m.unitsBySku[r.sku_code] ?? 0) + u;
+  }
+  return map;
 }
