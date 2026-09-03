@@ -161,6 +161,30 @@ export type DbMonthAgg = {
   bySku: Record<string, number>; // cases per SKU code
 };
 
+// ─── Distributor timing shift (2027+) ────────────────────────────────────────
+// The Promo Calendar holds RETAILER sell-through. The distributor buys from us one
+// month EARLIER, so distributor sales in month M = retailer sales in month M+1.
+// We display distributor sales, so each row is moved back one month. Only applies
+// from 2027 onward. Dec 2028 would need Jan 2029 (missing) → we repeat Dec 2028.
+export function shiftPromoOneMonthEarlier(rows: PromoCalendarRow[]): PromoCalendarRow[] {
+  const out: PromoCalendarRow[] = [];
+  for (const r of rows) {
+    // 2026 (if any) stays as-is
+    if (r.year < 2027) { out.push(r); continue; }
+    let dm = r.month - 1, dy = r.year;
+    if (dm < 1) { dm = 12; dy -= 1; }
+    if (dy < 2027) continue; // Jan 2027 → Dec 2026 falls off the displayed window
+    out.push({ ...r, id: `shift-${r.id}`, year: dy, month: dm });
+  }
+  // Dec 2028 = retailer Jan 2029 (missing) → repeat retailer Dec 2028 in place
+  for (const r of rows) {
+    if (r.year === 2028 && r.month === 12) {
+      out.push({ ...r, id: `shiftrepeat-${r.id}` });
+    }
+  }
+  return out;
+}
+
 export function aggregatePromoCalendar(
   rows: PromoCalendarRow[],
   accounts: SalesAccount[],
@@ -253,170 +277,64 @@ export function aggregateAnnualUnitsByAccount(rows: PromoCalendarRow[]): Map<str
   return out;
 }
 
-// ─── Simulator overlays (temporary "what-if" plays over the Promo Calendar) ───
-// Applied on top of the real Promo Calendar rows before aggregation. Never touch
-// the DB until the user explicitly applies them.
-//
-// new_stores: adds stores to an account/SKU set from a given month. The velocity
-// and weeks are NOT entered — each month reuses whatever that account/SKU already
-// has in the Promo Calendar, so extra stores simply scale the units up. Optional
-// storesPerMonth ramps the added stores (e.g. +10/month up to a cap).
-export type SimPlay =
-  | {
-      id: string; kind: "new_stores"; active: boolean; label: string;
-      account: string; skus: string[];
-      addStores: number;                 // stores added (target, or cap if ramping)
-      storesPerMonth?: number;           // if set, ramp: add this many per month up to addStores
-      fromYear: number; fromMonth: number;
-    }
-  | {
-      id: string; kind: "vel_bump"; active: boolean; label: string;
-      account: string; skus: string[]; pct: number;   // +10 => +10%
-      pctPerMonth?: number;               // if set, compound this % each month
-      fromYear: number; fromMonth: number;
-    };
+// ─── Sales Breakdown: por Retail / DC / SKU, en units y revenue ───────────────
+// Cada fila del breakdown tiene el dato por mes (key "YYYY-MM") en units y revenue,
+// para que la UI pueda filtrar por mes/quarter/año sumando los meses que correspondan.
+export type BreakdownRow = {
+  key: string;                          // nombre del retail / DC / SKU
+  unitsByMonth: Record<string, number>; // "2027-01" → units
+  revByMonth: Record<string, number>;   // "2027-01" → revenue ($)
+};
 
-const WEEKS_PER_MONTH_DEFAULT = 4.345;
-function ym(year: number, month: number) { return year * 12 + month; }
+function mkKey(year: number, month: number) { return `${year}-${String(month).padStart(2, "0")}`; }
 
-// stores added in the given month for a ramping/flat new_stores play
-function storesAddedAt(p: Extract<SimPlay, {kind:"new_stores"}>, monthsElapsed: number): number {
-  if (!p.storesPerMonth || p.storesPerMonth <= 0) return p.addStores;
-  return Math.min(p.addStores, p.storesPerMonth * (monthsElapsed + 1));
-}
-
-// cumulative pct bump in the given month for a ramping/flat vel_bump play
-function pctAt(p: Extract<SimPlay, {kind:"vel_bump"}>, monthsElapsed: number): number {
-  if (!p.pctPerMonth || p.pctPerMonth <= 0) return p.pct;
-  // linear accumulation of pctPerMonth, capped at pct if pct>0
-  const acc = p.pctPerMonth * (monthsElapsed + 1);
-  return p.pct > 0 ? Math.min(p.pct, acc) : acc;
-}
-
-// Returns modified rows reflecting the active plays (velocity/units scaled in place).
-export function applySimPlays(rows: PromoCalendarRow[], plays: SimPlay[]): PromoCalendarRow[] {
-  const active = plays.filter(p => p.active);
-  if (!active.length) return rows;
-
-  return rows.map(r => {
-    let units = r.total_units ?? 0;
-    let stores = r.stores ?? 0;
-    let touched = false;
-
-    for (const p of active) {
-      const elapsed = ym(r.year, r.month) - ym(p.fromYear, p.fromMonth);
-      if (elapsed < 0) continue;
-
-      if (p.kind === "vel_bump") {
-        if (p.account !== r.account_name || !p.skus.includes(r.sku_code)) continue;
-        const pct = pctAt(p, elapsed);
-        units = units * (1 + pct / 100);
-        touched = true;
-      } else { // new_stores — add stores, keep this month's velocity, scale units
-        if (p.account !== r.account_name || !p.skus.includes(r.sku_code)) continue;
-        const added = storesAddedAt(p, elapsed);
-        const baseStores = r.stores ?? 0;
-        if (baseStores > 0) {
-          const ratio = (baseStores + added) / baseStores;
-          units = units * ratio;
-          stores = baseStores + added;
-        } else {
-          // no existing stores that month → can't infer velocity; leave as is
-        }
-        touched = true;
-      }
-    }
-    return touched ? { ...r, total_units: Math.round(units * 1000) / 1000, stores } : r;
-  });
-}
-
-export function hasActivePlays(plays: SimPlay[]) { return plays.some(p => p.active); }
-
-// Persist active new_stores plays into the Promo Calendar by writing the
-// scaled rows they produce (base row × store ratio) as real data.
-export function playsToPromoRows(rows: PromoCalendarRow[], plays: SimPlay[]): Partial<PromoCalendarRow>[] {
-  const newStorePlays = plays.filter(x => x.active && x.kind === "new_stores");
-  if (!newStorePlays.length) return [];
-  const applied = applySimPlays(rows, newStorePlays);
-  // Return only the rows that changed (upsert-style patches keyed by identity).
-  const baseById = new Map(rows.map(r => [r.id, r]));
-  const out: Partial<PromoCalendarRow>[] = [];
-  for (const r of applied) {
-    const orig = baseById.get(r.id);
-    if (orig && (orig.total_units !== r.total_units || orig.stores !== r.stores)) {
-      out.push({ year: r.year, month: r.month, account_name: r.account_name, sku_code: r.sku_code,
-        distributor: r.distributor, stores: r.stores, reg_avg_vel: r.reg_avg_vel, weeks: r.weeks,
-        total_units: r.total_units, reg_units: r.total_units, promo_units: r.promo_units ?? 0 });
-    }
-  }
-  return out;
-}
-
-// Incremental impact of a single play (cases + revenue) over the base Promo Calendar,
-// derived from the diff between applying just this play and the base rows.
-export function computePlayImpact(play: SimPlay, rows: PromoCalendarRow[], accounts: SalesAccount[]): { cases: number; revenue: number } {
-  if (!play.active) return { cases: 0, revenue: 0 };
+function buildBreakdown(
+  rows: PromoCalendarRow[],
+  accounts: SalesAccount[],
+  groupBy: (r: PromoCalendarRow) => string,
+): BreakdownRow[] {
   const costMap = new Map<string, number>();
   accounts.forEach(a => costMap.set(`${a.year}|${a.account_name}`, a.delivered_cost));
-  const costOf = (r: PromoCalendarRow) => costMap.get(`${r.year}|${r.account_name}`) ?? DEFAULT_DELIVERED_COST[r.distributor] ?? 4.62;
-
-  const applied = applySimPlays(rows, [play]);
-  const baseById = new Map(rows.map(r => [r.id, r]));
-  let cases = 0, revenue = 0;
-  for (const r of applied) {
-    const orig = baseById.get(r.id);
-    const deltaUnits = (r.total_units ?? 0) - (orig?.total_units ?? 0);
-    if (deltaUnits === 0) continue;
-    cases += deltaUnits / UNITS_PER_CASE;
-    revenue += deltaUnits * costOf(r);
+  const map = new Map<string, BreakdownRow>();
+  for (const r of rows) {
+    const g = groupBy(r);
+    if (!map.has(g)) map.set(g, { key: g, unitsByMonth: {}, revByMonth: {} });
+    const row = map.get(g)!;
+    const mk = mkKey(r.year, r.month);
+    const cost = costMap.get(`${r.year}|${r.account_name}`) ?? DEFAULT_DELIVERED_COST[r.distributor] ?? 4.62;
+    const units = r.total_units ?? 0;
+    row.unitsByMonth[mk] = (row.unitsByMonth[mk] ?? 0) + units;
+    row.revByMonth[mk] = (row.revByMonth[mk] ?? 0) + units * cost;
   }
-  return { cases: Math.round(cases), revenue: Math.round(revenue) };
+  return Array.from(map.values()).sort((a, b) => a.key.localeCompare(b.key));
 }
 
-// Per-month incremental cases from active plays, derived from the diff.
-export function playsMonthlyCaseDelta(
-  rows: PromoCalendarRow[], accounts: SalesAccount[], plays: SimPlay[],
-): Record<string, number> {
-  const active = plays.filter(p => p.active);
-  const out: Record<string, number> = {};
-  if (!active.length) return out;
-  const applied = applySimPlays(rows, active);
-  const baseById = new Map(rows.map(r => [r.id, r]));
-  for (const r of applied) {
-    const orig = baseById.get(r.id);
-    const deltaUnits = (r.total_units ?? 0) - (orig?.total_units ?? 0);
-    if (deltaUnits === 0) continue;
-    const label = monthLabel(r.year, r.month);
-    out[label] = (out[label] ?? 0) + deltaUnits / UNITS_PER_CASE;
-  }
-  Object.keys(out).forEach(k => { out[k] = Math.round(out[k]); });
-  return out;
+export function breakdownByRetail(rows: PromoCalendarRow[], accounts: SalesAccount[]): BreakdownRow[] {
+  return buildBreakdown(rows, accounts, r => r.account_name);
+}
+export function breakdownByDistributor(rows: PromoCalendarRow[], accounts: SalesAccount[]): BreakdownRow[] {
+  return buildBreakdown(rows, accounts, r => r.distributor);
+}
+export function breakdownBySku(rows: PromoCalendarRow[], accounts: SalesAccount[]): BreakdownRow[] {
+  return buildBreakdown(rows, accounts, r => r.sku_code);
 }
 
-// Merge using the OVERLAY agg (already includes plays) but expose the per-month
-// delta in acctDelta so the simulator's Monthly Detail shows the extra units,
-// with revenue already reflecting the boosted total at real per-account prices.
-export function mergeForecastWithDbAndDelta<T extends { label: string; totalCases: number; revenue: number }>(
-  forecast: T[],
-  dbAggSim: Record<string, DbMonthAgg>,   // aggregation of effectivePromo (base + plays)
-  dbAggBase: Record<string, DbMonthAgg>,  // aggregation of real Promo Calendar (base only)
-  monthlyDelta: Record<string, number>,
-  scenarioFactor = 1,
-): T[] {
-  return forecast.map(f => {
-    const agg = dbAggSim[f.label];
-    if (!agg) return f;
-    const base = dbAggBase[f.label];
-    const scaledTotal = Math.round(agg.totalCases * scenarioFactor);
-    const scaledBase = Math.round((base?.totalCases ?? agg.totalCases) * scenarioFactor);
-    const delta = monthlyDelta[f.label] ?? (scaledTotal - scaledBase);
-    return {
-      ...f,
-      baseCases: scaledBase, velDelta: 0, acctDelta: delta, newSkuDelta: 0,
-      totalCases: scaledTotal,
-      revenue: Math.round(agg.revenue * scenarioFactor),
-      budgetCases: Math.round(base?.totalCases ?? agg.totalCases),
-      budget: Math.round(base?.revenue ?? agg.revenue),
-    } as T;
-  });
+// Sum a breakdown row's units/revenue over a set of month keys (period filter).
+export function sumOverMonths(row: BreakdownRow, monthKeys: string[]): { units: number; revenue: number } {
+  let units = 0, revenue = 0;
+  for (const mk of monthKeys) {
+    units += row.unitsByMonth[mk] ?? 0;
+    revenue += row.revByMonth[mk] ?? 0;
+  }
+  return { units: Math.round(units), revenue: Math.round(revenue) };
+}
+
+// Build the list of month keys for a given period selection.
+export function monthKeysForPeriod(mode: "year" | "quarter" | "month", year: number, q?: number, month?: number): string[] {
+  if (mode === "month" && month) return [mkKey(year, month)];
+  if (mode === "quarter" && q) {
+    const start = (q - 1) * 3 + 1;
+    return [mkKey(year, start), mkKey(year, start + 1), mkKey(year, start + 2)];
+  }
+  return Array.from({ length: 12 }, (_, i) => mkKey(year, i + 1));
 }
