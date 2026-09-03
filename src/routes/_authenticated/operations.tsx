@@ -4161,7 +4161,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                 </tr>
               </thead>
               <tbody>
-                {allMaterialsList.filter(mat=>dynamicProcSkus.some(sku=>(bomQty[sku]?.[mat]??0)>0) || extraMaterials.includes(mat)).map(mat=>{
+                {allMaterialsList.map(mat=>{
                   const raw=isRawMatLive(mat);
                   return (
                     <tr key={mat} className="border-t border-border/60 hover:bg-muted/20">
@@ -4718,7 +4718,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                     </tr>
                   </thead>
                   <tbody>
-                    {rawMatsLive.filter(g => FR.some(r => (r.ipStock[g]?.qty ?? 0) > 0 || (r.ipReceived[g] ?? 0) > 0)).map(g => (
+                    {allMaterialsList.map(g => (
                       <tr key={g} className="border-t border-border/60">
                         <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{g}</td>
                         {FR.map(r => {
@@ -4788,7 +4788,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
         }
         const scopeCases = scopeRange ? totalByMonth.slice(scopeRange[0], scopeRange[1]+1).reduce((a,b)=>a+b,0) : 0;
         // All raw materials to show (hardcoded + extras)
-        const rawMatsToShow = rawMatsLive;
+        const rawMatsToShow = allMaterialsList;
 
         return (
         <div className="space-y-4">
@@ -4883,7 +4883,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                       <td className="px-3 py-1.5">
                         <select value={po.material} onChange={e => updateIpForecastPO(po.id, "material", e.target.value)}
                           className={`${inp} w-full`}>
-                          {rawMatsLive.map(m => <option key={m} value={m}>{m}</option>)}
+                          {allMaterialsList.map(m => <option key={m} value={m}>{m}</option>)}
                         </select>
                       </td>
                       <td className="px-3 py-1.5"><input type="number" value={po.qty || ""} onChange={e => updateIpForecastPO(po.id, "qty", Number(e.target.value) || 0)} className={`${inp} w-20 text-right`} placeholder="0" /></td>
@@ -4931,7 +4931,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                     <div className="flex flex-col gap-1">
                       <label className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Material</label>
                       <select value={confirmingPO.material} onChange={e => setConfirmingPO({...confirmingPO, material: e.target.value})} className={inp}>
-                        {rawMatsLive.map(m => <option key={m} value={m}>{m}</option>)}
+                        {allMaterialsList.map(m => <option key={m} value={m}>{m}</option>)}
                       </select>
                     </div>
                     <div className="flex flex-col gap-1">
@@ -5004,7 +5004,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                     </tr>
                   </thead>
                   <tbody>
-                    {allMaterialsList.filter(g => FR.some(r => (r.ipStock[g]?.qty ?? 0) > 0 || (r.ipReceived[g] ?? 0) > 0 || (r.ipConsumed[g] ?? 0) > 0)).map(g => (
+                    {allMaterialsList.map(g => (
                       <tr key={g} className="border-t border-border/60">
                         <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{g}</td>
                         {FR.map(r => {
@@ -5032,7 +5032,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                     </tr>
                   </thead>
                   <tbody>
-                    {allMaterialsList.filter(g => FR.some(r => (r.ipStock[g]?.value ?? 0) > 0)).map(g => (
+                    {allMaterialsList.map(g => (
                       <tr key={g} className="border-t border-border/60">
                         <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{g}</td>
                         {FR.map(r => <td key={r.mk} className="px-3 py-1.5 text-right font-mono">${Math.round(r.ipStock[g]?.value ?? 0).toLocaleString()}</td>)}
@@ -5062,7 +5062,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                     </tr>
                   </thead>
                   <tbody>
-                    {rawMatsLive.filter(g => FR.some(r => (r.ipReceived[g] ?? 0) > 0 || (r.ipConsumed[g] ?? 0) > 0)).map(g => (
+                    {allMaterialsList.map(g => (
                       <React.Fragment key={g}>
                         <tr className="border-t border-border/60">
                           <td className="px-4 py-1 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}} rowSpan={2}>{g}</td>
@@ -5097,7 +5097,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                   </tr>
                 </thead>
                 <tbody>
-                  {rawMatsLive.map(g => {
+                  {allMaterialsList.map(g => {
                     const lots = last?.ipLots[g] ?? [];
                     if (lots.length === 0) return null;
                     return lots.map((l, i) => (
