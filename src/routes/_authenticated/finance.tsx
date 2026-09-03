@@ -1263,6 +1263,27 @@ function loadCogsPoteSku(sku: string): number {
 }
 function saveCogsPoteSku(sku: string, v: number) { try { localStorage.setItem(`baris.finance.cogsPoteSku.${sku}`, String(v)); } catch {} }
 
+// ── Editable cashflow inputs (2027/2028 only). Keyed by "2027-3". ──
+// capital/wcDraw/fctDraw/investInt = signed cash impact (+in / -out).
+// wcInt/fctInt = interest MAGNITUDE the user pays (applied as a cash outflow, and reduces net income).
+type CfInputs = {
+  capital: Record<string, number>; wcDraw: Record<string, number>; fctDraw: Record<string, number>;
+  wcInt: Record<string, number>; fctInt: Record<string, number>; investInt: Record<string, number>;
+};
+const CF_FIELDS = ['capital','wcDraw','fctDraw','wcInt','fctInt','investInt'] as const;
+function loadCfInputs(): CfInputs {
+  const out: any = {};
+  for (const f of CF_FIELDS) {
+    try { const r = localStorage.getItem(`baris.finance.cf.${f}`); out[f] = r ? JSON.parse(r) : {}; }
+    catch { out[f] = {}; }
+  }
+  return out as CfInputs;
+}
+function saveCfInputs(inp: CfInputs) {
+  for (const f of CF_FIELDS) { try { localStorage.setItem(`baris.finance.cf.${f}`, JSON.stringify(inp[f] ?? {})); } catch {} }
+}
+const cfKey = (i: number) => `${yearOf(i)}-${monthOf(i) + 1}`;
+
 // Pure function: given a forecast context, compute this month's Net Income in $K.
 // Mirrors PNLTab's getValue logic exactly, so Balance Sheet cash roll-forward stays consistent with the P&L.
 function computeMonthlyNetIncome(ctx: ForecastContext): number {
@@ -1289,6 +1310,7 @@ type MonthFin = {
   cash: number|null; creditCards: number|null; accrued: number|null;
   loansSh: number; fixed: number; dueSh: number;
   capital: number; common: number; openEq: number; retEarn: number; netIncEq: number|null;
+  wcLoan: number; fctLoan: number; // forecast loan liabilities (cumulative draws), 2027/2028
   totalAssets: number|null; totalLiab: number|null; totalEquity: number|null;
   // P&L lines ($K) — real from pnl_detail, else forecast. null before there's any P&L for the month.
   grossSales: number|null; deductions: number|null; netSales: number|null;
@@ -1324,6 +1346,8 @@ function buildFinanceForecast(
   const mixKU = (get('sales_mix_kehe', 50.5) + get('sales_mix_unfi', 27.1)) / 100;
   const mixRF = get('sales_mix_rainforest', 22.3) / 100;
   const cogsPerCaseK = get('cogs_per_unit', 22.27) / 1000;
+  const cf = loadCfInputs();
+  const cfv = (field: keyof CfInputs, i: number) => cf[field]?.[cfKey(i)] ?? 0;
 
   const latestBsIdx = (() => { let m=-1; for (let i=0;i<36;i++) if (bsAt(i)) m=i; return m; })();
   const latestPnlIdx = (() => { let m=-1; for (let i=0;i<36;i++) if (pnlAt(i)) m=i; return m; })();
@@ -1447,6 +1471,7 @@ function buildFinanceForecast(
 
     // Liabilities / equity
     let cc: number|null=null, accrued: number|null=null, netIncEq: number|null=null;
+    let wcLoan=0, fctLoan=0, capitalTotal=0;
     let cash: number|null=null, totAssets: number|null=null, totLiab: number|null=null, totEquity: number|null=null;
     if (isBsReal) {
       cc = ccKeys.reduce((s,k)=>s+Number(bs![k] ?? 0)/1000,0);
@@ -1458,15 +1483,41 @@ function buildFinanceForecast(
       totLiab = cc + accrued;
       totEquity = totAssets - totLiab;
     } else if (isForecast) {
-      cc = avgCC; accrued = accruedFwd;
-      // cumulative NI from last real BS close
-      let cumNI = 0; for (let j = latestBsIdx + 1; j <= i; j++) cumNI += (netIncomeReal(j) ?? netIncomeFcst(j));
+      accrued = accruedFwd;
+      const cashDriven = yearOf(i) >= 2027; // 2027/2028 = cash-driven; 2026 forecast keeps the plug
+      cc = cashDriven ? 11 : avgCC;         // Credit Cards fixed $11k for 2027/2028
+      // Cumulative from last real close: operating NI (+ net interest for 2027/2028), capital, loan draws.
+      let cumNI = 0, capCum = 0, wcCum = 0, fctCum = 0;
+      for (let j = latestBsIdx + 1; j <= i; j++) {
+        const opNIj = (netIncomeReal(j) ?? netIncomeFcst(j));
+        if (yearOf(j) >= 2027) {
+          cumNI += opNIj + (cfv('investInt', j) - cfv('wcInt', j) - cfv('fctInt', j)); // net interest hits retained earnings
+          capCum += cfv('capital', j); wcCum += cfv('wcDraw', j); fctCum += cfv('fctDraw', j);
+        } else { cumNI += opNIj; }
+      }
       netIncEq = fwd.netIncEq + cumNI;
-      totEquity = fwd.capital + fwd.common + fwd.openEq + fwd.retEarn + netIncEq;
-      totLiab = cc + accrued;
+      capitalTotal = fwd.capital + capCum;
+      wcLoan = wcCum; fctLoan = fctCum;
+      totEquity = capitalTotal + fwd.common + fwd.openEq + fwd.retEarn + netIncEq;
+      totLiab = cc + accrued + wcLoan + fctLoan;
       const nonCash = ar! + inv! + fwd.loansSh + fwd.fixed + fwd.dueSh;
-      cash = totLiab + totEquity - nonCash;   // cash is the balancing figure
-      totAssets = cash + nonCash;
+      if (cashDriven) {
+        // Cash EOM = prior EOM + Cash from Operations + Cash from Investing/Financing.
+        const prevM = out[i - 1];
+        const prevCash = prevM?.cash ?? 0;
+        const dAR = ar! - (prevM?.ar ?? ar!);
+        const dInv = inv! - (prevM?.inventory ?? inv!);
+        const apPrev = (prevM?.creditCards ?? cc) + (prevM?.accrued ?? accrued);
+        const dAP = (cc + accrued) - apPrev;
+        const cfo = (ni ?? 0) - dAR - dInv + dAP;                       // operating NI + ΔWC
+        const netInt = cfv('investInt', i) - cfv('wcInt', i) - cfv('fctInt', i);
+        const cfi = cfv('capital', i) + cfv('wcDraw', i) + cfv('fctDraw', i) + netInt;
+        cash = prevCash + cfo + cfi;
+        totAssets = cash + nonCash;
+      } else {
+        cash = totLiab + totEquity - nonCash; // 2026 forecast: cash is the balancing figure
+        totAssets = cash + nonCash;
+      }
     }
 
     // ── P&L lines ($K): real from pnl_detail, else forecast from assumptions ──
@@ -1501,7 +1552,8 @@ function buildFinanceForecast(
       loansSh: isBsReal||isForecast ? fwd.loansSh : 0,
       fixed: isBsReal ? (Number(bs!['equipment'] ?? 0)+Number(bs!['accumulated_depreciation'] ?? 0))/1000 : (isForecast ? fwd.fixed : 0),
       dueSh: isBsReal||isForecast ? fwd.dueSh : 0,
-      capital: isBsReal ? ['capital_1st_round','capital_2nd_round','capital_3rd_round','capital_4th_round'].reduce((s,k)=>s+Number(bs![k] ?? 0)/1000,0) : (isForecast ? fwd.capital : 0),
+      capital: isBsReal ? ['capital_1st_round','capital_2nd_round','capital_3rd_round','capital_4th_round'].reduce((s,k)=>s+Number(bs![k] ?? 0)/1000,0) : (isForecast ? capitalTotal : 0),
+      wcLoan: isForecast ? wcLoan : 0, fctLoan: isForecast ? fctLoan : 0,
       common: isBsReal ? Number(bs!['common_stock'] ?? 0)/1000 : (isForecast ? fwd.common : 0),
       openEq: isBsReal ? Number(bs!['opening_balance_equity'] ?? 0)/1000 : (isForecast ? fwd.openEq : 0),
       retEarn: isBsReal ? Number(bs!['retained_earnings'] ?? 0)/1000 : (isForecast ? fwd.retEarn : 0),
@@ -1714,6 +1766,8 @@ function CashFlowTab({ actuals, actualOnly, scenario, invAdjust }: { actuals: Re
   const scenarioForecast = useFinanceScenarioForecast(scenario); // "2026-8" -> $ (not $K)
   const assumptions = useFinanceAssumptions();
   const [yearFilter, setYearFilter] = useState<'all'|2026|2027|2028>('all');
+  const [cfEditMode, setCfEditMode] = useState(false);
+  const [cfDraft, setCfDraft] = useState<CfInputs|null>(null);
 
   const fcGrossByMonth: Record<number, number> = {}; // 0=Jan'26 … 35=Dec'28
   for (let idx = 0; idx < 36; idx++) {
@@ -1748,31 +1802,55 @@ function CashFlowTab({ actuals, actualOnly, scenario, invAdjust }: { actuals: Re
   const N = 36;
   const netIncome: (number|null)[] = [], dAR: (number|null)[] = [], dInv: (number|null)[] = [],
         dAP: (number|null)[] = [], cfo: (number|null)[] = [], cfi: (number|null)[] = [],
-        dCapital: (number|null)[] = [], interest: (number|null)[] = [],
-        cashBop: (number|null)[] = [], cashEop: (number|null)[] = [];
+        capContrib: (number|null)[] = [], wcDrawA: (number|null)[] = [], fctDrawA: (number|null)[] = [],
+        wcIntA: (number|null)[] = [], fctIntA: (number|null)[] = [], investIntA: (number|null)[] = [],
+        cashMove: (number|null)[] = [], cashBop: (number|null)[] = [], cashEop: (number|null)[] = [];
+
+  const cfIn = (cfEditMode && cfDraft) ? cfDraft : loadCfInputs();
+  const cfget = (field: keyof CfInputs, i: number) => cfIn[field]?.[cfKey(i)] ?? 0;
+  let runEop: number|null = null; // chains Cash EOM through 2027/2028 (live during edit)
 
   for (let i = 0; i < N; i++) {
     const m = S[i], prev = i > 0 ? S[i-1] : null;
     netIncome[i] = m.netIncome;
-    cashEop[i] = m.cash;
-    interest[i] = otherIncomeK(i);
+    const driven = m.isForecast && yearOf(i) >= 2027;
 
-    const canBridge = hasBS(i) && prev != null && prev.ar != null && prev.inventory != null && prev.cash != null;
-    if (canBridge) {
-      dAR[i]  = -((m.ar as number) - (prev!.ar as number));
-      dInv[i] = -((m.inventory as number) - (prev!.inventory as number));
-      const apNow = (m.creditCards ?? 0) + (m.accrued ?? 0);
-      const apPrev = (prev!.creditCards ?? 0) + (prev!.accrued ?? 0);
-      dAP[i]  = (apNow - apPrev);
-      cashBop[i] = prev!.cash as number;
-      cfo[i] = (m.cash as number) - (prev!.cash as number);
-      // Investing: change in Capital Contributions month-over-month (new investment rounds).
-      const capNow = capitalK(i), capPrev = capitalK(i-1);
-      dCapital[i] = (capNow != null && capPrev != null) ? (capNow - capPrev) : null;
-      cfi[i] = (dCapital[i] ?? 0) + (interest[i] ?? 0);
+    if (driven) {
+      const bop = runEop != null ? runEop : (prev?.cash ?? 0);
+      cashBop[i] = bop;
+      dAR[i]  = (m.ar != null && prev?.ar != null) ? -((m.ar) - (prev.ar)) : 0;
+      dInv[i] = (m.inventory != null && prev?.inventory != null) ? -((m.inventory) - (prev.inventory)) : 0;
+      dAP[i]  = ((m.creditCards ?? 0) + (m.accrued ?? 0)) - ((prev?.creditCards ?? 0) + (prev?.accrued ?? 0));
+      const cfoV = (m.netIncome ?? 0) + (dAR[i] as number) + (dInv[i] as number) + (dAP[i] as number);
+      cfo[i] = cfoV;
+      capContrib[i] = cfget('capital', i); wcDrawA[i] = cfget('wcDraw', i); fctDrawA[i] = cfget('fctDraw', i);
+      wcIntA[i] = cfget('wcInt', i); fctIntA[i] = cfget('fctInt', i); investIntA[i] = cfget('investInt', i);
+      const netInt = (investIntA[i] as number) - (wcIntA[i] as number) - (fctIntA[i] as number);
+      const cfiV = (capContrib[i] as number) + (wcDrawA[i] as number) + (fctDrawA[i] as number) + netInt;
+      cfi[i] = cfiV;
+      cashMove[i] = cfoV + cfiV;
+      const eop = bop + (cashMove[i] as number);
+      cashEop[i] = eop; runEop = eop;
     } else {
-      dAR[i] = null; dInv[i] = null; dAP[i] = null; cfo[i] = null; cashBop[i] = null;
-      dCapital[i] = null; cfi[i] = null;
+      runEop = null;
+      cashEop[i] = m.cash;
+      capContrib[i] = null; wcDrawA[i] = null; fctDrawA[i] = null;
+      wcIntA[i] = null; fctIntA[i] = null; cashMove[i] = null;
+      // 2026: keep the indirect bridge (cash was the balancing figure).
+      const canBridge = hasBS(i) && prev != null && prev.ar != null && prev.inventory != null && prev.cash != null;
+      if (canBridge) {
+        dAR[i]  = -((m.ar as number) - (prev!.ar as number));
+        dInv[i] = -((m.inventory as number) - (prev!.inventory as number));
+        dAP[i]  = ((m.creditCards ?? 0) + (m.accrued ?? 0)) - ((prev!.creditCards ?? 0) + (prev!.accrued ?? 0));
+        cashBop[i] = prev!.cash as number;
+        cfo[i] = (m.cash as number) - (prev!.cash as number);
+        const capNow = capitalK(i), capPrev = capitalK(i-1);
+        capContrib[i] = (capNow != null && capPrev != null) ? (capNow - capPrev) : null;
+        investIntA[i] = otherIncomeK(i); // 2026: P&L other income shown as investing interest
+        cfi[i] = (capContrib[i] ?? 0) + (investIntA[i] ?? 0);
+      } else {
+        dAR[i] = null; dInv[i] = null; dAP[i] = null; cfo[i] = null; cashBop[i] = null; cfi[i] = null; investIntA[i] = null;
+      }
     }
   }
 
@@ -1800,7 +1878,7 @@ function CashFlowTab({ actuals, actualOnly, scenario, invAdjust }: { actuals: Re
     options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{ position:'bottom', labels:{ boxWidth:12, font:{ size:11 } } } }, scales:{ y:{ ticks:{ callback:(v:number)=>'$'+v+'K' } } } }
   }), [S, actualOnly]);
 
-  type CFRow = { name: string; type?: string; indent?: boolean; data: (number|null)[] };
+  type CFRow = { name: string; type?: string; indent?: boolean; data: (number|null)[]; editable?: keyof CfInputs };
   const cfRows: CFRow[] = [
     { name: 'Net Income',                        data: netIncome },
     { name: 'Changes in Working Capital', type:'sub', data: dAR.map((v,i)=> v==null?null:(v + (dInv[i] as number) + (dAP[i] as number))) },
@@ -1808,10 +1886,15 @@ function CashFlowTab({ actuals, actualOnly, scenario, invAdjust }: { actuals: Re
     { name: 'Inventory', indent:true,            data: dInv },
     { name: 'Accounts Payable & Accrued', indent:true, data: dAP },
     { name: 'Cash from Operations',       type:'total', data: cfo },
-    { name: 'Cash from Investing',        type:'sub', data: cfi },
-    { name: 'Capital Contributions', indent:true, data: dCapital },
-    { name: 'Interest', indent:true, data: interest },
+    { name: 'Cash from Investing & Financing', type:'sub', data: cfi },
+    { name: 'Capital Contribution', indent:true, editable:'capital', data: capContrib },
+    { name: 'WC Loan draw/(repay)', indent:true, editable:'wcDraw', data: wcDrawA },
+    { name: 'FCT Loan draw/(repay)', indent:true, editable:'fctDraw', data: fctDrawA },
+    { name: 'WC Loan interest', indent:true, editable:'wcInt', data: wcIntA.map(v=> v==null?null:-v) },
+    { name: 'FCT Loan interest', indent:true, editable:'fctInt', data: fctIntA.map(v=> v==null?null:-v) },
+    { name: 'Investing interest', indent:true, editable:'investInt', data: investIntA },
     { name: 'Cash — Beginning of Month',         data: cashBop },
+    { name: 'Cash Movement',              type:'total', data: cashMove },
     { name: 'Cash — End of Month',        type:'total', data: cashEop },
   ];
 
@@ -1833,6 +1916,19 @@ function CashFlowTab({ actuals, actualOnly, scenario, invAdjust }: { actuals: Re
             </button>
           ))}
         </div>
+        {(yearFilter === 2027 || yearFilter === 2028) && (
+          cfEditMode ? (
+            <span className="flex items-center gap-1">
+              <button onClick={() => { if (cfDraft) saveCfInputs(cfDraft); window.location.reload(); }}
+                className="rounded-full border border-emerald-300 bg-emerald-50 text-emerald-700 px-2 py-0.5 hover:bg-emerald-100">🔒 Congelar cambios</button>
+              <button onClick={() => { setCfEditMode(false); setCfDraft(null); }}
+                className="rounded-full border border-border px-2 py-0.5 hover:bg-muted">Cancelar</button>
+            </span>
+          ) : (
+            <button onClick={() => { setCfEditMode(true); setCfDraft(loadCfInputs()); }}
+              className="rounded-full border border-[#A3224A] text-[#A3224A] px-2 py-0.5 hover:bg-[#FFF5F7]">✏️ Editar cashflow {yearFilter}</button>
+          )
+        )}
       </div>
 
       <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
@@ -1869,6 +1965,23 @@ function CashFlowTab({ actuals, actualOnly, scenario, invAdjust }: { actuals: Re
                     style={{color:"#1C2340"}}>{row.name}</td>
                   {visIdx.map((i) => {
                     const v = row.data[i];
+                    if (row.editable && cfEditMode && S[i].isForecast && yearOf(i) >= 2027) {
+                      const k = cfKey(i);
+                      const cur = cfDraft?.[row.editable]?.[k] ?? 0;
+                      return (
+                        <td key={i} className="px-1 py-0.5 text-right">
+                          <input type="number" step="0.1" value={cur === 0 ? "" : cur}
+                            onChange={e => {
+                              const nv = parseFloat(e.target.value) || 0;
+                              setCfDraft(prev => {
+                                const base = prev ?? loadCfInputs();
+                                return { ...base, [row.editable!]: { ...base[row.editable!], [k]: nv } };
+                              });
+                            }}
+                            className="w-14 rounded border border-[#A3224A]/40 bg-[#FFF5F7] px-1 py-0.5 text-[11px] text-right font-mono" />
+                        </td>
+                      );
+                    }
                     return (
                     <td key={i} className="text-right px-2 py-1.5 font-mono tabular-nums"
                       style={{
@@ -1945,6 +2058,10 @@ const BS_ROWS: BSNode[] = [
   {id:"g-other-liab",label:"Other Current Liabilities",kind:"group",indent:0},
     {id:"accrued",parentId:"g-other-liab",label:"2010 Accrued Liabilities",kind:"item",indent:1,actualKey:"accrued_liabilities",forecastFn:()=>10.34},
   {id:"t-other-liab",label:"Total Other Current Liabilities",kind:"total",indent:0,forecastFn:()=>10.34},
+  {id:"g-loans",label:"Loans",kind:"group",indent:0},
+    {id:"wc_loan",parentId:"g-loans",label:"WC Loan",kind:"item",indent:1,forecastFn:()=>0},
+    {id:"fct_loan",parentId:"g-loans",label:"Factoring Loan",kind:"item",indent:1,forecastFn:()=>0},
+  {id:"t-loans",label:"Total Loans",kind:"total",indent:0,forecastFn:()=>0},
   {id:"t-liab",label:"Total Liabilities",kind:"total",indent:0,forecastFn:(m,i)=>m.total_liab[i]},
 
   // ── EQUITY ──────────────────────────────────────────────────────────────────
@@ -1954,6 +2071,7 @@ const BS_ROWS: BSNode[] = [
     {id:"cap2",parentId:"g-capital",label:"2nd Investment Round",kind:"item",indent:1,actualKey:"capital_2nd_round",forecastFn:()=>399.87},
     {id:"cap3",parentId:"g-capital",label:"3rd Investment Round",kind:"item",indent:1,actualKey:"capital_3rd_round",forecastFn:()=>685.97},
     {id:"cap4",parentId:"g-capital",label:"4th Investment Round",kind:"item",indent:1,actualKey:"capital_4th_round",forecastFn:()=>2146.73},
+    {id:"cap_new",parentId:"g-capital",label:"New Contributions (forecast)",kind:"item",indent:1,forecastFn:()=>0},
   {id:"t-capital",label:"Total Capital Contributions",kind:"total",indent:0,forecastFn:()=>3457.57},
   {id:"common_stock",label:"Common Stock",kind:"item",indent:0,actualKey:"common_stock",forecastFn:()=>1.10},
   {id:"open_bal_eq",label:"Opening Balance Equity",kind:"item",indent:0,actualKey:"opening_balance_equity",forecastFn:()=>-1.87},
@@ -2013,6 +2131,10 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario, invAdjust = {},
   const fwdOpenEqK  = S.find(m => m.isForecast)?.openEq ?? -1.87;
   const fwdRetEarnK = S.find(m => m.isForecast)?.retEarn ?? -1548.94;
   const forecastNetIncEq = (idx: number) => S[idx].netIncEq ?? 0;
+  const forecastCC = (idx: number) => S[idx].creditCards ?? 0;
+  const forecastCapital = (idx: number) => S[idx].capital ?? 0;
+  const forecastWcLoan = (idx: number) => S[idx].wcLoan ?? 0;
+  const forecastFctLoan = (idx: number) => S[idx].fctLoan ?? 0;
   const forecastEquityK = (idx: number) => S[idx].totalEquity ?? 0;
 
   const isRealMonthFn = (idx: number) => !!bsByPeriod[PERIODS36[idx]];
@@ -2082,9 +2204,10 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario, invAdjust = {},
       if (row.id === "t-ar")   return real ? getValue(BS_ROWS.find(r=>r.id==="g-ar")!, idx)   : forecastAR(idx);
       if (row.id === "t-inv")  return real ? getValue(BS_ROWS.find(r=>r.id==="g-inv")!, idx)  : forecastInventory(idx);
       if (row.id === "t-fixed") return real ? getValue(BS_ROWS.find(r=>r.id==="g-fixed")!, idx) : fwdFixedK;
-      if (row.id === "t-cc") return real ? getValue(BS_ROWS.find(r=>r.id==="g-cc")!, idx) : avgCreditCardsK;
+      if (row.id === "t-cc") return real ? getValue(BS_ROWS.find(r=>r.id==="g-cc")!, idx) : forecastCC(idx);
       if (row.id === "t-other-liab") return accruedK;
-      if (row.id === "t-capital") return real ? getValue(BS_ROWS.find(r=>r.id==="g-capital")!, idx) : fwdCapitalK;
+      if (row.id === "t-loans") return real ? 0 : forecastWcLoan(idx) + forecastFctLoan(idx);
+      if (row.id === "t-capital") return real ? getValue(BS_ROWS.find(r=>r.id==="g-capital")!, idx) : forecastCapital(idx);
       if (row.id === "t-curr-assets") {
         return (getValue(BS_ROWS.find(r=>r.id==="t-bank")!, idx) ?? 0)
           + (getValue(BS_ROWS.find(r=>r.id==="t-ar")!, idx) ?? 0)
@@ -2096,7 +2219,7 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario, invAdjust = {},
           + (getValue(BS_ROWS.find(r=>r.id==="t-fixed")!, idx) ?? 0)
           + (getValue(BS_ROWS.find(r=>r.id==="due_sh")!, idx) ?? 0);
       }
-      if (row.id === "t-liab") return (getValue(BS_ROWS.find(r=>r.id==="t-cc")!, idx) ?? 0) + (getValue(BS_ROWS.find(r=>r.id==="t-other-liab")!, idx) ?? 0);
+      if (row.id === "t-liab") return (getValue(BS_ROWS.find(r=>r.id==="t-cc")!, idx) ?? 0) + (getValue(BS_ROWS.find(r=>r.id==="t-other-liab")!, idx) ?? 0) + (getValue(BS_ROWS.find(r=>r.id==="t-loans")!, idx) ?? 0);
       if (row.id === "t-equity") {
         return (getValue(BS_ROWS.find(r=>r.id==="t-capital")!, idx) ?? 0)
           + (getValue(BS_ROWS.find(r=>r.id==="common_stock")!, idx) ?? 0)
@@ -2129,7 +2252,10 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario, invAdjust = {},
       if (row.id === "ret_earn") return fwdRetEarnK;
       if (row.id === "net_inc_eq") return forecastNetIncEq(idx);
       // Individual credit-card lines: show blended average on the primary line, 0 on the rest.
-      if (row.id === "boa3724") return avgCreditCardsK;
+      if (row.id === "boa3724") return forecastCC(idx);
+      if (row.id === "wc_loan") return forecastWcLoan(idx);
+      if (row.id === "fct_loan") return forecastFctLoan(idx);
+      if (row.id === "cap_new") return forecastCapital(idx) - fwdCapitalK;
       if (["boa7830","boa8781","citi_cc","merc_cc"].includes(row.id)) return 0;
       // Individual bank lines: show total cash on the primary line, 0 on the rest.
       if (row.id === "bofa") return forecastCash(idx);
@@ -2167,7 +2293,7 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario, invAdjust = {},
           <span className="h-2 w-2 rounded-full bg-emerald-500 inline-block"/>
           <strong className="text-foreground">Bold</strong> = Accountfully real snapshot
         </span>
-        <span className="opacity-60">Gray = forecast · edit forecast Inventory in the row below (Bank moves inversely, $-for-$) · Cash is the balancing figure so Assets = Liab + Equity every month</span>
+        <span className="opacity-60">Gray = forecast · 2027/2028: Bank = Cash End-of-Month del Cashflow; Credit Cards fijo $11k; WC/Factoring loans y Capital salen del Cashflow. Assets = Liab + Equity siempre.</span>
       </div>
 
       <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
