@@ -18,8 +18,11 @@ import {
   insertSalesAccount, deleteSalesAccount, insertPromoRows, deletePromoRows,
   aggregateByAccountMonth, aggregateAnnualByAccount, aggregateAnnualUnitsByAccount,
   fetchAccountActuals, shiftPromoOneMonthEarlier,
+  fetchAssumptions, updateAssumption, deliveredCostOf, distPctOf, cogsOf, fulfillmentPerUnit,
+  accountPnLInputs,
   breakdownByRetail, breakdownByDistributor, breakdownBySku, sumOverMonths, monthKeysForPeriod,
   type SalesAccount, type PromoCalendarRow, type DbMonthAgg, type AccountActual, type BreakdownRow,
+  type AccountPnLInputs,
 } from "@/lib/sales-database";
 
 const DEFAULT_MIX_PCT: Record<string,number> = {XD:30,PW:25,HM:18,WM:12,WD:8,Matcha:7};
@@ -42,7 +45,7 @@ const ALL_MONTHS_REAL = [
   "Jul 2028","Aug 2028","Sep 2028","Oct 2028","Nov 2028","Dec 2028",
 ];
 
-type SalesTab = "real"|"resumen"|"detalle"|"sku"|"estacionalidad"|"assumptions"|"accounts"|"promocal"|"breakdown";
+type SalesTab = "real"|"resumen"|"detalle"|"sku"|"estacionalidad"|"accounts"|"promocal"|"breakdown";
 declare global { interface Window { Chart: any } }
 
 // ─── Real Monthly Tab (derived from invoiced pipeline) ───────────────────────
@@ -726,87 +729,76 @@ function SeasonalityTab({seasonIdx,onSeasonIdxChange,velChains,onVelChainsChange
 
 // ─── Accounts Tab (transposed like the Excel — accounts as columns) ──────────
 type AcctField = { key: keyof SalesAccount; label: string; pct?: boolean; money?: boolean };
-type AcctRow = AcctField | { kind: "separator"; label: string } | { kind: "formula"; label: string; fn: (a: SalesAccount, ctx: AcctCtx) => string };
-type AcctCtx = { annualRev: Map<string,number>; annualUnits: Map<string,number>; year: number };
+type AcctCtx = {
+  year: number;
+  assumptions: Record<string, number>;
+  pnl: Map<string, AccountPnLInputs>;   // per-account inputs from Promo Calendar
+};
+type AcctRow = AcctField
+  | { kind: "separator"; label: string; danger?: boolean }
+  | { kind: "formula"; label: string; danger?: boolean; fn: (a: SalesAccount, ctx: AcctCtx) => string };
+
+// helpers reused across formulas
+function _pnl(a: SalesAccount, ctx: AcctCtx) { return ctx.pnl.get(a.account_name) ?? { totalUnits:0, regUnits:0, promoUnits:0, promoCost:0, unitsBySku:{} }; }
+function _dc(a: SalesAccount, ctx: AcctCtx) { return deliveredCostOf(ctx.assumptions, a.distributor); }
+function _grossSales(a: SalesAccount, ctx: AcctCtx) { return _pnl(a,ctx).totalUnits * _dc(a,ctx); }
+function _edlpTotal(a: SalesAccount, ctx: AcctCtx) { return _pnl(a,ctx).totalUnits * (a.edlp_allowance ?? 0); }
+function _distFee(a: SalesAccount, ctx: AcctCtx) { return _grossSales(a,ctx) * distPctOf(ctx.assumptions,"dist_fees",a.distributor); }
+function _distAllow(a: SalesAccount, ctx: AcctCtx) { return _grossSales(a,ctx) * distPctOf(ctx.assumptions,"dist_allowance",a.distributor); }
+function _payTerms(a: SalesAccount, ctx: AcctCtx) { return _grossSales(a,ctx) * distPctOf(ctx.assumptions,"payment_terms",a.distributor); }
+function _promoCost(a: SalesAccount, ctx: AcctCtx) { return _pnl(a,ctx).promoCost; }
+function _totalDiscounts(a: SalesAccount, ctx: AcctCtx) { return _edlpTotal(a,ctx) + _promoCost(a,ctx) + _distFee(a,ctx) + _distAllow(a,ctx) + _payTerms(a,ctx); }
+function _netSales(a: SalesAccount, ctx: AcctCtx) { return _grossSales(a,ctx) - _totalDiscounts(a,ctx); }
+function _cogs(a: SalesAccount, ctx: AcctCtx) { const p=_pnl(a,ctx); return Object.entries(p.unitsBySku).reduce((s,[sku,u])=>s+u*cogsOf(ctx.assumptions,sku),0); }
+function _fulfillment(a: SalesAccount, ctx: AcctCtx) { return _pnl(a,ctx).totalUnits * fulfillmentPerUnit(ctx.assumptions); }
+function _grossProfit(a: SalesAccount, ctx: AcctCtx) { return _netSales(a,ctx) - _cogs(a,ctx) - _fulfillment(a,ctx); }
+const _money = (v:number) => "$"+Math.round(v).toLocaleString();
+
 const ACCT_ROWS: AcctRow[] = [
-  // ── Pricing (editable inputs) ──
+  // ── Pricing ──
   { key: "distributor", label: "Distributor" },
-  { key: "delivered_cost", label: "Delivered Cost", money: true },
+  { kind: "formula", label: "Delivered Cost", fn: (a,ctx) => "$"+_dc(a,ctx).toFixed(4) },   // from assumptions
   { key: "dist_markup_pct", label: "Dist. Markup", pct: true },
-  { kind: "formula", label: "Account Cost", fn: a => {
-    const dc=a.delivered_cost??0, m=a.dist_markup_pct??0;
-    return (dc*(1+m)).toFixed(4);
-  }},
+  { key: "edlp_allowance", label: "EDLP", money: true },
   { key: "srp", label: "SRP", money: true },
-  { key: "edlp_allowance", label: "EDLP Allowance", money: true },
-  { kind: "formula", label: "Account GM", fn: a => {
-    const dc=a.delivered_cost??0, m=a.dist_markup_pct??0, srp=a.srp??0;
-    if(!srp) return "—";
-    const acctCost=dc*(1+m);
-    return ((srp-acctCost)/srp*100).toFixed(1)+"%";
-  }},
-  // ── Discounts (editable %) ──
-  { kind: "separator", label: "Discounts" },
-  { key: "discounts_pct", label: "Discounts %", pct: true },
-  { key: "edlp_pct", label: "   EDLP %", pct: true },
-  { key: "promos_pct", label: "   Promos %", pct: true },
-  { key: "dist_fees_pct", label: "   Dist. Fees %", pct: true },
-  { key: "dist_allowance_pct", label: "Dist. Allowance %", pct: true },
-  { key: "payment_terms_pct", label: "Payment Terms %", pct: true },
-  // ── Unit P&L (formulas) ──
-  { kind: "separator", label: "Unit P&L" },
-  { kind: "formula", label: "Net Sales", fn: a => {
-    const dc=a.delivered_cost??0, d=a.discounts_pct??0;
-    return "$"+(dc*(1-d)).toFixed(4);
-  }},
-  { key: "cogs_per_unit" as keyof SalesAccount, label: "COGS", money: true },
-  { key: "fulfillment_cost", label: "Fulfillment", money: true },
-  { kind: "formula", label: "Gross Profit", fn: a => {
-    const dc=a.delivered_cost??0, d=a.discounts_pct??0;
-    const ns=dc*(1-d), cogs=a.cogs_per_unit??0, ff=a.fulfillment_cost??0;
-    return "$"+(ns-cogs-ff).toFixed(4);
-  }},
-  { kind: "formula", label: "Gross Margin", fn: a => {
-    const dc=a.delivered_cost??0, d=a.discounts_pct??0;
-    if(!dc) return "—";
-    const ns=dc*(1-d), cogs=a.cogs_per_unit??0, ff=a.fulfillment_cost??0;
-    return ((ns-cogs-ff)/dc*100).toFixed(1)+"%";
-  }},
-  // ── 52W Sales ──
-  { kind: "separator", label: "52W Sales" },
-  { kind: "formula", label: "Total $ sales", fn: (a,ctx) => {
-    const rev=ctx.annualRev.get(`${ctx.year}|${a.account_name}`)??0;
-    return "$"+Math.round(rev).toLocaleString();
-  }},
-  { kind: "formula", label: "Total unit sales", fn: (a,ctx) => {
-    const u=ctx.annualUnits.get(`${ctx.year}|${a.account_name}`)??0;
-    return Math.round(u).toLocaleString();
-  }},
-  // ── 52W P&L ──
+  { kind: "formula", label: "Account Cost", fn: (a,ctx) => "$"+(_dc(a,ctx)*(1+(a.dist_markup_pct??0))).toFixed(4) },
+  { kind: "formula", label: "Account GM", fn: (a,ctx) => { const srp=a.srp??0; if(!srp) return "—"; const ac=_dc(a,ctx)*(1+(a.dist_markup_pct??0)); return ((srp-ac)/srp*100).toFixed(1)+"%"; }},
+
+  // ── 52W P&L (todo fórmula) ──
   { kind: "separator", label: "52W P&L" },
-  { kind: "formula", label: "Gross Sales", fn: (a,ctx) => { const u=ctx.annualUnits.get(`${ctx.year}|${a.account_name}`)??0; return "$"+Math.round(u*(a.delivered_cost??0)).toLocaleString(); }},
-  { kind: "formula", label: "Discounts", fn: (a,ctx) => { const gs=(ctx.annualUnits.get(`${ctx.year}|${a.account_name}`)??0)*(a.delivered_cost??0); return "$"+Math.round(gs*(a.discounts_pct??0)).toLocaleString(); }},
-  { kind: "formula", label: "   EDLP", fn: (a,ctx) => { const gs=(ctx.annualUnits.get(`${ctx.year}|${a.account_name}`)??0)*(a.delivered_cost??0); return "$"+Math.round(gs*(a.edlp_pct??0)).toLocaleString(); }},
-  { kind: "formula", label: "   Promos", fn: (a,ctx) => { const gs=(ctx.annualUnits.get(`${ctx.year}|${a.account_name}`)??0)*(a.delivered_cost??0); return "$"+Math.round(gs*(a.promos_pct??0)).toLocaleString(); }},
-  { kind: "formula", label: "   Dist. Fees", fn: (a,ctx) => { const gs=(ctx.annualUnits.get(`${ctx.year}|${a.account_name}`)??0)*(a.delivered_cost??0); return "$"+Math.round(gs*(a.dist_fees_pct??0)).toLocaleString(); }},
-  { kind: "formula", label: "   Dist. Allowance", fn: (a,ctx) => { const gs=(ctx.annualUnits.get(`${ctx.year}|${a.account_name}`)??0)*(a.delivered_cost??0); return "$"+Math.round(gs*(a.dist_allowance_pct??0)).toLocaleString(); }},
-  { kind: "formula", label: "   Payment Terms", fn: (a,ctx) => { const gs=(ctx.annualUnits.get(`${ctx.year}|${a.account_name}`)??0)*(a.delivered_cost??0); return "$"+Math.round(gs*(a.payment_terms_pct??0)).toLocaleString(); }},
-  { kind: "formula", label: "Net Sales", fn: (a,ctx) => { const gs=(ctx.annualUnits.get(`${ctx.year}|${a.account_name}`)??0)*(a.delivered_cost??0); return "$"+Math.round(gs*(1-(a.discounts_pct??0))).toLocaleString(); }},
-  { kind: "formula", label: "COGS", fn: (a,ctx) => { const u=ctx.annualUnits.get(`${ctx.year}|${a.account_name}`)??0; return "$"+Math.round(u*(a.cogs_per_unit??0)).toLocaleString(); }},
-  { kind: "formula", label: "Fulfillment", fn: (a,ctx) => { const u=ctx.annualUnits.get(`${ctx.year}|${a.account_name}`)??0; return "$"+Math.round(u*(a.fulfillment_cost??0)).toLocaleString(); }},
-  { kind: "formula", label: "Gross Profit", fn: (a,ctx) => { const u=ctx.annualUnits.get(`${ctx.year}|${a.account_name}`)??0,dc=a.delivered_cost??0; const ns=u*dc*(1-(a.discounts_pct??0)); return "$"+Math.round(ns-u*(a.cogs_per_unit??0)-u*(a.fulfillment_cost??0)).toLocaleString(); }},
-  { kind: "formula", label: "Gross Margin", fn: (a,ctx) => { const u=ctx.annualUnits.get(`${ctx.year}|${a.account_name}`)??0,dc=a.delivered_cost??0; const gs=u*dc; if(!gs)return "—"; const ns=gs*(1-(a.discounts_pct??0)); return (((ns-u*(a.cogs_per_unit??0)-u*(a.fulfillment_cost??0))/gs)*100).toFixed(0)+"%"; }},
+  { kind: "formula", label: "Total units", fn: (a,ctx) => Math.round(_pnl(a,ctx).totalUnits).toLocaleString() },
+  { kind: "formula", label: "Regular sales", fn: (a,ctx) => { const p=_pnl(a,ctx); if(!p.totalUnits) return "—"; return (p.regUnits/p.totalUnits*100).toFixed(0)+"%"; }},
+  { kind: "formula", label: "Promo", fn: (a,ctx) => { const p=_pnl(a,ctx); if(!p.totalUnits) return "—"; return (p.promoUnits/p.totalUnits*100).toFixed(0)+"%"; }},
+  { kind: "formula", label: "Gross Sales", fn: (a,ctx) => _money(_grossSales(a,ctx)) },
+
+  { kind: "separator", label: "Total Discounts", danger: true },
+  { kind: "formula", label: "   % discount", fn: (a,ctx) => { const gs=_grossSales(a,ctx); if(!gs) return "—"; return (_totalDiscounts(a,ctx)/gs*100).toFixed(1)+"%"; }},
+  { kind: "formula", label: "   EDLP", fn: (a,ctx) => _money(_edlpTotal(a,ctx)) },
+  { kind: "formula", label: "   Promo", fn: (a,ctx) => _money(_promoCost(a,ctx)) },
+  { kind: "formula", label: "   Dist Fee", fn: (a,ctx) => _money(_distFee(a,ctx)) },
+  { kind: "formula", label: "   Dist Allow", fn: (a,ctx) => _money(_distAllow(a,ctx)) },
+  { kind: "formula", label: "   Paym Terms", fn: (a,ctx) => _money(_payTerms(a,ctx)) },
+
+  { kind: "separator", label: "Net Sales", danger: true },
+  { kind: "formula", label: "Net Sales", danger: true, fn: (a,ctx) => _money(_netSales(a,ctx)) },
+  { kind: "formula", label: "COGS", fn: (a,ctx) => _money(_cogs(a,ctx)) },
+  { kind: "formula", label: "Fulfillment", fn: (a,ctx) => _money(_fulfillment(a,ctx)) },
+  { kind: "formula", label: "Gross Profit", danger: true, fn: (a,ctx) => _money(_grossProfit(a,ctx)) },
+  { kind: "formula", label: "Gross Margin", danger: true, fn: (a,ctx) => { const gs=_grossSales(a,ctx); if(!gs) return "—"; return (_grossProfit(a,ctx)/gs*100).toFixed(0)+"%"; }},
 ];
 
-function AccountsTab({accounts,annualByAccount,annualUnitsByAccount,loading,onUpdated,onInserted,onDeleted}:{
-  accounts:SalesAccount[];annualByAccount:Map<string,number>;annualUnitsByAccount:Map<string,number>;loading:boolean;
+function AccountsTab({accounts,promoRows,assumptions,onAssumptionChange,loading,onUpdated,onInserted,onDeleted}:{
+  accounts:SalesAccount[];promoRows:PromoCalendarRow[];assumptions:Record<string,number>;
+  onAssumptionChange:(key:string,value:number)=>void;loading:boolean;
   onUpdated:(a:SalesAccount)=>void;onInserted:(rows:SalesAccount[])=>void;onDeleted:(ids:string[])=>void;
 }) {
   const [year,setYear] = useState<number>(2027);
   const [saving,setSaving] = useState<string|null>(null);
   const [adding,setAdding] = useState(false);
+  const [showAssumptions,setShowAssumptions] = useState(false);
   const years = Array.from(new Set(accounts.map(a=>a.year))).sort();
   const cols = accounts.filter(a=>a.year===year).sort((a,b)=>a.account_name.localeCompare(b.account_name));
+  const ctx: AcctCtx = useMemo(()=>({ year, assumptions, pnl: accountPnLInputs(promoRows, year) }),[year,assumptions,promoRows]);
 
   async function commitCell(acc:SalesAccount, field:AcctField, rawInput:string){
     let val:any;
@@ -866,11 +858,18 @@ function AccountsTab({accounts,annualByAccount,annualUnitsByAccount,loading,onUp
             className={`rounded-full px-3.5 py-1.5 text-xs font-semibold ${year===y?"text-white":"border border-border text-muted-foreground"}`}
             style={year===y?{backgroundColor:"#1C2340"}:{}}>{y}</button>
         ))}
+        <button onClick={()=>setShowAssumptions(s=>!s)}
+          className="rounded-full border border-violet-400 px-3 py-1.5 text-xs font-semibold text-violet-700 hover:bg-violet-50 flex items-center gap-1">
+          <span className="transition-transform" style={{transform:showAssumptions?"rotate(90deg)":"none"}}>▶</span> ⚙️ Assumptions
+        </button>
         <button onClick={addAccount} disabled={adding}
           className="ml-auto rounded-full border border-emerald-500 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50">
           {adding?"Agregando…":"+ Agregar cuenta"}
         </button>
       </div>
+
+      {showAssumptions && <AssumptionsPanel assumptions={assumptions} onChange={onAssumptionChange}/>}
+
       <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
         <table className="text-xs min-w-max border-collapse">
           <thead>
@@ -893,19 +892,20 @@ function AccountsTab({accounts,annualByAccount,annualUnitsByAccount,loading,onUp
             ) : (<>
               {ACCT_ROWS.map((row,ri)=>{
                 if("kind" in row && row.kind==="separator"){
+                  const dngr=(row as any).danger;
                   return (
                     <tr key={`sep-${ri}`} className="border-t-2 border-border">
-                      <td colSpan={cols.length+1} className="px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold sticky left-0 bg-muted/30 z-10" style={{color:"#A3224A"}}>{row.label}</td>
+                      <td colSpan={cols.length+1} className={`px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold sticky left-0 z-10 ${dngr?"":"bg-muted/30"}`} style={dngr?{color:"#DC2626",backgroundColor:"#FEF2F2"}:{color:"#A3224A"}}>{row.label}</td>
                     </tr>
                   );
                 }
                 if("kind" in row && row.kind==="formula"){
-                  const ctx:AcctCtx={annualRev:annualByAccount,annualUnits:annualUnitsByAccount,year};
+                  const dngr=(row as any).danger;
                   return (
-                    <tr key={`f-${ri}`} className="border-t border-border/60 bg-muted/5">
-                      <td className="px-3 py-1.5 font-semibold sticky left-0 bg-muted/5 z-10 text-muted-foreground italic" style={{fontSize:11}}>{row.label}</td>
+                    <tr key={`f-${ri}`} className={`border-t border-border/60 ${dngr?"":"bg-muted/5"}`} style={dngr?{backgroundColor:"#FEF2F2"}:{}}>
+                      <td className={`px-3 py-1.5 font-semibold sticky left-0 z-10 ${dngr?"":"bg-muted/5 text-muted-foreground italic"}`} style={dngr?{color:"#DC2626",backgroundColor:"#FEF2F2"}:{fontSize:11}}>{row.label}</td>
                       {cols.map(a=>(
-                        <td key={a.id} className="px-2 py-1.5 text-right font-mono text-xs text-muted-foreground">{row.fn(a,ctx)}</td>
+                        <td key={a.id} className={`px-2 py-1.5 text-right font-mono text-xs ${dngr?"font-bold":"text-muted-foreground"}`} style={dngr?{color:"#DC2626"}:{}}>{row.fn(a,ctx)}</td>
                       ))}
                     </tr>
                   );
@@ -1108,8 +1108,8 @@ function PromoCalendarTab({rows,accounts,byAccountMonth,loading,onUpdated,onInse
 }
 
 // ─── Sales Breakdown Tab (por Retail / DC / SKU · units y facturación) ────────
-function SalesBreakdownTab({rows,accounts,loading}:{
-  rows:PromoCalendarRow[];accounts:SalesAccount[];loading:boolean;
+function SalesBreakdownTab({rows,accounts,assumptions,loading}:{
+  rows:PromoCalendarRow[];accounts:SalesAccount[];assumptions:Record<string,number>;loading:boolean;
 }) {
   const years = Array.from(new Set(rows.map(r=>r.year))).sort();
   const [year,setYear] = useState<number>(years[0]??2027);
@@ -1119,9 +1119,9 @@ function SalesBreakdownTab({rows,accounts,loading}:{
   const [open,setOpen] = useState<Record<string,boolean>>({retail:true,dc:false,sku:false});
 
   const monthKeys = useMemo(()=>monthKeysForPeriod(pmode,year,q,month),[pmode,year,q,month]);
-  const byRetail = useMemo(()=>breakdownByRetail(rows,accounts),[rows,accounts]);
-  const byDC = useMemo(()=>breakdownByDistributor(rows,accounts),[rows,accounts]);
-  const bySku = useMemo(()=>breakdownBySku(rows,accounts),[rows,accounts]);
+  const byRetail = useMemo(()=>breakdownByRetail(rows,accounts,assumptions),[rows,accounts,assumptions]);
+  const byDC = useMemo(()=>breakdownByDistributor(rows,accounts,assumptions),[rows,accounts,assumptions]);
+  const bySku = useMemo(()=>breakdownBySku(rows,accounts,assumptions),[rows,accounts,assumptions]);
 
   const periodLabel = pmode==="year"?`${year}`:pmode==="quarter"?`Q${q} ${year}`:`${MONTHS_SHORT[month-1]} ${year}`;
   const fmt=(v:number)=>`$${Math.round(v).toLocaleString()}`;
@@ -1222,111 +1222,79 @@ function SalesBreakdownTab({rows,accounts,loading}:{
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
-// ─── Assumptions Tab ──────────────────────────────────────────────────────────
-const DIST_DEFAULTS = {UNFI:{payment_terms:2.0,dist_fees:1.5,dist_allowance:2.5},KEHE:{payment_terms:2.0,dist_fees:1.5,dist_allowance:2.0},Rainforest:{payment_terms:0,dist_fees:0,dist_allowance:18}};
-const COGS_SKU_DEFAULT:Record<string,number> = {XD:2.30,PW:2.40,HM:2.20,WM:2.15,WD:2.10,Matcha:2.10,VS:1.90,CS:1.90,GR:2.00,GS:2.00};
-const LS_COGS="baris.sales.cogsBySku", LS_OI="baris.sales.ois";
-
-function AssumptionsTab(){
-  const [cogsSku,setCogsSku]=useState<Record<string,number>>(()=>{
-    try{const v=window.localStorage.getItem(LS_COGS);if(v)return JSON.parse(v);}catch{}return {...COGS_SKU_DEFAULT};
-  });
-  const [ois,setOis]=useState<{month:number;unfi_oi:number;kehe_oi:number;unfi_ad:number;kehe_ad:number}[]>(()=>{
-    try{const v=window.localStorage.getItem(LS_OI);if(v)return JSON.parse(v);}catch{}
-    return Array.from({length:12},(_,i)=>({month:i+1,unfi_oi:0,kehe_oi:0,unfi_ad:0,kehe_ad:0}));
-  });
-  function saveCogs(sku:string,val:number){const n={...cogsSku,[sku]:val};setCogsSku(n);try{window.localStorage.setItem(LS_COGS,JSON.stringify(n));}catch{}}
-  function saveOi(i:number,field:string,val:number){const n=[...ois];(n[i] as any)[field]=val;setOis(n);try{window.localStorage.setItem(LS_OI,JSON.stringify(n));}catch{}}
-  const inp="rounded border border-border bg-background px-1.5 py-0.5 text-xs font-mono text-right focus:outline-none focus:ring-1 focus:ring-primary/30 w-16";
-  const oiTotal=(field:string)=>ois.reduce((s,r)=>s+((r as any)[field]??0),0);
+// ─── Assumptions Panel (central, persisted in Supabase) ───────────────────────
+function AssumptionsPanel({assumptions,onChange}:{assumptions:Record<string,number>;onChange:(key:string,value:number)=>void}){
+  const inp="rounded border border-border bg-background px-1.5 py-0.5 text-xs font-mono text-right focus:outline-none focus:ring-1 focus:ring-violet-400 w-20";
+  const DIST=["UNFI","KEHE","Rainforest"] as const;
+  const num=(k:string,def=0)=>assumptions[k]??def;
 
   return (
-    <div className="space-y-5">
-      <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-700">
-        ⚙️ Parámetros base del modelo de ventas. Estos valores alimentan las fórmulas de Accounts, el Promo Calendar y el Monthly P&L. Editá y se guardan automáticamente.
+    <div className="rounded-2xl border-2 border-violet-300 bg-violet-50/40 shadow-sm overflow-hidden">
+      <div className="px-5 py-3 border-b border-violet-200 bg-violet-50">
+        <p className="text-sm font-bold" style={{color:"#6D28D9"}}>⚙️ Assumptions — parámetros centrales del modelo</p>
+        <p className="text-xs text-violet-700">Todo editable. Al cambiar un valor acá, se recalculan las fórmulas de todas las cuentas y del Sales Breakdown. Se guarda automáticamente.</p>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-        {/* ── Delivered Cost by Distributor ── */}
-        <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
-          <div className="px-5 py-3 border-b border-border bg-muted/30"><p className="text-sm font-bold" style={{color:"#1C2340"}}>Delivered Cost por Distribuidor</p></div>
-          <table className="w-full text-xs"><tbody>
-            {(["UNFI","KEHE","Rainforest"] as const).map(d=>(
-              <tr key={d} className="border-t border-border/60"><td className="px-4 py-2 font-semibold">{d}</td><td className="px-4 py-2 text-right font-mono">${d==="Rainforest"?"4.8125":"4.62"}</td></tr>
-            ))}
-          </tbody></table>
-        </div>
-        {/* ── Distributor Discounts ── */}
-        <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
-          <div className="px-5 py-3 border-b border-border bg-muted/30"><p className="text-sm font-bold" style={{color:"#1C2340"}}>Distributor Discounts (defaults)</p></div>
-          <table className="w-full text-xs"><thead><tr className="text-[10px] uppercase text-muted-foreground border-b border-border"><th className="px-4 py-1.5 text-left">Concepto</th><th className="px-4 py-1.5 text-right">UNFI</th><th className="px-4 py-1.5 text-right">KEHE</th><th className="px-4 py-1.5 text-right">Rainforest</th></tr></thead><tbody>
-            {(["payment_terms","dist_fees","dist_allowance"] as const).map(k=>{
-              const labels:Record<string,string>={payment_terms:"Payment Terms",dist_fees:"Distributor Fees",dist_allowance:"Distributor Allowance"};
-              return (
-                <tr key={k} className="border-t border-border/60"><td className="px-4 py-2 font-semibold">{labels[k]}</td>
-                  {(["UNFI","KEHE","Rainforest"] as const).map(d=>(<td key={d} className="px-4 py-2 text-right font-mono">{(DIST_DEFAULTS[d] as any)[k]}%</td>))}
-                </tr>
-              );
-            })}
-          </tbody></table>
-        </div>
-      </div>
-      {/* ── COGS by SKU ── */}
-      <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
-        <div className="px-5 py-3 border-b border-border bg-muted/30">
-          <p className="text-sm font-bold" style={{color:"#1C2340"}}>COGS por SKU ($/unidad)</p>
-          <p className="text-xs text-muted-foreground">Costo de materia prima + manufactura por pote. Editable.</p>
-        </div>
-        <div className="p-4 grid grid-cols-2 md:grid-cols-5 gap-3">
-          {EXTENDED_SKUS.map(sku=>(
-            <div key={sku} className="flex items-center gap-2">
-              <span className="text-xs font-semibold w-14">{sku}</span>
-              <input type="number" step="0.01" value={cogsSku[sku]??0}
-                onChange={e=>saveCogs(sku,parseFloat(e.target.value)||0)}
-                className={`${inp} flex-1`}/>
-            </div>
-          ))}
-        </div>
-      </div>
-      {/* ── OIs (Off-Invoice promotions by distributor by month) ── */}
-      <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
-        <div className="px-5 py-3 border-b border-border bg-muted/30">
-          <p className="text-sm font-bold" style={{color:"#1C2340"}}>OIs & Ad $ por Distribuidor — 2027</p>
-          <p className="text-xs text-muted-foreground">Off-Invoice y Ad dollars mensuales por UNFI y KEHE. Editable.</p>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs min-w-max">
-            <thead><tr className="text-[10px] uppercase text-muted-foreground border-b border-border bg-muted/20">
-              <th className="px-3 py-2 text-left">Month</th>
-              <th className="px-3 py-2 text-right">UNFI OI</th><th className="px-3 py-2 text-right">KEHE OI</th>
-              <th className="px-3 py-2 text-right">UNFI Ad$</th><th className="px-3 py-2 text-right">KEHE Ad$</th>
-              <th className="px-3 py-2 text-right font-bold">Total</th>
+      <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-5">
+        {/* Delivered Cost + Distributor % */}
+        <div className="rounded-xl border border-border bg-card overflow-hidden">
+          <div className="px-4 py-2 border-b border-border bg-muted/30"><p className="text-xs font-bold" style={{color:"#1C2340"}}>Por distribuidor</p></div>
+          <table className="w-full text-xs">
+            <thead><tr className="text-[9px] uppercase text-muted-foreground border-b border-border">
+              <th className="px-3 py-1.5 text-left">Concepto</th>{DIST.map(d=><th key={d} className="px-2 py-1.5 text-right">{d}</th>)}
             </tr></thead>
             <tbody>
-              {ois.map((r,i)=>(
-                <tr key={i} className="border-t border-border/60">
-                  <td className="px-3 py-1.5 font-semibold">{MONTHS_SHORT[i]}</td>
-                  <td className="px-3 py-1"><input type="number" value={r.unfi_oi} onChange={e=>saveOi(i,"unfi_oi",parseFloat(e.target.value)||0)} className={inp}/></td>
-                  <td className="px-3 py-1"><input type="number" value={r.kehe_oi} onChange={e=>saveOi(i,"kehe_oi",parseFloat(e.target.value)||0)} className={inp}/></td>
-                  <td className="px-3 py-1"><input type="number" value={r.unfi_ad} onChange={e=>saveOi(i,"unfi_ad",parseFloat(e.target.value)||0)} className={inp}/></td>
-                  <td className="px-3 py-1"><input type="number" value={r.kehe_ad} onChange={e=>saveOi(i,"kehe_ad",parseFloat(e.target.value)||0)} className={inp}/></td>
-                  <td className="px-3 py-1.5 text-right font-mono font-bold">${(r.unfi_oi+r.kehe_oi+r.unfi_ad+r.kehe_ad).toLocaleString()}</td>
+              {[
+                {label:"Delivered Cost ($)",prefix:"delivered_cost",pct:false},
+                {label:"Dist. Fees (%)",prefix:"dist_fees",pct:true},
+                {label:"Dist. Allowance (%)",prefix:"dist_allowance",pct:true},
+                {label:"Payment Terms (%)",prefix:"payment_terms",pct:true},
+              ].map(r=>(
+                <tr key={r.prefix} className="border-t border-border/60">
+                  <td className="px-3 py-1.5 font-semibold">{r.label}</td>
+                  {DIST.map(d=>{
+                    const key=`${r.prefix}.${d}`;
+                    const val=r.pct?(num(key)*100).toFixed(1):num(key);
+                    return (
+                      <td key={d} className="px-2 py-1">
+                        <input type="number" step="0.01" defaultValue={val} className={inp}
+                          onBlur={e=>{const raw=parseFloat(e.target.value)||0; onChange(key, r.pct?raw/100:raw);}}/>
+                      </td>
+                    );
+                  })}
                 </tr>
               ))}
             </tbody>
-            <tfoot><tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
-              <td className="px-3 py-2 font-semibold">TOTAL</td>
-              <td className="px-3 py-2 text-right font-mono">${oiTotal("unfi_oi").toLocaleString()}</td>
-              <td className="px-3 py-2 text-right font-mono">${oiTotal("kehe_oi").toLocaleString()}</td>
-              <td className="px-3 py-2 text-right font-mono">${oiTotal("unfi_ad").toLocaleString()}</td>
-              <td className="px-3 py-2 text-right font-mono">${oiTotal("kehe_ad").toLocaleString()}</td>
-              <td className="px-3 py-2 text-right font-mono font-bold">${(oiTotal("unfi_oi")+oiTotal("kehe_oi")+oiTotal("unfi_ad")+oiTotal("kehe_ad")).toLocaleString()}</td>
-            </tr></tfoot>
           </table>
+        </div>
+
+        {/* Fulfillment + COGS by SKU */}
+        <div className="space-y-4">
+          <div className="rounded-xl border border-border bg-card overflow-hidden">
+            <div className="px-4 py-2 border-b border-border bg-muted/30"><p className="text-xs font-bold" style={{color:"#1C2340"}}>Fulfillment estimado</p></div>
+            <div className="px-4 py-3 flex items-center gap-2">
+              <span className="text-xs font-semibold flex-1">Fulfillment by unit ($)</span>
+              <input type="number" step="0.01" defaultValue={num("fulfillment_per_unit",0.5)} className={inp}
+                onBlur={e=>onChange("fulfillment_per_unit",parseFloat(e.target.value)||0)}/>
+            </div>
+          </div>
+          <div className="rounded-xl border border-border bg-card overflow-hidden">
+            <div className="px-4 py-2 border-b border-border bg-muted/30"><p className="text-xs font-bold" style={{color:"#1C2340"}}>COGS por SKU ($/unidad)</p></div>
+            <div className="p-3 grid grid-cols-2 md:grid-cols-5 gap-2">
+              {EXTENDED_SKUS.map(sku=>(
+                <div key={sku} className="flex items-center gap-1">
+                  <span className="text-[11px] font-semibold w-12">{sku}</span>
+                  <input type="number" step="0.01" defaultValue={num(`cogs.${sku}`)} className="rounded border border-border bg-background px-1 py-0.5 text-xs font-mono text-right focus:outline-none focus:ring-1 focus:ring-violet-400 w-16"
+                    onBlur={e=>onChange(`cogs.${sku}`,parseFloat(e.target.value)||0)}/>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     </div>
   );
 }
+
 
 function SalesPage() {
   const [tab,setTab] = useState<SalesTab>("real");
@@ -1367,25 +1335,31 @@ function SalesPage() {
   const [dbAccounts,setDbAccounts] = useState<SalesAccount[]>([]);
   const [dbPromo,setDbPromo] = useState<PromoCalendarRow[]>([]);
   const [dbLoading,setDbLoading] = useState(true);
+  const [assumptions,setAssumptions] = useState<Record<string,number>>({});
   useEffect(()=>{
     let cancelled=false;
     (async()=>{
       try {
         const { supabase: sb } = await import("@/integrations/supabase/client");
-        const [accs,rows] = await Promise.all([fetchSalesAccounts(sb), fetchPromoCalendar(sb)]);
-        if(!cancelled){ setDbAccounts(accs); setDbPromo(rows); }
+        const [accs,rows,ass] = await Promise.all([fetchSalesAccounts(sb), fetchPromoCalendar(sb), fetchAssumptions(sb)]);
+        if(!cancelled){ setDbAccounts(accs); setDbPromo(rows); setAssumptions(ass); }
       } catch(e) { console.error("Sales DB load error:", e); }
       if(!cancelled) setDbLoading(false);
     })();
     return ()=>{ cancelled=true; };
   },[]);
+  async function changeAssumption(key:string,value:number){
+    setAssumptions(prev=>({...prev,[key]:value}));  // optimistic
+    try{ const {supabase:sb}=await import("@/integrations/supabase/client"); await updateAssumption(sb,key,value); }
+    catch(e){ console.error("assumption save error:",e); }
+  }
   // Distributor timing: forecast views show retailer sales shifted back one month
   // (2027+). Promo Calendar / Accounts editing tabs keep raw retailer data.
   const displayPromo = useMemo(()=>shiftPromoOneMonthEarlier(dbPromo),[dbPromo]);
-  const dbAgg = useMemo(()=>aggregatePromoCalendar(displayPromo,dbAccounts),[displayPromo,dbAccounts]);
+  const dbAgg = useMemo(()=>aggregatePromoCalendar(displayPromo,dbAccounts,assumptions),[displayPromo,dbAccounts,assumptions]);
   const dbSkuByMonth = useMemo(()=>dbSkuByMonthFromAgg(dbAgg),[dbAgg]);
-  const byAccountMonth = useMemo(()=>aggregateByAccountMonth(displayPromo,dbAccounts),[displayPromo,dbAccounts]);
-  const annualByAccount = useMemo(()=>aggregateAnnualByAccount(displayPromo,dbAccounts),[displayPromo,dbAccounts]);
+  const byAccountMonth = useMemo(()=>aggregateByAccountMonth(displayPromo,dbAccounts,assumptions),[displayPromo,dbAccounts,assumptions]);
+  const annualByAccount = useMemo(()=>aggregateAnnualByAccount(displayPromo,dbAccounts,assumptions),[displayPromo,dbAccounts,assumptions]);
   const annualUnitsByAccount = useMemo(()=>aggregateAnnualUnitsByAccount(displayPromo),[displayPromo]);
   const [dbActuals,setDbActuals] = useState<AccountActual[]>([]);
   useEffect(()=>{
@@ -1537,7 +1511,6 @@ function SalesPage() {
     {id:"estacionalidad",label:"Seasonality"},
   ];
   const TABS_REFERENCE: {id:SalesTab;label:string}[] = [
-    {id:"assumptions",label:"Assumptions"},
     {id:"accounts",label:"Accounts"},
     {id:"promocal",label:"Promo Calendar"},
     {id:"breakdown",label:"Sales Breakdown"},
@@ -1594,10 +1567,9 @@ function SalesPage() {
       {tab==="estacionalidad"&& <SeasonalityTab seasonIdx={seasonIdx} onSeasonIdxChange={setSeasonIdx}
                                   velChains={velChains} onVelChainsChange={setVelChains}
                                   promoMultipliers={promoMultipliers} onPromoMultipliersChange={setPromoMultipliers}/>}
-      {tab==="assumptions"   && <AssumptionsTab/>}
-      {tab==="accounts"      && <AccountsTab accounts={dbAccounts} annualByAccount={annualByAccount} annualUnitsByAccount={annualUnitsByAccount} loading={dbLoading} onUpdated={refreshAccount} onInserted={addAccounts} onDeleted={removeAccounts}/>}
+      {tab==="accounts"      && <AccountsTab accounts={dbAccounts} promoRows={dbPromo} assumptions={assumptions} onAssumptionChange={changeAssumption} loading={dbLoading} onUpdated={refreshAccount} onInserted={addAccounts} onDeleted={removeAccounts}/>}
       {tab==="promocal"      && <PromoCalendarTab rows={dbPromo} accounts={dbAccounts} byAccountMonth={byAccountMonth} loading={dbLoading} onUpdated={refreshPromoRow} onInserted={addPromoRows} onDeleted={removePromoRows}/>}
-      {tab==="breakdown"     && <SalesBreakdownTab rows={displayPromo} accounts={dbAccounts} loading={dbLoading}/>}
+      {tab==="breakdown"     && <SalesBreakdownTab rows={displayPromo} accounts={dbAccounts} assumptions={assumptions} loading={dbLoading}/>}
     </div>
   );
 }
