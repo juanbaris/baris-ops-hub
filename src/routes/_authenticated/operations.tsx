@@ -3198,13 +3198,21 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     try { const v = window.localStorage.getItem("baris.ops.hiddenMats"); if (v) return new Set(JSON.parse(v)); } catch {}
     return new Set();
   });
-  // Live material lists used by ALL tabs
+  // Live material lists used by ALL tabs — extras classified by their UOM
+  const extraRaw = useMemo(() => extraMaterials.filter(m => {
+    const db = dbMaterials.find(d => d.material === m);
+    return !db?.unit || db.unit !== "units"; // lbs/kg/gal → raw
+  }), [extraMaterials, dbMaterials]);
+  const extraPack = useMemo(() => extraMaterials.filter(m => {
+    const db = dbMaterials.find(d => d.material === m);
+    return db?.unit === "units"; // units → packaging
+  }), [extraMaterials, dbMaterials]);
   const rawMatsLive = useMemo(() =>
-    [...RAW_MATS, ...extraMaterials].filter(m => !hiddenMaterials.has(m)),
-    [extraMaterials, hiddenMaterials]);
+    [...RAW_MATS, ...extraRaw].filter(m => !hiddenMaterials.has(m)),
+    [extraRaw, hiddenMaterials]);
   const packMatsLive = useMemo(() =>
-    PACK_MATS.filter(m => !hiddenMaterials.has(m)),
-    [hiddenMaterials]);
+    [...PACK_MATS, ...extraPack].filter(m => !hiddenMaterials.has(m)),
+    [extraPack, hiddenMaterials]);
   const allMaterialsList = useMemo(() => [...rawMatsLive, ...packMatsLive], [rawMatsLive, packMatsLive]);
   const isRawMatLive = (m: string) => rawMatsLive.includes(m);
 
