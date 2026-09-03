@@ -17,10 +17,9 @@ import {
   mergeForecastWithDb, dbSkuByMonthFromAgg,
   insertSalesAccount, deleteSalesAccount, insertPromoRows, deletePromoRows,
   aggregateByAccountMonth, aggregateAnnualByAccount, aggregateAnnualUnitsByAccount,
-  fetchAccountActuals, upsertAccountActual,
-  applySimPlays, computePlayImpact,
-  playsMonthlyCaseDelta, mergeForecastWithDbAndDelta,
-  type SalesAccount, type PromoCalendarRow, type DbMonthAgg, type AccountActual, type SimPlay,
+  fetchAccountActuals, shiftPromoOneMonthEarlier,
+  breakdownByRetail, breakdownByDistributor, breakdownBySku, sumOverMonths, monthKeysForPeriod,
+  type SalesAccount, type PromoCalendarRow, type DbMonthAgg, type AccountActual, type BreakdownRow,
 } from "@/lib/sales-database";
 
 const DEFAULT_MIX_PCT: Record<string,number> = {XD:30,PW:25,HM:18,WM:12,WD:8,Matcha:7};
@@ -43,7 +42,7 @@ const ALL_MONTHS_REAL = [
   "Jul 2028","Aug 2028","Sep 2028","Oct 2028","Nov 2028","Dec 2028",
 ];
 
-type SalesTab = "real"|"resumen"|"detalle"|"sku"|"simulador"|"estacionalidad"|"assumptions"|"accounts"|"promocal"|"pnl";
+type SalesTab = "real"|"resumen"|"detalle"|"sku"|"estacionalidad"|"assumptions"|"accounts"|"promocal"|"breakdown";
 declare global { interface Window { Chart: any } }
 
 // ─── Real Monthly Tab (derived from invoiced pipeline) ───────────────────────
@@ -348,10 +347,7 @@ function DetalleTab({forecast,reals,onRealUpdate,history,committedCount=0,scenar
           <thead>
             <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/40 border-b border-border">
               <th className="px-4 py-2.5 text-left">Month</th>
-              <th className="px-4 py-2.5 text-right">Base</th>
-              <th className="px-4 py-2.5 text-right">Δ Vel.</th>
-              <th className="px-4 py-2.5 text-right">Δ Retailers</th>
-              <th className="px-4 py-2.5 text-right font-bold">TOTAL</th>
+              <th className="px-4 py-2.5 text-right font-bold">CASES</th>
               <th className="px-4 py-2.5 text-right">Revenue fcst</th>
               <th className="px-4 py-2.5 text-right">Budget</th>
               <th className="px-4 py-2.5 text-right">Δ vs Budget</th>
@@ -364,9 +360,6 @@ function DetalleTab({forecast,reals,onRealUpdate,history,committedCount=0,scenar
             {histRows.map((h,i)=>(
               <tr key={h.label} className={`border-t border-border/60 bg-muted/10 ${i===histRows.length-1?"border-b-2":""}`}>
                 <td className="px-4 py-1.5 font-semibold" style={{color:"#1C2340"}}>{h.label}</td>
-                <td className="px-4 py-1.5 text-right text-muted-foreground">—</td>
-                <td className="px-4 py-1.5 text-right text-muted-foreground">—</td>
-                <td className="px-4 py-1.5 text-right text-muted-foreground">—</td>
                 <td className="px-4 py-1.5 text-right font-mono font-bold" style={{color:"#1C2340"}}>{h.cases.toLocaleString()}</td>
                 <td className="px-4 py-1.5 text-right font-mono">${Math.round(h.revenue/1000)}K</td>
                 <td className="px-4 py-1.5 text-right text-muted-foreground">—</td>
@@ -384,7 +377,7 @@ function DetalleTab({forecast,reals,onRealUpdate,history,committedCount=0,scenar
 
             {histRows.length>0&&fcstRows.length>0&&(
               <tr style={{backgroundColor:"#F5F0E8"}}>
-                <td colSpan={11} className="px-4 py-1 text-[10px] font-bold uppercase tracking-wider border-y-2" style={{color:"#A3224A",borderColor:"#A3224A"}}>
+                <td colSpan={8} className="px-4 py-1 text-[10px] font-bold uppercase tracking-wider border-y-2" style={{color:"#A3224A",borderColor:"#A3224A"}}>
                   Forecast →
                 </td>
               </tr>
@@ -397,9 +390,6 @@ function DetalleTab({forecast,reals,onRealUpdate,history,committedCount=0,scenar
               return (
                 <tr key={i} className={`border-t border-border/60 hover:bg-muted/20 ${real!=null?"bg-emerald-50/20":""}`}>
                   <td className="px-4 py-1.5 font-semibold" style={{color:"#1C2340"}}>{f.label}</td>
-                  <td className="px-4 py-1.5 text-right font-mono text-muted-foreground">{f.baseCases.toLocaleString()}</td>
-                  <td className="px-4 py-1.5 text-right font-mono text-muted-foreground">{f.velDelta>0?`+${f.velDelta}`:"—"}</td>
-                  <td className={`px-4 py-1.5 text-right font-mono ${f.acctDelta>0?"font-semibold text-emerald-600":"text-muted-foreground"}`}>{f.acctDelta>0?`+${f.acctDelta.toLocaleString()}`:"—"}</td>
                   <td className="px-4 py-1.5 text-right font-mono font-bold" style={{color:"#1C2340"}}>{(real??f.totalCases).toLocaleString()}</td>
                   <td className="px-4 py-1.5 text-right font-mono">${Math.round(f.revenue/1000)}K</td>
                   <td className="px-4 py-1.5 text-right font-mono text-muted-foreground">${Math.round(f.budget/1000)}K</td>
@@ -434,7 +424,7 @@ function DetalleTab({forecast,reals,onRealUpdate,history,committedCount=0,scenar
           </tbody>
           <tfoot>
             <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
-              <td className="px-4 py-2 text-xs font-semibold" colSpan={4}>TOTAL · {activeOpt.label} ({monthCount} months)</td>
+              <td className="px-4 py-2 text-xs font-semibold" colSpan={1}>TOTAL · {activeOpt.label} ({monthCount} months)</td>
               <td className="px-4 py-2 text-right font-mono font-bold">{visCases.toLocaleString()}</td>
               <td className="px-4 py-2 text-right font-mono">${Math.round(visRev/1000).toLocaleString()}K</td>
               <td className="px-4 py-2 text-right font-mono text-slate-300">{totalBudget>0?`$${Math.round(totalBudget*PRICE_PER_CASE/1000).toLocaleString()}K`:"—"}</td>
@@ -589,293 +579,6 @@ function Collapsible({title,subtitle,badge,defaultOpen=true,actions,children}:{
 }
 
 // ─── Simulador Tab (overlay sobre Promo Calendar · temporal hasta aplicar) ────
-type NewStoresDraft = { account:string; skus:string; addStores:number; storesPerMonth:number; fromLabel:string };
-type VelBumpDraft   = { account:string; skus:string; pct:number; pctPerMonth:number; fromLabel:string };
-
-function labelToYM(label:string){ // "Jul 2027" → {year, month}
-  const [mon,yr]=label.split(" ");
-  const mi=MONTHS_SHORT.indexOf(mon)+1;
-  return { year:parseInt(yr), month:mi };
-}
-
-// ─── Parser de lenguaje natural para el simulador (sin API) ───────────────────
-function normTxt(s:string){ return s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,""); }
-const MONTH_WORDS: Record<string,number> = {
-  enero:1,febrero:2,marzo:3,abril:4,mayo:5,junio:6,julio:7,agosto:8,septiembre:9,setiembre:9,octubre:10,noviembre:11,diciembre:12,
-  january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12,
-  ene:1,feb:2,mar:3,abr:4,jun:6,jul:7,ago:8,sep:9,sept:9,oct:10,nov:11,dic:12,jan:1,apr:4,aug:8,dec:12,
-};
-function findMonthsIn(text:string){
-  const t=normTxt(text);
-  const res:{num:number;year:number;pos:number}[]=[];
-  for(const [name,num] of Object.entries(MONTH_WORDS)){
-    let idx=0;
-    while((idx=t.indexOf(name,idx))!==-1){
-      // avoid matching "mar" inside "marzo": require word boundary-ish
-      const before=idx>0?t[idx-1]:" ";
-      const after=t[idx+name.length]??" ";
-      const boundaryOk=/[^a-z]/.test(before)&&/[^a-z]/.test(after);
-      if(boundaryOk){
-        const tail=t.slice(idx,idx+name.length+8);
-        const ym=tail.match(/20(2[6-9]|3\d)/);
-        res.push({num,year:ym?parseInt(ym[0]):0,pos:idx});
-      }
-      idx+=name.length;
-    }
-  }
-  res.sort((a,b)=>a.pos-b.pos);
-  return res;
-}
-function matchAccountName(text:string, accounts:string[]){
-  const t=normTxt(text);
-  let best:string|null=null, bestScore=0;
-  for(const a of accounts){
-    const tokens=normTxt(a).split(/\s+/).filter(x=>x.length>=2);
-    let score=0;
-    for(const tok of tokens){
-      if(t.includes(tok)) score+=2;
-      else if(tok.length>=3 && t.includes(tok.slice(0,3))) score+=1;
-    }
-    if(t.includes("independ")&&tokens.includes("ind")) score+=2;
-    if(score>bestScore){ bestScore=score; best=a; }
-  }
-  return bestScore>=2?best:null;
-}
-function findSkusIn(text:string){
-  const t=text.toUpperCase();
-  if(/\bTODOS\b|\bALL\b/.test(t)) return ["XD","PW","HM","WM","WD","Matcha","VS","CS","GR","GS"];
-  const out:string[]=[];
-  for(const s of ["XD","PW","HM","WM","WD","MATCHA","VS","CS","GR","GS"]){
-    if(new RegExp("\\b"+s+"\\b").test(t)) out.push(s==="MATCHA"?"Matcha":s);
-  }
-  return out;
-}
-function parseNaturalPlay(text:string, accounts:string[]):SimPlay|null{
-  const t=normTxt(text);
-  const account=matchAccountName(text,accounts);
-  const skus=findSkusIn(text);
-  const months=findMonthsIn(text);
-  if(!account||!skus.length||!months.length) return null;
-
-  const from=months[0];
-  const fromYear=from.year||2027, fromMonth=from.num;
-  const to=months[1];
-  // "misma/igual velocity" es una aclaración, no una jugada de velocity.
-  const mentionsStores=/tiendas?|stores?/.test(t);
-  const wantsVelChange=/(sub|baj|aument|increment|reduc|\+|\-)\w*\s+(?:la\s+)?velocit/.test(t)
-    || /velocit\w*\s+(?:de\s+)?[a-z]/.test(t) && /%/.test(t);
-  const isVel = !mentionsStores && (wantsVelChange || /velocit/.test(t));
-
-  if(isVel){
-    const rampM=t.match(/(\d+(?:\.\d+)?)\s*%?\s*(?:por|\/)\s*mes/);
-    const pctPerMonth=rampM?parseFloat(rampM[1]):0;
-    let pct=0;
-    const capM=t.match(/hasta\s+(?:llegar\s+a\s+)?(\d+(?:\.\d+)?)\s*%/);
-    if(capM) pct=parseFloat(capM[1]);
-    else if(!pctPerMonth){ const single=t.match(/(\d+(?:\.\d+)?)\s*%/); if(single) pct=parseFloat(single[1]); }
-    const ramp=pctPerMonth>0;
-    return {id:`ai-${Date.now()}`,kind:"vel_bump",active:true,
-      label:`${ramp?`+${pctPerMonth}%/mes${pct>0?` hasta ${pct}%`:""}`:`+${pct}%`} velocity ${skus.join("/")} en ${account} desde ${MONTHS_SHORT[fromMonth-1]} ${fromYear}`,
-      account,skus,pct,pctPerMonth:ramp?pctPerMonth:undefined,fromYear,fromMonth};
-  }
-
-  // new_stores
-  const rampM=t.match(/(\d+)\s*(?:stores?|tiendas?)?\s*(?:por|\/)\s*mes/);
-  const storesPerMonth=rampM?parseInt(rampM[1]):0;
-  let addStores=0;
-  const capM=t.match(/hasta\s+(?:llegar\s+a\s+)?(?:las?\s+)?(\d{1,4})(?!\d)/);
-  if(capM && parseInt(capM[1])<=2000) addStores=parseInt(capM[1]);
-  if(!addStores){
-    if(storesPerMonth>0 && to && to.year){
-      const span=(to.year*12+to.num)-(fromYear*12+fromMonth)+1;
-      addStores=storesPerMonth*Math.max(1,span);
-    } else {
-      const anyN=t.match(/(\d{1,4})\s*(?:stores?|tiendas?)/);
-      addStores=anyN?parseInt(anyN[1]):(storesPerMonth||0);
-    }
-  }
-  if(!addStores && !storesPerMonth) return null;
-  const ramp=storesPerMonth>0;
-  return {id:`ai-${Date.now()}`,kind:"new_stores",active:true,
-    label:`${ramp?`+${storesPerMonth}/mes hasta `:"+"}${addStores} tiendas ${account} (${skus.join("/")}) desde ${MONTHS_SHORT[fromMonth-1]} ${fromYear}`,
-    account,skus,addStores,storesPerMonth:ramp?storesPerMonth:undefined,fromYear,fromMonth};
-}
-
-
-function SimuladorTab({plays,setPlays,accountNames,forecastMonths,onApplyNewStores,playImpacts,totalImpact,onAiParse,detailView,skuView}:{
-  plays:SimPlay[]; setPlays:(p:SimPlay[])=>void; accountNames:string[]; forecastMonths:{label:string}[];
-  onApplyNewStores:(p:SimPlay)=>void;
-  playImpacts:Map<string,{cases:number;revenue:number}>; totalImpact:{cases:number;revenue:number};
-  onAiParse:(text:string)=>Promise<void>;
-  detailView?:ReactNode; skuView?:ReactNode;
-}) {
-  const monthOptions = forecastMonths.filter(m=>{const y=labelToYM(m.label).year; return y>=2027;}).map(m=>m.label);
-  const defaultFrom = monthOptions[0] ?? "Jan 2027";
-
-  const [ns,setNs] = useState<NewStoresDraft>({account:accountNames[0]??"",skus:"XD, PW, HM",addStores:100,storesPerMonth:0,fromLabel:defaultFrom});
-  const [vb,setVb] = useState<VelBumpDraft>({account:accountNames[0]??"",skus:"XD",pct:10,pctPerMonth:0,fromLabel:defaultFrom});
-  const [aiText,setAiText] = useState("");
-  const [aiLoading,setAiLoading] = useState(false);
-
-  const inp="rounded-lg border border-border bg-background px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-primary/30";
-
-  function addNewStores(){
-    const {year,month}=labelToYM(ns.fromLabel);
-    const skus=ns.skus.split(",").map(s=>s.trim()).filter(Boolean);
-    if(!ns.account||!skus.length){ window.alert("Completá cuenta y al menos un SKU."); return; }
-    const ramp = ns.storesPerMonth>0;
-    const play:SimPlay={id:`ns-${Date.now()}`,kind:"new_stores",active:true,
-      label:`${ramp?`+${ns.storesPerMonth}/mes hasta `:"+"}${ns.addStores} tiendas ${ns.account} (${skus.join("/")}) desde ${ns.fromLabel}`,
-      account:ns.account,skus,addStores:ns.addStores,storesPerMonth:ramp?ns.storesPerMonth:undefined,fromYear:year,fromMonth:month};
-    setPlays([...plays,play]);
-  }
-  function addVelBump(){
-    const {year,month}=labelToYM(vb.fromLabel);
-    const skus=vb.skus.split(",").map(s=>s.trim()).filter(Boolean);
-    if(!vb.account||!skus.length){ window.alert("Completá cuenta y SKU."); return; }
-    const ramp = vb.pctPerMonth>0;
-    const play:SimPlay={id:`vb-${Date.now()}`,kind:"vel_bump",active:true,
-      label:`${ramp?`+${vb.pctPerMonth}%/mes${vb.pct>0?` hasta ${vb.pct}%`:""}`:`${vb.pct>0?"+":""}${vb.pct}%`} velocity ${skus.join("/")} en ${vb.account} desde ${vb.fromLabel}`,
-      account:vb.account,skus,pct:vb.pct,pctPerMonth:ramp?vb.pctPerMonth:undefined,fromYear:year,fromMonth:month};
-    setPlays([...plays,play]);
-  }
-  async function runAi(){
-    if(!aiText.trim()) return;
-    setAiLoading(true);
-    try{ await onAiParse(aiText.trim()); setAiText(""); }
-    catch(e){ console.error(e); window.alert("No pude interpretar eso. Probá reformularlo más simple."); }
-    setAiLoading(false);
-  }
-  function toggle(id:string){ setPlays(plays.map(p=>p.id===id?{...p,active:!p.active}:p)); }
-  function remove(id:string){ setPlays(plays.filter(p=>p.id!==id)); }
-
-  const activeCount = plays.filter(p=>p.active).length;
-
-  return (
-    <div className="space-y-5">
-      <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-700">
-        🧪 <strong>Modo simulación.</strong> Las jugadas viven <strong>solo acá dentro</strong> — mueven las cards de impacto y las vistas embebidas de Monthly Detail / By SKU de abajo, pero <strong>no tocan el Monthly Detail real</strong> de la solapa. Cuando una jugada te convence, tocás <strong>"Aplicar al Promo Calendar"</strong> y ahí sí pasa a ser data real.
-      </div>
-
-      {activeCount>0 && (
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-          <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-            <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Δ Cases incremental</p>
-            <p className="text-2xl font-bold font-mono" style={{color:"#10B981"}}>+{totalImpact.cases.toLocaleString()}</p>
-            <p className="text-xs text-muted-foreground mt-0.5">{activeCount} jugada{activeCount===1?"":"s"} activa{activeCount===1?"":"s"}</p>
-          </div>
-          <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-            <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Δ Revenue incremental</p>
-            <p className="text-2xl font-bold font-mono" style={{color:"#A3224A"}}>+${Math.round(totalImpact.revenue/1000).toLocaleString()}K</p>
-            <p className="text-xs text-muted-foreground mt-0.5">Sobre el forecast base</p>
-          </div>
-          <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-            <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Δ Revenue exacto</p>
-            <p className="text-2xl font-bold font-mono" style={{color:"#1C2340"}}>+${totalImpact.revenue.toLocaleString()}</p>
-            <p className="text-xs text-muted-foreground mt-0.5">2027 + 2028 acumulado</p>
-          </div>
-        </div>
-      )}
-
-      {/* Jugada con IA — lenguaje natural */}
-      <div className="rounded-2xl border-2 border-dashed border-violet-300 bg-violet-50/40 shadow-sm overflow-hidden">
-        <div className="px-5 py-3 border-b border-violet-200 bg-violet-50">
-          <p className="text-sm font-bold" style={{color:"#6D28D9"}}>✨ Escribilo en tus palabras</p>
-          <p className="text-xs text-violet-700">Contame la jugada en lenguaje natural (español o inglés) y la armo sola. Ej: "en RF Ind, XD y PW, desde mayo 2027 subir 10 tiendas por mes hasta diciembre 2027" · "subir velocity de XD y WD 4% por mes en Sprouts desde junio 2027".</p>
-        </div>
-        <div className="p-4 flex gap-2 items-start">
-          <textarea value={aiText} onChange={e=>setAiText(e.target.value)} rows={2}
-            placeholder="Describí la jugada…"
-            className="flex-1 rounded-lg border border-violet-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-violet-400 resize-none"/>
-          <button onClick={runAi} disabled={aiLoading}
-            className="rounded-full px-4 py-2 text-xs font-semibold text-white disabled:opacity-50 self-stretch" style={{backgroundColor:"#7C3AED"}}>
-            {aiLoading?"Pensando…":"✨ Armar jugada"}
-          </button>
-        </div>
-      </div>
-
-      {/* Jugada 1 — abrir tiendas nuevas */}
-      <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
-        <div className="px-5 py-3 border-b border-border bg-muted/30">
-          <p className="text-sm font-bold" style={{color:"#1C2340"}}>Abrir tiendas nuevas</p>
-          <p className="text-xs text-muted-foreground">Agrega tiendas a una cuenta/SKU desde el mes elegido. Usa la <strong>velocity que ese SKU ya tiene cada mes</strong> — solo cambia la cantidad de tiendas. Opcional: rampa de X tiendas/mes hasta un tope.</p>
-        </div>
-        <div className="p-4 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 items-end">
-          <label className="text-xs">Cuenta<select value={ns.account} onChange={e=>setNs({...ns,account:e.target.value})} className={`${inp} w-full mt-1`}>{accountNames.map(a=><option key={a}>{a}</option>)}</select></label>
-          <label className="text-xs">SKUs (coma)<input value={ns.skus} onChange={e=>setNs({...ns,skus:e.target.value})} className={`${inp} w-full mt-1`}/></label>
-          <label className="text-xs">Tiendas (tope)<input type="number" value={ns.addStores} onChange={e=>setNs({...ns,addStores:parseFloat(e.target.value)||0})} className={`${inp} w-full mt-1 font-mono`}/></label>
-          <label className="text-xs">Tiendas/mes (rampa, 0=fijo)<input type="number" value={ns.storesPerMonth} onChange={e=>setNs({...ns,storesPerMonth:parseFloat(e.target.value)||0})} className={`${inp} w-full mt-1 font-mono`}/></label>
-          <label className="text-xs">Desde<select value={ns.fromLabel} onChange={e=>setNs({...ns,fromLabel:e.target.value})} className={`${inp} w-full mt-1`}>{monthOptions.map(m=><option key={m}>{m}</option>)}</select></label>
-          <button onClick={addNewStores} className="rounded-full px-4 py-2 text-xs font-semibold text-white" style={{backgroundColor:"#10B981"}}>+ Simular</button>
-        </div>
-      </div>
-
-      {/* Jugada 2 — subir velocity */}
-      <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
-        <div className="px-5 py-3 border-b border-border bg-muted/30">
-          <p className="text-sm font-bold" style={{color:"#1C2340"}}>Subir velocity</p>
-          <p className="text-xs text-muted-foreground">Multiplica las unidades de una cuenta/SKU desde el mes elegido. Opcional: +X%/mes acumulado hasta un tope.</p>
-        </div>
-        <div className="p-4 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 items-end">
-          <label className="text-xs">Cuenta<select value={vb.account} onChange={e=>setVb({...vb,account:e.target.value})} className={`${inp} w-full mt-1`}>{accountNames.map(a=><option key={a}>{a}</option>)}</select></label>
-          <label className="text-xs">SKUs (coma)<input value={vb.skus} onChange={e=>setVb({...vb,skus:e.target.value})} className={`${inp} w-full mt-1`}/></label>
-          <label className="text-xs">% total (0=solo rampa)<input type="number" value={vb.pct} onChange={e=>setVb({...vb,pct:parseFloat(e.target.value)||0})} className={`${inp} w-full mt-1 font-mono`}/></label>
-          <label className="text-xs">%/mes (rampa, 0=fijo)<input type="number" value={vb.pctPerMonth} onChange={e=>setVb({...vb,pctPerMonth:parseFloat(e.target.value)||0})} className={`${inp} w-full mt-1 font-mono`}/></label>
-          <label className="text-xs">Desde<select value={vb.fromLabel} onChange={e=>setVb({...vb,fromLabel:e.target.value})} className={`${inp} w-full mt-1`}>{monthOptions.map(m=><option key={m}>{m}</option>)}</select></label>
-          <button onClick={addVelBump} className="rounded-full px-4 py-2 text-xs font-semibold text-white" style={{backgroundColor:"#10B981"}}>+ Simular</button>
-        </div>
-      </div>
-
-      {/* Jugadas activas */}
-      {plays.length>0 && (
-        <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
-          <div className="px-5 py-3 border-b border-border bg-muted/30"><p className="text-sm font-bold" style={{color:"#1C2340"}}>Jugadas</p></div>
-          <div className="divide-y divide-border">
-            {plays.map(p=>{
-              const im=playImpacts.get(p.id);
-              return (
-              <div key={p.id} className={`px-5 py-3 flex items-center gap-3 ${p.active?"":"opacity-40"}`}>
-                <button onClick={()=>toggle(p.id)} className={`rounded-full px-3 py-0.5 text-xs font-bold ${p.active?"text-white":"border border-border text-muted-foreground"}`} style={p.active?{backgroundColor:"#10B981"}:{}}>{p.active?"ON":"OFF"}</button>
-                <span className="text-sm flex-1">{p.label}</span>
-                {im && (
-                  <span className="text-xs font-mono whitespace-nowrap">
-                    <span style={{color:"#10B981"}}>+{im.cases.toLocaleString()} cs</span>
-                    <span className="text-muted-foreground mx-1">·</span>
-                    <span style={{color:"#A3224A"}}>+${Math.round(im.revenue/1000).toLocaleString()}K</span>
-                  </span>
-                )}
-                {p.kind==="new_stores" && (
-                  <button onClick={()=>{ if(window.confirm("¿Escribir esta jugada en el Promo Calendar de forma permanente? Pasa a ser data real y aparece en el Monthly Detail de la solapa.")) onApplyNewStores(p); }}
-                    className="rounded-full border border-[#1C2340] px-3 py-0.5 text-xs font-semibold text-[#1C2340] hover:bg-[#1C2340]/5">Aplicar al Promo Calendar</button>
-                )}
-                <button onClick={()=>remove(p.id)} className="text-muted-foreground hover:text-red-500 text-lg leading-none">×</button>
-              </div>
-              );
-            })}
-          </div>
-          <p className="px-5 py-3 text-xs text-muted-foreground border-t border-border">
-            Los <strong>vel. bumps</strong> son solo simulación (no se persisten). Las <strong>tiendas nuevas</strong> se pueden aplicar al Promo Calendar y ahí pasan a ser data real.
-          </p>
-        </div>
-      )}
-
-      {detailView && (
-        <Collapsible title="Live impact — Monthly Detail" defaultOpen={true}
-          subtitle="Vista de Monthly Detail recalculada con las jugadas activas.">
-          <div className="p-4">{detailView}</div>
-        </Collapsible>
-      )}
-      {skuView && (
-        <Collapsible title="Live impact — By SKU" defaultOpen={false}
-          subtitle="Split por SKU con las jugadas activas.">
-          <div className="p-4">{skuView}</div>
-        </Collapsible>
-      )}
-    </div>
-  );
-}
-
-
 // ─── Seasonality Tab ──────────────────────────────────────────────────────────
 function SeasonalityTab({seasonIdx,onSeasonIdxChange,velChains,onVelChainsChange,promoMultipliers,onPromoMultipliersChange}:{
   seasonIdx:Record<number,number>;
@@ -904,7 +607,7 @@ function SeasonalityTab({seasonIdx,onSeasonIdxChange,velChains,onVelChainsChange
         <div className="flex items-start justify-between gap-4">
           <div>
             <h3 className="text-sm font-bold mb-1" style={{color:"#1C2340"}}>Seasonality indices — derived from budget model</h3>
-            <p className="text-xs text-muted-foreground mb-5">Derived from Excel Normal scenario monthly pattern · sum = 12.0 · editable (affects all 3 scenarios)</p>
+            <p className="text-xs text-muted-foreground mb-5">Solo afecta el forecast <strong>2026</strong> (fórmula). Para 2027-2028 los números salen del Promo Calendar y la estacionalidad no aplica. Suma = 12.0 · editable.</p>
           </div>
           <button onClick={()=>onSeasonIdxChange({...DEFAULT_SEASON_IDX})}
             className="rounded-full border border-border px-3 py-1 text-xs font-semibold text-muted-foreground hover:text-foreground">
@@ -1404,129 +1107,116 @@ function PromoCalendarTab({rows,accounts,byAccountMonth,loading,onUpdated,onInse
   );
 }
 
-// ─── Sales P&L Tab (month × account · forecast vs real) ───────────────────────
-function SalesPnLTab({rows,accounts,byAccountMonth,actuals,loading,onActualSaved}:{
-  rows:PromoCalendarRow[];accounts:SalesAccount[];byAccountMonth:Map<string,number>;
-  actuals:AccountActual[];loading:boolean;onActualSaved:(a:AccountActual)=>void;
+// ─── Sales Breakdown Tab (por Retail / DC / SKU · units y facturación) ────────
+function SalesBreakdownTab({rows,accounts,loading}:{
+  rows:PromoCalendarRow[];accounts:SalesAccount[];loading:boolean;
 }) {
   const years = Array.from(new Set(rows.map(r=>r.year))).sort();
-  const [year,setYear] = useState<number>(2027);
-  const [mode,setMode] = useState<"forecast"|"actual"|"delta">("forecast");
-  const [editing,setEditing] = useState<string|null>(null);
-  const [editVal,setEditVal] = useState("");
-  const accountNames = Array.from(new Set(rows.filter(r=>r.year===year).map(r=>r.account_name))).sort();
+  const [year,setYear] = useState<number>(years[0]??2027);
+  const [pmode,setPmode] = useState<"year"|"quarter"|"month">("year");
+  const [q,setQ] = useState<number>(1);
+  const [month,setMonth] = useState<number>(1);
+  const [open,setOpen] = useState<Record<string,boolean>>({retail:true,dc:false,sku:false});
 
-  const actualMap = useMemo(()=>{
-    const m=new Map<string,number|null>();
-    actuals.forEach(a=>m.set(`${a.year}|${a.month}|${a.account_name}`,a.actual_revenue));
-    return m;
-  },[actuals]);
+  const monthKeys = useMemo(()=>monthKeysForPeriod(pmode,year,q,month),[pmode,year,q,month]);
+  const byRetail = useMemo(()=>breakdownByRetail(rows,accounts),[rows,accounts]);
+  const byDC = useMemo(()=>breakdownByDistributor(rows,accounts),[rows,accounts]);
+  const bySku = useMemo(()=>breakdownBySku(rows,accounts),[rows,accounts]);
 
-  const fcst=(m:number,acc:string)=>byAccountMonth.get(`${year}|${m}|${acc}`)??0;
-  const act =(m:number,acc:string)=>actualMap.get(`${year}|${m}|${acc}`);
-
-  async function saveActual(month:number, acc:string, raw:string){
-    const num=parseFloat(raw); const val=isNaN(num)?null:num;
-    setEditing(null);
-    try{
-      const {supabase:sb}=await import("@/integrations/supabase/client");
-      await upsertAccountActual(sb,year,month,acc,val);
-      onActualSaved({id:`${year}-${month}-${acc}`,year,month,account_name:acc,actual_revenue:val});
-    }catch(e){console.error(e);window.alert("No se pudo guardar el real.");}
-  }
-
+  const periodLabel = pmode==="year"?`${year}`:pmode==="quarter"?`Q${q} ${year}`:`${MONTHS_SHORT[month-1]} ${year}`;
   const fmt=(v:number)=>`$${Math.round(v).toLocaleString()}`;
-  const monthTotFcst=(m:number)=>accountNames.reduce((s,a)=>s+fcst(m,a),0);
-  const monthTotAct =(m:number)=>accountNames.reduce((s,a)=>s+(act(m,a)??0),0);
-  const acctTotFcst=(a:string)=>Array.from({length:12},(_,i)=>fcst(i+1,a)).reduce((x,y)=>x+y,0);
-  const acctTotAct =(a:string)=>Array.from({length:12},(_,i)=>act(i+1,a)??0).reduce((x,y)=>x+y,0);
-  const grandFcst=accountNames.reduce((s,a)=>s+acctTotFcst(a),0);
-  const grandAct =accountNames.reduce((s,a)=>s+acctTotAct(a),0);
 
-  function cell(m:number,acc:string){
-    const f=fcst(m,acc); const a=act(m,acc);
-    if(mode==="forecast") return <span className="font-mono text-muted-foreground">{f>0?fmt(f):"—"}</span>;
-    if(mode==="delta"){
-      if(a==null) return <span className="text-muted-foreground">—</span>;
-      const d=a-f;
-      return <span className={`font-mono ${d>=0?"text-emerald-600":"text-red-500"}`}>{d>=0?"+":""}{fmt(d)}</span>;
-    }
-    // actual mode → editable
-    const key=`${m}|${acc}`;
-    if(editing===key) return (
-      <input type="number" autoFocus defaultValue={a??""} className="w-20 rounded border border-border px-1 py-0.5 text-xs font-mono text-right focus:outline-none"
-        onBlur={e=>saveActual(m,acc,e.target.value)}
-        onKeyDown={e=>{if(e.key==="Enter")saveActual(m,acc,(e.target as HTMLInputElement).value);if(e.key==="Escape")setEditing(null);}}/>
-    );
+  function Section({id,title,data,showUnits}:{id:string;title:string;data:BreakdownRow[];showUnits:boolean}){
+    const isOpen=open[id];
+    const rowsSummed = data.map(r=>({key:r.key,...sumOverMonths(r,monthKeys)})).filter(r=>r.units!==0||r.revenue!==0).sort((a,b)=>b.revenue-a.revenue);
+    const totU=rowsSummed.reduce((s,r)=>s+r.units,0);
+    const totR=rowsSummed.reduce((s,r)=>s+r.revenue,0);
     return (
-      <button onClick={()=>{setEditing(key);setEditVal(String(a??""));}}
-        className={`rounded px-1.5 py-0.5 text-xs font-mono ${a!=null?"font-semibold text-emerald-600 hover:bg-emerald-50":"text-muted-foreground hover:bg-muted border border-dashed border-border"}`}>
-        {a!=null?fmt(a):"cargar"}
-      </button>
+      <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+        <button onClick={()=>setOpen(o=>({...o,[id]:!o[id]}))} className="w-full px-5 py-3 flex items-center gap-3 bg-muted/30 hover:bg-muted/50 text-left">
+          <span className="text-xs text-muted-foreground transition-transform" style={{transform:isOpen?"rotate(90deg)":"none"}}>▶</span>
+          <span className="font-bold text-sm" style={{color:"#1C2340"}}>{title}</span>
+          <span className="text-xs text-muted-foreground">{rowsSummed.length} filas · {periodLabel}</span>
+          <span className="ml-auto font-mono font-semibold text-sm" style={{color:"#A3224A"}}>{fmt(totR)}</span>
+        </button>
+        {isOpen && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs min-w-max">
+              <thead>
+                <tr className="text-[10px] uppercase tracking-wide text-muted-foreground border-b border-border">
+                  <th className="px-4 py-2 text-left">{title.split(" ").pop()}</th>
+                  {showUnits && <th className="px-4 py-2 text-right">Units</th>}
+                  <th className="px-4 py-2 text-right">Facturación</th>
+                  <th className="px-4 py-2 text-right">% del total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rowsSummed.map(r=>(
+                  <tr key={r.key} className="border-t border-border/60 hover:bg-muted/20">
+                    <td className="px-4 py-1.5 font-semibold" style={{color:"#1C2340"}}>{r.key}</td>
+                    {showUnits && <td className="px-4 py-1.5 text-right font-mono">{r.units.toLocaleString()}</td>}
+                    <td className="px-4 py-1.5 text-right font-mono">{fmt(r.revenue)}</td>
+                    <td className="px-4 py-1.5 text-right font-mono text-muted-foreground">{totR>0?Math.round(r.revenue/totR*100):0}%</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
+                  <td className="px-4 py-2 font-semibold">TOTAL</td>
+                  {showUnits && <td className="px-4 py-2 text-right font-mono font-bold">{totU.toLocaleString()}</td>}
+                  <td className="px-4 py-2 text-right font-mono font-bold">{fmt(totR)}</td>
+                  <td className="px-4 py-2 text-right font-mono">100%</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </div>
     );
   }
 
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-700">
-        📊 Facturación mensual por cuenta. <strong>Forecast</strong> sale del Promo Calendar (Total Units × Delivered Cost). En <strong>Actual</strong> cargás lo real de cada mes y en <strong>Δ</strong> ves la diferencia contra lo que proyectabas.
+        📊 Facturación desglosada por <strong>Retail</strong>, <strong>Distribuidor</strong> y <strong>SKU</strong>. Facturación = Units × Delivered Cost. Filtrá por año, quarter o mes. (Ventas del distribuidor, con el shift de 1 mes aplicado.)
       </div>
-      <div className="flex gap-2 items-center flex-wrap">
-        {years.map(y=>(
-          <button key={y} onClick={()=>setYear(y)}
-            className={`rounded-full px-3.5 py-1.5 text-xs font-semibold ${year===y?"text-white":"border border-border text-muted-foreground"}`}
-            style={year===y?{backgroundColor:"#1C2340"}:{}}>{y}</button>
-        ))}
-        <div className="ml-auto flex gap-1 rounded-lg bg-muted p-1">
-          {([["forecast","Forecast"],["actual","Actual"],["delta","Δ vs fcst"]] as const).map(([id,lbl])=>(
-            <button key={id} onClick={()=>setMode(id)}
-              className={`rounded px-3 py-1 text-xs font-semibold ${mode===id?"text-white":"text-muted-foreground"}`}
-              style={mode===id?{backgroundColor:"#A3224A"}:{}}>{lbl}</button>
+
+      <div className="flex flex-wrap gap-3 items-center">
+        <div className="flex gap-1">
+          {years.map(y=>(
+            <button key={y} onClick={()=>setYear(y)}
+              className={`rounded-full px-3.5 py-1.5 text-xs font-semibold ${year===y?"text-white":"border border-border text-muted-foreground"}`}
+              style={year===y?{backgroundColor:"#1C2340"}:{}}>{y}</button>
           ))}
         </div>
+        <div className="flex gap-1 rounded-lg bg-muted p-1">
+          {([["year","Año"],["quarter","Quarter"],["month","Mes"]] as const).map(([id,lbl])=>(
+            <button key={id} onClick={()=>setPmode(id)}
+              className={`rounded px-3 py-1 text-xs font-semibold ${pmode===id?"text-white":"text-muted-foreground"}`}
+              style={pmode===id?{backgroundColor:"#A3224A"}:{}}>{lbl}</button>
+          ))}
+        </div>
+        {pmode==="quarter" && (
+          <select value={q} onChange={e=>setQ(parseInt(e.target.value))} className="rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold focus:outline-none">
+            {[1,2,3,4].map(n=><option key={n} value={n}>Q{n}</option>)}
+          </select>
+        )}
+        {pmode==="month" && (
+          <select value={month} onChange={e=>setMonth(parseInt(e.target.value))} className="rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold focus:outline-none">
+            {MONTHS_SHORT.map((m,i)=><option key={m} value={i+1}>{m}</option>)}
+          </select>
+        )}
       </div>
-      <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
-        <table className="text-xs min-w-max border-collapse">
-          <thead>
-            <tr className="bg-muted/40 border-b border-border">
-              <th className="px-3 py-2.5 text-left sticky left-0 bg-muted/40 z-10">Account</th>
-              {MONTHS_SHORT.map(m=><th key={m} className="px-3 py-2.5 text-right whitespace-nowrap">{m}</th>)}
-              <th className="px-3 py-2.5 text-right font-bold border-l border-border">Total {year}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              <tr><td colSpan={14} className="px-3 py-6 text-center text-muted-foreground">Cargando…</td></tr>
-            ) : accountNames.map(acc=>{
-              const tf=acctTotFcst(acc), ta=acctTotAct(acc);
-              return (
-                <tr key={acc} className="border-t border-border/60 hover:bg-muted/20">
-                  <td className="px-3 py-1.5 font-semibold sticky left-0 bg-card z-10" style={{color:"#1C2340"}}>{acc}</td>
-                  {Array.from({length:12},(_,i)=>(
-                    <td key={i} className="px-3 py-1.5 text-right">{cell(i+1,acc)}</td>
-                  ))}
-                  <td className="px-3 py-1.5 text-right font-mono font-bold border-l border-border" style={{color:"#A3224A"}}>
-                    {mode==="actual"?fmt(ta):mode==="delta"?((ta-tf>=0?"+":"")+fmt(ta-tf)):fmt(tf)}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-          <tfoot>
-            <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
-              <td className="px-3 py-2 font-semibold sticky left-0 z-10" style={{backgroundColor:"#1C2340"}}>TOTAL</td>
-              {Array.from({length:12},(_,i)=>{
-                const f=monthTotFcst(i+1), a=monthTotAct(i+1);
-                const val=mode==="actual"?a:mode==="delta"?(a-f):f;
-                return <td key={i} className="px-3 py-2 text-right font-mono font-bold text-emerald-400">{mode==="delta"?((val>=0?"+":"")+fmt(val)):fmt(val)}</td>;
-              })}
-              <td className="px-3 py-2 text-right font-mono font-bold border-l border-slate-600">
-                {mode==="actual"?fmt(grandAct):mode==="delta"?((grandAct-grandFcst>=0?"+":"")+fmt(grandAct-grandFcst)):fmt(grandFcst)}
-              </td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
+
+      {loading ? (
+        <div className="rounded-2xl border border-border bg-card p-6 text-center text-xs text-muted-foreground">Cargando…</div>
+      ) : (
+        <div className="space-y-3">
+          <Section id="retail" title="Por Retail" data={byRetail} showUnits={true}/>
+          <Section id="dc" title="Por Distribuidor" data={byDC} showUnits={true}/>
+          <Section id="sku" title="Por SKU" data={bySku} showUnits={true}/>
+        </div>
+      )}
     </div>
   );
 }
@@ -1689,39 +1379,14 @@ function SalesPage() {
     })();
     return ()=>{ cancelled=true; };
   },[]);
-  const [simPlays,setSimPlays] = useState<SimPlay[]>([]);
-  const effectivePromo = useMemo(()=>applySimPlays(dbPromo,simPlays),[dbPromo,simPlays]);
-  const simAccountNames = useMemo(()=>Array.from(new Set(dbAccounts.map(a=>a.account_name))).sort(),[dbAccounts]);
-  async function applyNewStoresPlay(play:SimPlay){
-    if(play.kind!=="new_stores") return;
-    try{
-      const {supabase:sb}=await import("@/integrations/supabase/client");
-      // The play scales existing rows; persist those changes as updates.
-      const applied=applySimPlays(dbPromo,[play]);
-      const baseById=new Map(dbPromo.map(r=>[r.id,r]));
-      const changed=applied.filter(r=>{const o=baseById.get(r.id);return o&&(o.total_units!==r.total_units||o.stores!==r.stores);});
-      for(const r of changed){
-        await updatePromoCalendarRow(sb,r.id,{stores:r.stores,total_units:r.total_units,reg_units:r.total_units});
-      }
-      setDbPromo(prev=>prev.map(r=>{const u=changed.find(c=>c.id===r.id);return u?u:r;}));
-      setSimPlays(prev=>prev.filter(p=>p.id!==play.id));
-    }catch(e){ console.error(e); window.alert("No se pudo aplicar al Promo Calendar."); }
-  }
-  // Lenguaje natural → jugadas del simulador. Parser local (sin API): entiende
-  // español e inglés, cuentas/SKUs/meses reales, rampas y topes.
-  async function aiParsePlay(text:string){
-    const play=parseNaturalPlay(text,simAccountNames);
-    if(!play) throw new Error("no parse");
-    setSimPlays(prev=>[...prev,play]);
-  }
-  const dbAgg = useMemo(()=>aggregatePromoCalendar(dbPromo,dbAccounts),[dbPromo,dbAccounts]);
+  // Distributor timing: forecast views show retailer sales shifted back one month
+  // (2027+). Promo Calendar / Accounts editing tabs keep raw retailer data.
+  const displayPromo = useMemo(()=>shiftPromoOneMonthEarlier(dbPromo),[dbPromo]);
+  const dbAgg = useMemo(()=>aggregatePromoCalendar(displayPromo,dbAccounts),[displayPromo,dbAccounts]);
   const dbSkuByMonth = useMemo(()=>dbSkuByMonthFromAgg(dbAgg),[dbAgg]);
-  const byAccountMonth = useMemo(()=>aggregateByAccountMonth(dbPromo,dbAccounts),[dbPromo,dbAccounts]);
-  const annualByAccount = useMemo(()=>aggregateAnnualByAccount(dbPromo,dbAccounts),[dbPromo,dbAccounts]);
-  const annualUnitsByAccount = useMemo(()=>aggregateAnnualUnitsByAccount(dbPromo),[dbPromo]);
-  // Simulator overlay: only feeds the simulator's own embedded views + impact cards.
-  const dbAggSim = useMemo(()=>aggregatePromoCalendar(effectivePromo,dbAccounts),[effectivePromo,dbAccounts]);
-  const dbSkuByMonthSim = useMemo(()=>dbSkuByMonthFromAgg(dbAggSim),[dbAggSim]);
+  const byAccountMonth = useMemo(()=>aggregateByAccountMonth(displayPromo,dbAccounts),[displayPromo,dbAccounts]);
+  const annualByAccount = useMemo(()=>aggregateAnnualByAccount(displayPromo,dbAccounts),[displayPromo,dbAccounts]);
+  const annualUnitsByAccount = useMemo(()=>aggregateAnnualUnitsByAccount(displayPromo),[displayPromo]);
   const [dbActuals,setDbActuals] = useState<AccountActual[]>([]);
   useEffect(()=>{
     let cancelled=false;
@@ -1834,20 +1499,6 @@ function SalesPage() {
   // it covers — currently 2027-2028. Used by Summary / Monthly Detail / By SKU.
   const dbMergedForecast = useMemo(()=>mergeForecastWithDb(forecast,dbAgg,scenarioFactor),[forecast,dbAgg,scenarioFactor]);
   const dbMergedSkuTabForecast = useMemo(()=>mergeForecastWithDb(skuTabForecast,dbAgg,scenarioFactor),[skuTabForecast,dbAgg,scenarioFactor]);
-  // Simulator-only forecasts (with overlay) for the embedded views inside the Simulador tab.
-  const simMonthlyDelta = useMemo(()=>playsMonthlyCaseDelta(dbPromo,dbAccounts,simPlays),[dbPromo,dbAccounts,simPlays]);
-  const simMergedForecast = useMemo(()=>mergeForecastWithDbAndDelta(forecast,dbAggSim,dbAgg,simMonthlyDelta,scenarioFactor),[forecast,dbAggSim,dbAgg,simMonthlyDelta,scenarioFactor]);
-  const simMergedSkuForecast = useMemo(()=>mergeForecastWithDbAndDelta(skuTabForecast,dbAggSim,dbAgg,simMonthlyDelta,scenarioFactor),[skuTabForecast,dbAggSim,dbAgg,simMonthlyDelta,scenarioFactor]);
-  const playImpacts = useMemo(()=>{
-    const map=new Map<string,{cases:number;revenue:number}>();
-    simPlays.forEach(p=>map.set(p.id,computePlayImpact(p,dbPromo,dbAccounts)));
-    return map;
-  },[simPlays,dbPromo,dbAccounts]);
-  const totalImpact = useMemo(()=>{
-    let cases=0,revenue=0;
-    simPlays.forEach(p=>{ if(p.active){ const im=playImpacts.get(p.id); if(im){cases+=im.cases;revenue+=im.revenue;} }});
-    return {cases,revenue};
-  },[simPlays,playImpacts]);
 
   function clearCommitted(){
     setVelCommitted(velCommitted.map(()=>false));
@@ -1883,14 +1534,13 @@ function SalesPage() {
     {id:"resumen",label:"Summary"},
     {id:"detalle",label:"Monthly Detail"},
     {id:"sku",label:"By SKU"},
-    {id:"simulador",label:"Simulador"},
     {id:"estacionalidad",label:"Seasonality"},
   ];
   const TABS_REFERENCE: {id:SalesTab;label:string}[] = [
     {id:"assumptions",label:"Assumptions"},
     {id:"accounts",label:"Accounts"},
     {id:"promocal",label:"Promo Calendar"},
-    {id:"pnl",label:"Sales P&L"},
+    {id:"breakdown",label:"Sales Breakdown"},
   ];
 
   // ── Updated scenario descriptions from Excel budget model (Aug 2026) ────────
@@ -1941,22 +1591,13 @@ function SalesPage() {
       {tab==="sku"           && <SKUTab forecast={dbMergedSkuTabForecast} newSkus={skuTabNewSkus}
                                   mixOverrides={mixOverrides} mixOverrideActive={mixOverrideActive&&(committedCount===0||mixCommitted)}
                                   committedCount={committedCount} dbSkuByMonth={dbSkuByMonth}/>}
-      {tab==="simulador"     && <SimuladorTab plays={simPlays} setPlays={setSimPlays}
-                                  accountNames={simAccountNames} forecastMonths={FORECAST_MONTHS}
-                                  onApplyNewStores={applyNewStoresPlay}
-                                  onAiParse={aiParsePlay}
-                                  playImpacts={playImpacts} totalImpact={totalImpact}
-                                  detailView={<DetalleTab forecast={simMergedForecast} reals={mergedReals} history={history} committedCount={committedCount} onRealUpdate={(l,v)=>setReals(r=>({...r,[l]:v}))}/>}
-                                  skuView={<SKUTab forecast={simMergedSkuForecast} newSkus={skuTabNewSkus}
-                                    mixOverrides={mixOverrides} mixOverrideActive={mixOverrideActive&&(committedCount===0||mixCommitted)}
-                                    committedCount={committedCount} dbSkuByMonth={dbSkuByMonthSim}/>}/>}
       {tab==="estacionalidad"&& <SeasonalityTab seasonIdx={seasonIdx} onSeasonIdxChange={setSeasonIdx}
                                   velChains={velChains} onVelChainsChange={setVelChains}
                                   promoMultipliers={promoMultipliers} onPromoMultipliersChange={setPromoMultipliers}/>}
       {tab==="assumptions"   && <AssumptionsTab/>}
       {tab==="accounts"      && <AccountsTab accounts={dbAccounts} annualByAccount={annualByAccount} annualUnitsByAccount={annualUnitsByAccount} loading={dbLoading} onUpdated={refreshAccount} onInserted={addAccounts} onDeleted={removeAccounts}/>}
       {tab==="promocal"      && <PromoCalendarTab rows={dbPromo} accounts={dbAccounts} byAccountMonth={byAccountMonth} loading={dbLoading} onUpdated={refreshPromoRow} onInserted={addPromoRows} onDeleted={removePromoRows}/>}
-      {tab==="pnl"           && <SalesPnLTab rows={dbPromo} accounts={dbAccounts} byAccountMonth={byAccountMonth} actuals={dbActuals} loading={dbLoading} onActualSaved={saveActualLocal}/>}
+      {tab==="breakdown"     && <SalesBreakdownTab rows={displayPromo} accounts={dbAccounts} loading={dbLoading}/>}
     </div>
   );
 }
