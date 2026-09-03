@@ -4,7 +4,7 @@ import { useInvoicedActuals } from "@/hooks/use-invoiced-actuals";
 import { supabase } from "@/integrations/supabase/client";
 import { useSalesForecast } from "@/hooks/use-sales-forecast";
 import { forecastFromState, type Scenario } from "@/lib/sales-forecast";
-import { fetchSalesAccounts, fetchPromoCalendar, aggregatePromoCalendar, type DbMonthAgg } from "@/lib/sales-database";
+import { fetchSalesAccounts, fetchPromoCalendar, aggregatePromoCalendar, EXTENDED_SKUS, type DbMonthAgg } from "@/lib/sales-database";
 import { RunwayTab } from "@/components/runway/runway-tab";
 import { parseAccountfullyPdf } from "@/lib/accountfully-parser";
 
@@ -150,6 +150,24 @@ function useFinanceScenarioForecast(scenarioOverride: Scenario) {
     }
     return byMonthKey;
   }, [state, scenarioOverride, dbAgg]);
+}
+
+// SKU-level cases per month from the Promo Calendar (scaled by the same scenario factor).
+function useFinanceSkuCases(scenarioOverride: Scenario) {
+  const dbAgg = useSalesDbAgg();
+  return useMemo(() => {
+    let pct = 25;
+    try { const v = localStorage.getItem("baris.sales.scenarioPct"); if (v != null) pct = parseFloat(v) || 25; } catch { /* ignore */ }
+    const factor = scenarioOverride === "Pessimistic" ? 1 - pct / 100 : scenarioOverride === "Optimistic" ? 1 + pct / 100 : 1;
+    const out: Record<string, Record<string, number>> = {}; // "2027-3" -> { XD: cases, ... }
+    for (const label in dbAgg) {
+      const a = dbAgg[label];
+      const m: Record<string, number> = {};
+      for (const sku in a.bySku) m[sku] = a.bySku[sku] * factor;
+      out[`${a.year}-${a.month}`] = m;
+    }
+    return out;
+  }, [dbAgg, scenarioOverride]);
 }
 
 // ─── July real Gross Sales from Fulfillment (Invoiced pipeline) ──────────────
@@ -477,7 +495,8 @@ type PLRowKind = "section"|"group"|"item"|"total"|"pct";
 type ForecastContext = {
   grossSales: number;     // $K for this month
   unitsSold: number;      // cases for this month
-  cogsPerUnit: number;    // $/case
+  cogsPerUnit: number;    // $/case (blended fallback)
+  cogsK?: number;         // $K COGS for the month, per-SKU (overrides cogsPerUnit when present)
   logisticsPct: number;   // 0-1, of gross sales
   deductionPct: number;   // 0-1, of gross sales (blended)
   fixedCostsK: Record<string, number>; // $K, keyed by PLRow id, from Best Estimate
@@ -516,11 +535,11 @@ const PL_ROWS: PLRow[] = [
 
   {id:"s-cogs",label:"COST OF GOODS SOLD",kind:"section",indent:0},
   {id:"g-5000",label:"5000 · Cost of goods sold",kind:"group",indent:0},
-    {id:"product_costs",parentId:"g-5000",label:"Product Costs",kind:"item",indent:1,actualKey:"product_costs",forecastFn:(c)=>-(c.unitsSold*c.cogsPerUnit)/1000},
-    {id:"t-5000",parentId:"g-5000",label:"Total 5000",kind:"total",indent:1,forecastFn:(c)=>-(c.unitsSold*c.cogsPerUnit)/1000},
+    {id:"product_costs",parentId:"g-5000",label:"Product Costs",kind:"item",indent:1,actualKey:"product_costs",forecastFn:(c)=>c.cogsK ?? -(c.unitsSold*c.cogsPerUnit)/1000},
+    {id:"t-5000",parentId:"g-5000",label:"Total 5000",kind:"total",indent:1,forecastFn:(c)=>c.cogsK ?? -(c.unitsSold*c.cogsPerUnit)/1000},
   {id:"g-6000",label:"6000 · Logistics & Fulfillment",kind:"group",indent:0},
-    {id:"freight_in",parentId:"g-6000",label:"Freight In",kind:"item",indent:1,actualKey:"freight_in",forecastFn:(c)=>-c.grossSales*c.logisticsPct*0.22},
-    {id:"freight_out_actual",parentId:"g-6000",label:"Freight Out",kind:"item",indent:1,actualKey:"freight_out_actual",forecastFn:(c)=>-c.grossSales*c.logisticsPct*0.06},
+    {id:"freight_in",parentId:"g-6000",label:"Freight In",kind:"item",indent:1,actualKey:"freight_in",forecastFn:(c)=>-c.grossSales*c.logisticsPct*0.06},
+    {id:"freight_out_actual",parentId:"g-6000",label:"Freight Out",kind:"item",indent:1,actualKey:"freight_out_actual",forecastFn:(c)=>-c.grossSales*c.logisticsPct*0.22},
     {id:"merchant_fees",parentId:"g-6000",label:"Merchant Account Fees",kind:"item",indent:1,actualKey:"merchant_fees",forecastFn:()=>0},
     {id:"warehouse_fulfillment",parentId:"g-6000",label:"Warehouse / Fulfillment",kind:"item",indent:1,actualKey:"warehouse_fulfillment",forecastFn:(c)=>-c.grossSales*c.logisticsPct*0.72},
     {id:"t-6000",parentId:"g-6000",label:"Total 6000 Logistics",kind:"total",indent:1,forecastFn:(c)=>-c.grossSales*c.logisticsPct},
@@ -607,6 +626,7 @@ export function PNLTab({ realMonths, actuals, actualOnly }: { realMonths: number
   const childMap = useMemo(() => buildChildMap(PL_ROWS), []);
 
   const scenarioForecast = useFinanceScenarioForecast(scenario); // "2026-8" -> $ (not $K)
+  const skuCasesByKey = useFinanceSkuCases(scenario);            // "2027-3" -> { SKU: cases }
   const { julyGrossSales } = useJulyRealFromFulfillment();       // $ (not $K), or null
   const assumptions = useFinanceAssumptions();
 
@@ -648,9 +668,20 @@ export function PNLTab({ realMonths, actuals, actualOnly }: { realMonths: number
     } else {
       grossSalesK = (scenarioForecast[`${year}-${monthNum}`] ?? 0) / 1000;
     }
-    // COGS: 2026 uses the $/case assumption; 2027/2028 use editable $/pote × 8.
     const cogsPerUnit = year === 2026 ? assumptions.get('cogs_per_unit', 22.27) : loadCogsPote(year) * 8;
-    const unitsSold = grossSalesK > 0 ? Math.round((grossSalesK * 1000) / 37) : 0; // 37 = PRICE_PER_CASE
+    // COGS 2027/2028: per-SKU real cases (Promo Calendar mix) × per-SKU $/pote (editable in Assumptions).
+    // Falls back to blended when there is no Promo Calendar data (2026 forecast months).
+    const skuCases = year !== 2026 ? skuCasesByKey[`${year}-${monthNum}`] : undefined;
+    let unitsSold: number; let cogsK: number | undefined;
+    if (skuCases && Object.keys(skuCases).length > 0) {
+      let cases = 0, cogsDollars = 0;
+      for (const code in skuCases) { const cs = skuCases[code]; cases += cs; cogsDollars += cs * loadCogsPoteSku(code) * 8; }
+      unitsSold = Math.round(cases);
+      cogsK = -cogsDollars / 1000; // $K, negative
+    } else {
+      unitsSold = grossSalesK > 0 ? Math.round((grossSalesK * 1000) / 37) : 0; // 37 = PRICE_PER_CASE
+      cogsK = undefined;
+    }
 
     // Expenses: 2026 = flat monthly overrides; 2027/2028 = per-month matrix (live draft while editing).
     let fixedCostsK: Record<string, number>;
@@ -661,7 +692,7 @@ export function PNLTab({ realMonths, actuals, actualOnly }: { realMonths: number
       fixedCostsK = Object.fromEntries(Object.keys(DEFAULT_EXPENSE_K).map(k => [k, (mat[k]?.[m0]) ?? 0]));
     }
 
-    return { grossSales: grossSalesK, unitsSold, cogsPerUnit, logisticsPct, deductionPct, fixedCostsK };
+    return { grossSales: grossSalesK, unitsSold, cogsPerUnit, cogsK, logisticsPct, deductionPct, fixedCostsK };
   }
 
   // Get value for a cell (month idx), in $K
@@ -1020,7 +1051,7 @@ export function PNLTab({ realMonths, actuals, actualOnly }: { realMonths: number
           const aGA = ((d.bank_charges ?? 0) + (d.dues_subscriptions ?? 0) + (d.rent ?? 0) + (d.utilities ?? 0) + (d.insurance ?? 0) + (d.meals_entertainment ?? 0) + (d.office_supplies ?? 0) + (d.accounting_finance ?? 0) + (d.business_consultation ?? 0) + (d.legal_fees ?? 0) + (d.quality_rd ?? 0) + (d.taxes_licenses ?? 0) + (d.car_rental_uber ?? 0) + (d.flights ?? 0) + (d.hotel ?? 0) + (d.vehicle_expenses ?? 0) + (d.uncategorized ?? 0)) / 1000;
           const aEbitda = aGP + aSell + aMkt + aTeam + aGA; const aOther = (d.other_income ?? 0) / 1000; const aNI = aEbitda + aOther;
           const fGross = ctx.grossSales; const fDed = -fGross * ctx.deductionPct; const fNet = fGross + fDed;
-          const fCogs = -(ctx.unitsSold * ctx.cogsPerUnit) / 1000; const fLog = -fGross * ctx.logisticsPct; const fGP = fNet + fCogs + fLog;
+          const fCogs = ctx.cogsK ?? -(ctx.unitsSold * ctx.cogsPerUnit) / 1000; const fLog = -fGross * ctx.logisticsPct; const fGP = fNet + fCogs + fLog;
           const fcK = ctx.fixedCostsK;
           const fSell = (fcK.broker_commissions ?? -10) + (fcK.slotting_fees ?? 0);
           const fMkt = (fcK.demos_merchandising ?? 0) + (fcK.digital_social ?? -5) + (fcK.events_tradeshows ?? 0) + (fcK.product_samples ?? -1.16);
@@ -1222,12 +1253,22 @@ function loadCogsPote(year: number): number {
 }
 function saveCogsPote(year: number, v: number) { try { localStorage.setItem(`baris.finance.cogsPote${year}`, String(v)); } catch {} }
 
+// Per-SKU COGS $/pote (editable in Assumptions). Defaults from the 2027 COGS-by-SKU sheet.
+const DEFAULT_COGS_POTE_SKU: Record<string, number> = {
+  XD: 2.3, PW: 2.4, HM: 2.2, WM: 2.15, WD: 2.1, Matcha: 2.19, VS: 1.9, CS: 1.9, GR: 2.0, GS: 2.0,
+};
+function loadCogsPoteSku(sku: string): number {
+  try { const r = localStorage.getItem(`baris.finance.cogsPoteSku.${sku}`); return r != null ? Number(r) : (DEFAULT_COGS_POTE_SKU[sku] ?? 2.19); }
+  catch { return DEFAULT_COGS_POTE_SKU[sku] ?? 2.19; }
+}
+function saveCogsPoteSku(sku: string, v: number) { try { localStorage.setItem(`baris.finance.cogsPoteSku.${sku}`, String(v)); } catch {} }
+
 // Pure function: given a forecast context, compute this month's Net Income in $K.
 // Mirrors PNLTab's getValue logic exactly, so Balance Sheet cash roll-forward stays consistent with the P&L.
 function computeMonthlyNetIncome(ctx: ForecastContext): number {
   const grossProfit = ctx.grossSales
     - ctx.grossSales * ctx.deductionPct
-    - (ctx.unitsSold * ctx.cogsPerUnit) / 1000
+    + (ctx.cogsK ?? -(ctx.unitsSold * ctx.cogsPerUnit) / 1000)
     - ctx.grossSales * ctx.logisticsPct;
   const totalSGA = Object.values(ctx.fixedCostsK).reduce((s, v) => s + (v ?? 0), 0);
   const noi = grossProfit + totalSGA;
@@ -1485,6 +1526,7 @@ function AssumptionsModal({ assumptions, onClose }: { assumptions: ReturnType<ty
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [expenseEdits, setExpenseEdits] = useState<Record<string, number>>(() => loadExpenseOverrides());
   const [cogsDraft, setCogsDraft] = useState<Record<number, string>>({});
+  const [cogsSkuDraft, setCogsSkuDraft] = useState<Record<string, string>>({});
 
   async function handleSave(key: AssumptionKey) {
     const raw = edits[key]; if (raw == null) return;
@@ -1583,7 +1625,7 @@ function AssumptionsModal({ assumptions, onClose }: { assumptions: ReturnType<ty
             })}
 
             <div className="rounded-xl border border-border p-3 space-y-2">
-              <div className="text-xs font-semibold" style={{color:"#1C2340"}}>COGS por pote — años forecast</div>
+              <div className="text-xs font-semibold" style={{color:"#1C2340"}}>COGS por pote — blended (fallback)</div>
               <div className="text-[10px] text-muted-foreground">$/pote. El motor usa $/caja = pote × 8. 2026 usa el assumption de arriba (por caja).</div>
               {[2027, 2028].map(y => (
                 <div key={y} className="flex items-center justify-between gap-2">
@@ -1597,6 +1639,25 @@ function AssumptionsModal({ assumptions, onClose }: { assumptions: ReturnType<ty
                   </div>
                 </div>
               ))}
+            </div>
+
+            <div className="rounded-xl border border-border p-3 space-y-2">
+              <div className="text-xs font-semibold" style={{color:"#1C2340"}}>COGS por pote — por SKU (2027/2028)</div>
+              <div className="text-[10px] text-muted-foreground">Se multiplica por las cajas reales de cada SKU del Promo Calendar. Reemplaza el blended de arriba cuando hay data por SKU.</div>
+              <div className="grid grid-cols-2 gap-2">
+                {EXTENDED_SKUS.map(sku => (
+                  <div key={sku} className="flex items-center justify-between gap-2">
+                    <span className="text-xs text-muted-foreground w-14">{sku}</span>
+                    <div className="flex items-center gap-1.5">
+                      <input type="number" step="0.01" defaultValue={loadCogsPoteSku(sku)}
+                        onChange={e => setCogsSkuDraft(prev => ({ ...prev, [sku]: e.target.value }))}
+                        className="w-16 rounded-lg border border-border px-2 py-1 text-xs text-right font-mono" />
+                      <button onClick={() => { const v = parseFloat(cogsSkuDraft[sku] ?? String(loadCogsPoteSku(sku))); if (!isNaN(v)) { saveCogsPoteSku(sku, v); window.location.reload(); } }}
+                        className="rounded-lg bg-[#1C2340] text-white px-2 py-1 text-[10px] font-semibold hover:opacity-90">Save</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         )}
