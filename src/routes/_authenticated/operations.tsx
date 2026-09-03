@@ -3577,7 +3577,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   const scenarioFactor = planScenario === "Pessimistic" ? 1 - scenarioPct / 100
     : planScenario === "Optimistic" ? 1 + scenarioPct / 100 : 1;
 
-  // Locked to the canonical 10 SKU codes — matches Sales → By SKU exactly
+  // SKU list locked to the 10 canonical codes — derived from PROC_SKUS, nothing else enters
   const dynamicProcSkus = PROC_SKUS;
 
   // Build forecast EXACTLY matching Sales → By SKU: use Promo Calendar DB as primary,
