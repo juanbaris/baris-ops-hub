@@ -43,7 +43,7 @@ const ALL_MONTHS_REAL = [
   "Jul 2028","Aug 2028","Sep 2028","Oct 2028","Nov 2028","Dec 2028",
 ];
 
-type SalesTab = "real"|"resumen"|"detalle"|"sku"|"simulador"|"estacionalidad"|"accounts"|"promocal"|"pnl";
+type SalesTab = "real"|"resumen"|"detalle"|"sku"|"simulador"|"estacionalidad"|"assumptions"|"accounts"|"promocal"|"pnl";
 declare global { interface Window { Chart: any } }
 
 // ─── Real Monthly Tab (derived from invoiced pipeline) ───────────────────────
@@ -1069,8 +1069,8 @@ const ACCT_ROWS: AcctRow[] = [
     const ns=dc*(1-d), cogs=a.cogs_per_unit??0, ff=a.fulfillment_cost??0;
     return ((ns-cogs-ff)/dc*100).toFixed(1)+"%";
   }},
-  // ── 52W Sales (formulas from Promo Calendar) ──
-  { kind: "separator", label: "52W Projected" },
+  // ── 52W Sales ──
+  { kind: "separator", label: "52W Sales" },
   { kind: "formula", label: "Total $ sales", fn: (a,ctx) => {
     const rev=ctx.annualRev.get(`${ctx.year}|${a.account_name}`)??0;
     return "$"+Math.round(rev).toLocaleString();
@@ -1079,6 +1079,20 @@ const ACCT_ROWS: AcctRow[] = [
     const u=ctx.annualUnits.get(`${ctx.year}|${a.account_name}`)??0;
     return Math.round(u).toLocaleString();
   }},
+  // ── 52W P&L ──
+  { kind: "separator", label: "52W P&L" },
+  { kind: "formula", label: "Gross Sales", fn: (a,ctx) => { const u=ctx.annualUnits.get(`${ctx.year}|${a.account_name}`)??0; return "$"+Math.round(u*(a.delivered_cost??0)).toLocaleString(); }},
+  { kind: "formula", label: "Discounts", fn: (a,ctx) => { const gs=(ctx.annualUnits.get(`${ctx.year}|${a.account_name}`)??0)*(a.delivered_cost??0); return "$"+Math.round(gs*(a.discounts_pct??0)).toLocaleString(); }},
+  { kind: "formula", label: "   EDLP", fn: (a,ctx) => { const gs=(ctx.annualUnits.get(`${ctx.year}|${a.account_name}`)??0)*(a.delivered_cost??0); return "$"+Math.round(gs*(a.edlp_pct??0)).toLocaleString(); }},
+  { kind: "formula", label: "   Promos", fn: (a,ctx) => { const gs=(ctx.annualUnits.get(`${ctx.year}|${a.account_name}`)??0)*(a.delivered_cost??0); return "$"+Math.round(gs*(a.promos_pct??0)).toLocaleString(); }},
+  { kind: "formula", label: "   Dist. Fees", fn: (a,ctx) => { const gs=(ctx.annualUnits.get(`${ctx.year}|${a.account_name}`)??0)*(a.delivered_cost??0); return "$"+Math.round(gs*(a.dist_fees_pct??0)).toLocaleString(); }},
+  { kind: "formula", label: "   Dist. Allowance", fn: (a,ctx) => { const gs=(ctx.annualUnits.get(`${ctx.year}|${a.account_name}`)??0)*(a.delivered_cost??0); return "$"+Math.round(gs*(a.dist_allowance_pct??0)).toLocaleString(); }},
+  { kind: "formula", label: "   Payment Terms", fn: (a,ctx) => { const gs=(ctx.annualUnits.get(`${ctx.year}|${a.account_name}`)??0)*(a.delivered_cost??0); return "$"+Math.round(gs*(a.payment_terms_pct??0)).toLocaleString(); }},
+  { kind: "formula", label: "Net Sales", fn: (a,ctx) => { const gs=(ctx.annualUnits.get(`${ctx.year}|${a.account_name}`)??0)*(a.delivered_cost??0); return "$"+Math.round(gs*(1-(a.discounts_pct??0))).toLocaleString(); }},
+  { kind: "formula", label: "COGS", fn: (a,ctx) => { const u=ctx.annualUnits.get(`${ctx.year}|${a.account_name}`)??0; return "$"+Math.round(u*(a.cogs_per_unit??0)).toLocaleString(); }},
+  { kind: "formula", label: "Fulfillment", fn: (a,ctx) => { const u=ctx.annualUnits.get(`${ctx.year}|${a.account_name}`)??0; return "$"+Math.round(u*(a.fulfillment_cost??0)).toLocaleString(); }},
+  { kind: "formula", label: "Gross Profit", fn: (a,ctx) => { const u=ctx.annualUnits.get(`${ctx.year}|${a.account_name}`)??0,dc=a.delivered_cost??0; const ns=u*dc*(1-(a.discounts_pct??0)); return "$"+Math.round(ns-u*(a.cogs_per_unit??0)-u*(a.fulfillment_cost??0)).toLocaleString(); }},
+  { kind: "formula", label: "Gross Margin", fn: (a,ctx) => { const u=ctx.annualUnits.get(`${ctx.year}|${a.account_name}`)??0,dc=a.delivered_cost??0; const gs=u*dc; if(!gs)return "—"; const ns=gs*(1-(a.discounts_pct??0)); return (((ns-u*(a.cogs_per_unit??0)-u*(a.fulfillment_cost??0))/gs)*100).toFixed(0)+"%"; }},
 ];
 
 function AccountsTab({accounts,annualByAccount,annualUnitsByAccount,loading,onUpdated,onInserted,onDeleted}:{
@@ -1241,13 +1255,21 @@ function PromoCalendarTab({rows,accounts,byAccountMonth,loading,onUpdated,onInse
 
   function toggle(name:string){ setExpanded(s=>{const n=new Set(s);n.has(name)?n.delete(name):n.add(name);return n;}); }
 
+  function computeUnits(r:PromoCalendarRow, patch:Partial<PromoCalendarRow>){
+    const s=patch.stores??r.stores??0, v=patch.reg_avg_vel??r.reg_avg_vel??0, w=patch.weeks??r.weeks??0;
+    const pw=patch.promo_weeks??r.promo_weeks??0, lift=patch.lift_pct??r.lift_pct??0;
+    const hasPromo=pw>0;
+    const reg=hasPromo?s*v*(w-pw):s*v*w;
+    const promo=hasPromo?s*v*(1+lift)*pw:0;
+    return {reg_units:Math.round(reg*1000)/1000, promo_units:Math.round(promo*1000)/1000, total_units:Math.round((reg+promo)*1000)/1000};
+  }
   async function commit(row:PromoCalendarRow, patch:Partial<PromoCalendarRow>){
-    const stores=patch.stores??row.stores??0, vel=patch.reg_avg_vel??row.reg_avg_vel??0, weeks=patch.weeks??row.weeks??0;
-    const recompute=("stores" in patch||"reg_avg_vel" in patch||"weeks" in patch);
-    const total_units=recompute?Math.round(stores*vel*weeks*1000)/1000:row.total_units;
-    const updated={...row,...patch,total_units};
+    const recompute=("stores" in patch||"reg_avg_vel" in patch||"weeks" in patch||"promo_weeks" in patch||"lift_pct" in patch);
+    const units=recompute?computeUnits(row,patch):{};
+    const fullPatch={...patch,...units};
+    const updated={...row,...fullPatch};
     onUpdated(updated); setSaving(row.id);
-    try{ const {supabase:sb}=await import("@/integrations/supabase/client"); await updatePromoCalendarRow(sb,row.id,{...patch,total_units}); }catch(e){console.error(e);}
+    try{ const {supabase:sb}=await import("@/integrations/supabase/client"); await updatePromoCalendarRow(sb,row.id,fullPatch); }catch(e){console.error(e);}
     setSaving(null);
   }
 
@@ -1324,14 +1346,14 @@ function PromoCalendarTab({rows,accounts,byAccountMonth,loading,onUpdated,onInse
                         <thead>
                           <tr className="text-[10px] uppercase tracking-wide text-muted-foreground border-b border-border/60">
                             <th className="px-3 py-1.5 text-left">Mes</th>
+                            <th className="px-3 py-1.5 text-right">Weeks</th>
                             <th className="px-3 py-1.5 text-right">Stores</th>
                             <th className="px-3 py-1.5 text-right">Reg Vel.</th>
-                            <th className="px-3 py-1.5 text-right">Weeks</th>
                             <th className="px-3 py-1.5 text-right font-bold">Total Units</th>
                             <th className="px-3 py-1.5 text-right">Reg Units</th>
                             <th className="px-3 py-1.5 text-right">Promo Units</th>
                             <th className="px-3 py-1.5 text-right">Promo</th>
-                            <th className="px-3 py-1.5 text-right">Weeks</th>
+                            <th className="px-3 py-1.5 text-right">P.Weeks</th>
                             <th className="px-3 py-1.5 text-right">Lift</th>
                             <th className="px-3 py-1.5 text-right">Unit Cost</th>
                             <th className="px-3 py-1.5 text-right">AD $</th>
@@ -1341,16 +1363,20 @@ function PromoCalendarTab({rows,accounts,byAccountMonth,loading,onUpdated,onInse
                         </thead>
                         <tbody>
                           {skuRows.map(row=>{
-                            const hasPromo=!!(row.promo_label||row.promo_units||row.promo_weeks);
+                            const hasPromo=!!((row.promo_weeks??0)>0||(row.promo_label));
+                            const s=row.stores??0, v=row.reg_avg_vel??0, w=row.weeks??0;
+                            const pw=row.promo_weeks??0, lift=row.lift_pct??0;
+                            const regU=hasPromo&&pw>0?s*v*(w-pw):s*v*w;
+                            const promoU=hasPromo&&pw>0?s*v*(1+lift)*pw:0;
                             return (
                             <tr key={row.id} className={`border-t border-border/40 ${saving===row.id?"bg-amber-50/40":""} ${hasPromo?"bg-amber-50/20":""}`}>
                               <td className="px-3 py-1 font-semibold" style={{color:"#1C2340"}}>{MONTHS_SHORT[row.month-1]}</td>
+                              <td className="px-3 py-1 text-right font-mono text-muted-foreground">{row.weeks??""}</td>
                               <td className="px-3 py-1 text-right"><input type="number" step="1" defaultValue={row.stores??""} className={inp} onBlur={e=>commit(row,{stores:e.target.value===""?null:parseFloat(e.target.value)})}/></td>
                               <td className="px-3 py-1 text-right"><input type="number" step="0.01" defaultValue={row.reg_avg_vel??""} className={inp} onBlur={e=>commit(row,{reg_avg_vel:e.target.value===""?null:parseFloat(e.target.value)})}/></td>
-                              <td className="px-3 py-1 text-right"><input type="number" step="0.25" defaultValue={row.weeks??""} className={inp} onBlur={e=>commit(row,{weeks:e.target.value===""?null:parseFloat(e.target.value)})}/></td>
-                              <td className="px-3 py-1 text-right font-mono font-bold" style={{color:"#1C2340"}}>{row.total_units.toLocaleString(undefined,{maximumFractionDigits:1})}</td>
-                              <td className="px-3 py-1 text-right"><input type="number" step="0.01" defaultValue={row.reg_units??""} className={`${inp} w-16`} onBlur={e=>commit(row,{reg_units:e.target.value===""?null:parseFloat(e.target.value)})}/></td>
-                              <td className="px-3 py-1 text-right"><input type="number" step="0.01" defaultValue={row.promo_units??""} className={`${inp} w-16`} onBlur={e=>commit(row,{promo_units:e.target.value===""?null:parseFloat(e.target.value)})}/></td>
+                              <td className="px-3 py-1 text-right font-mono font-bold" style={{color:"#1C2340"}}>{(regU+promoU).toLocaleString(undefined,{maximumFractionDigits:1})}</td>
+                              <td className="px-3 py-1 text-right font-mono text-muted-foreground">{regU>0?regU.toLocaleString(undefined,{maximumFractionDigits:1}):"—"}</td>
+                              <td className={`px-3 py-1 text-right font-mono ${promoU>0?"font-semibold text-amber-700":"text-muted-foreground"}`}>{promoU>0?promoU.toLocaleString(undefined,{maximumFractionDigits:1}):"—"}</td>
                               <td className="px-3 py-1 text-right"><input type="text" defaultValue={row.promo_label??""} className="rounded border border-border bg-background px-1.5 py-0.5 text-xs w-16 focus:outline-none" onBlur={e=>commit(row,{promo_label:e.target.value===""?null:e.target.value})}/></td>
                               <td className="px-3 py-1 text-right"><input type="number" step="1" defaultValue={row.promo_weeks??""} className={`${inp} w-12`} onBlur={e=>commit(row,{promo_weeks:e.target.value===""?null:parseFloat(e.target.value)})}/></td>
                               <td className="px-3 py-1 text-right"><input type="number" step="0.01" defaultValue={row.lift_pct??""} className={`${inp} w-12`} onBlur={e=>commit(row,{lift_pct:e.target.value===""?null:parseFloat(e.target.value)})}/></td>
@@ -1506,6 +1532,112 @@ function SalesPnLTab({rows,accounts,byAccountMonth,actuals,loading,onActualSaved
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
+// ─── Assumptions Tab ──────────────────────────────────────────────────────────
+const DIST_DEFAULTS = {UNFI:{payment_terms:2.0,dist_fees:1.5,dist_allowance:2.5},KEHE:{payment_terms:2.0,dist_fees:1.5,dist_allowance:2.0},Rainforest:{payment_terms:0,dist_fees:0,dist_allowance:18}};
+const COGS_SKU_DEFAULT:Record<string,number> = {XD:2.30,PW:2.40,HM:2.20,WM:2.15,WD:2.10,Matcha:2.10,VS:1.90,CS:1.90,GR:2.00,GS:2.00};
+const LS_COGS="baris.sales.cogsBySku", LS_OI="baris.sales.ois";
+
+function AssumptionsTab(){
+  const [cogsSku,setCogsSku]=useState<Record<string,number>>(()=>{
+    try{const v=window.localStorage.getItem(LS_COGS);if(v)return JSON.parse(v);}catch{}return {...COGS_SKU_DEFAULT};
+  });
+  const [ois,setOis]=useState<{month:number;unfi_oi:number;kehe_oi:number;unfi_ad:number;kehe_ad:number}[]>(()=>{
+    try{const v=window.localStorage.getItem(LS_OI);if(v)return JSON.parse(v);}catch{}
+    return Array.from({length:12},(_,i)=>({month:i+1,unfi_oi:0,kehe_oi:0,unfi_ad:0,kehe_ad:0}));
+  });
+  function saveCogs(sku:string,val:number){const n={...cogsSku,[sku]:val};setCogsSku(n);try{window.localStorage.setItem(LS_COGS,JSON.stringify(n));}catch{}}
+  function saveOi(i:number,field:string,val:number){const n=[...ois];(n[i] as any)[field]=val;setOis(n);try{window.localStorage.setItem(LS_OI,JSON.stringify(n));}catch{}}
+  const inp="rounded border border-border bg-background px-1.5 py-0.5 text-xs font-mono text-right focus:outline-none focus:ring-1 focus:ring-primary/30 w-16";
+  const oiTotal=(field:string)=>ois.reduce((s,r)=>s+((r as any)[field]??0),0);
+
+  return (
+    <div className="space-y-5">
+      <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-700">
+        ⚙️ Parámetros base del modelo de ventas. Estos valores alimentan las fórmulas de Accounts, el Promo Calendar y el Monthly P&L. Editá y se guardan automáticamente.
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+        {/* ── Delivered Cost by Distributor ── */}
+        <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+          <div className="px-5 py-3 border-b border-border bg-muted/30"><p className="text-sm font-bold" style={{color:"#1C2340"}}>Delivered Cost por Distribuidor</p></div>
+          <table className="w-full text-xs"><tbody>
+            {(["UNFI","KEHE","Rainforest"] as const).map(d=>(
+              <tr key={d} className="border-t border-border/60"><td className="px-4 py-2 font-semibold">{d}</td><td className="px-4 py-2 text-right font-mono">${d==="Rainforest"?"4.8125":"4.62"}</td></tr>
+            ))}
+          </tbody></table>
+        </div>
+        {/* ── Distributor Discounts ── */}
+        <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+          <div className="px-5 py-3 border-b border-border bg-muted/30"><p className="text-sm font-bold" style={{color:"#1C2340"}}>Distributor Discounts (defaults)</p></div>
+          <table className="w-full text-xs"><thead><tr className="text-[10px] uppercase text-muted-foreground border-b border-border"><th className="px-4 py-1.5 text-left">Concepto</th><th className="px-4 py-1.5 text-right">UNFI</th><th className="px-4 py-1.5 text-right">KEHE</th><th className="px-4 py-1.5 text-right">Rainforest</th></tr></thead><tbody>
+            {(["payment_terms","dist_fees","dist_allowance"] as const).map(k=>{
+              const labels:Record<string,string>={payment_terms:"Payment Terms",dist_fees:"Distributor Fees",dist_allowance:"Distributor Allowance"};
+              return (
+                <tr key={k} className="border-t border-border/60"><td className="px-4 py-2 font-semibold">{labels[k]}</td>
+                  {(["UNFI","KEHE","Rainforest"] as const).map(d=>(<td key={d} className="px-4 py-2 text-right font-mono">{(DIST_DEFAULTS[d] as any)[k]}%</td>))}
+                </tr>
+              );
+            })}
+          </tbody></table>
+        </div>
+      </div>
+      {/* ── COGS by SKU ── */}
+      <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+        <div className="px-5 py-3 border-b border-border bg-muted/30">
+          <p className="text-sm font-bold" style={{color:"#1C2340"}}>COGS por SKU ($/unidad)</p>
+          <p className="text-xs text-muted-foreground">Costo de materia prima + manufactura por pote. Editable.</p>
+        </div>
+        <div className="p-4 grid grid-cols-2 md:grid-cols-5 gap-3">
+          {EXTENDED_SKUS.map(sku=>(
+            <div key={sku} className="flex items-center gap-2">
+              <span className="text-xs font-semibold w-14">{sku}</span>
+              <input type="number" step="0.01" value={cogsSku[sku]??0}
+                onChange={e=>saveCogs(sku,parseFloat(e.target.value)||0)}
+                className={`${inp} flex-1`}/>
+            </div>
+          ))}
+        </div>
+      </div>
+      {/* ── OIs (Off-Invoice promotions by distributor by month) ── */}
+      <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+        <div className="px-5 py-3 border-b border-border bg-muted/30">
+          <p className="text-sm font-bold" style={{color:"#1C2340"}}>OIs & Ad $ por Distribuidor — 2027</p>
+          <p className="text-xs text-muted-foreground">Off-Invoice y Ad dollars mensuales por UNFI y KEHE. Editable.</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs min-w-max">
+            <thead><tr className="text-[10px] uppercase text-muted-foreground border-b border-border bg-muted/20">
+              <th className="px-3 py-2 text-left">Month</th>
+              <th className="px-3 py-2 text-right">UNFI OI</th><th className="px-3 py-2 text-right">KEHE OI</th>
+              <th className="px-3 py-2 text-right">UNFI Ad$</th><th className="px-3 py-2 text-right">KEHE Ad$</th>
+              <th className="px-3 py-2 text-right font-bold">Total</th>
+            </tr></thead>
+            <tbody>
+              {ois.map((r,i)=>(
+                <tr key={i} className="border-t border-border/60">
+                  <td className="px-3 py-1.5 font-semibold">{MONTHS_SHORT[i]}</td>
+                  <td className="px-3 py-1"><input type="number" value={r.unfi_oi} onChange={e=>saveOi(i,"unfi_oi",parseFloat(e.target.value)||0)} className={inp}/></td>
+                  <td className="px-3 py-1"><input type="number" value={r.kehe_oi} onChange={e=>saveOi(i,"kehe_oi",parseFloat(e.target.value)||0)} className={inp}/></td>
+                  <td className="px-3 py-1"><input type="number" value={r.unfi_ad} onChange={e=>saveOi(i,"unfi_ad",parseFloat(e.target.value)||0)} className={inp}/></td>
+                  <td className="px-3 py-1"><input type="number" value={r.kehe_ad} onChange={e=>saveOi(i,"kehe_ad",parseFloat(e.target.value)||0)} className={inp}/></td>
+                  <td className="px-3 py-1.5 text-right font-mono font-bold">${(r.unfi_oi+r.kehe_oi+r.unfi_ad+r.kehe_ad).toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot><tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
+              <td className="px-3 py-2 font-semibold">TOTAL</td>
+              <td className="px-3 py-2 text-right font-mono">${oiTotal("unfi_oi").toLocaleString()}</td>
+              <td className="px-3 py-2 text-right font-mono">${oiTotal("kehe_oi").toLocaleString()}</td>
+              <td className="px-3 py-2 text-right font-mono">${oiTotal("unfi_ad").toLocaleString()}</td>
+              <td className="px-3 py-2 text-right font-mono">${oiTotal("kehe_ad").toLocaleString()}</td>
+              <td className="px-3 py-2 text-right font-mono font-bold">${(oiTotal("unfi_oi")+oiTotal("kehe_oi")+oiTotal("unfi_ad")+oiTotal("kehe_ad")).toLocaleString()}</td>
+            </tr></tfoot>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SalesPage() {
   const [tab,setTab] = useState<SalesTab>("real");
   const [scenario,setScenario] = useState<"Pessimistic"|"Normal"|"Optimistic">("Normal");
@@ -1755,6 +1887,7 @@ function SalesPage() {
     {id:"estacionalidad",label:"Seasonality"},
   ];
   const TABS_REFERENCE: {id:SalesTab;label:string}[] = [
+    {id:"assumptions",label:"Assumptions"},
     {id:"accounts",label:"Accounts"},
     {id:"promocal",label:"Promo Calendar"},
     {id:"pnl",label:"Sales P&L"},
@@ -1820,6 +1953,7 @@ function SalesPage() {
       {tab==="estacionalidad"&& <SeasonalityTab seasonIdx={seasonIdx} onSeasonIdxChange={setSeasonIdx}
                                   velChains={velChains} onVelChainsChange={setVelChains}
                                   promoMultipliers={promoMultipliers} onPromoMultipliersChange={setPromoMultipliers}/>}
+      {tab==="assumptions"   && <AssumptionsTab/>}
       {tab==="accounts"      && <AccountsTab accounts={dbAccounts} annualByAccount={annualByAccount} annualUnitsByAccount={annualUnitsByAccount} loading={dbLoading} onUpdated={refreshAccount} onInserted={addAccounts} onDeleted={removeAccounts}/>}
       {tab==="promocal"      && <PromoCalendarTab rows={dbPromo} accounts={dbAccounts} byAccountMonth={byAccountMonth} loading={dbLoading} onUpdated={refreshPromoRow} onInserted={addPromoRows} onDeleted={removePromoRows}/>}
       {tab==="pnl"           && <SalesPnLTab rows={dbPromo} accounts={dbAccounts} byAccountMonth={byAccountMonth} actuals={dbActuals} loading={dbLoading} onActualSaved={saveActualLocal}/>}
