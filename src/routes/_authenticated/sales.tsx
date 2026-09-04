@@ -21,9 +21,10 @@ import {
   fetchAccountActuals, shiftPromoOneMonthEarlier,
   fetchAssumptions, updateAssumption, deliveredCostOf, distPctOf, cogsOf, fulfillmentPerUnit,
   accountPnLInputs,
-  breakdownByRetail, breakdownByDistributor, breakdownBySku, sumOverMonths, monthKeysForPeriod,
+  breakdownByRetail, breakdownByDistributor, breakdownBySku, sumOverMonths,
+  promoAnalytics,
   type SalesAccount, type PromoCalendarRow, type DbMonthAgg, type AccountActual, type BreakdownRow,
-  type AccountPnLInputs,
+  type AccountPnLInputs, type PromoAnalyticsRow,
 } from "@/lib/sales-database";
 
 const DEFAULT_MIX_PCT: Record<string,number> = {XD:30,PW:25,HM:18,WM:12,WD:8,Matcha:7};
@@ -955,7 +956,16 @@ function PromoCalendarTab({rows,accounts,byAccountMonth,loading,onUpdated,onInse
   const [year,setYear] = useState<number>(2027);
   const [saving,setSaving] = useState<string|null>(null);
   const [expanded,setExpanded] = useState<Set<string>>(new Set());
-  const accountNames = Array.from(new Set(rows.filter(r=>r.year===year).map(r=>r.account_name))).sort();
+  const [fDist,setFDist] = useState<string>("all");
+  const distOf = useMemo(()=>{
+    const m=new Map<string,string>();
+    rows.filter(r=>r.year===year).forEach(r=>{ if(!m.has(r.account_name)) m.set(r.account_name,r.distributor); });
+    return m;
+  },[rows,year]);
+  const allDists = Array.from(new Set(rows.filter(r=>r.year===year).map(r=>r.distributor))).sort();
+  const accountNames = Array.from(new Set(rows.filter(r=>r.year===year).map(r=>r.account_name)))
+    .filter(name=> fDist==="all" || distOf.get(name)===fDist)
+    .sort();
 
   function toggle(name:string){ setExpanded(s=>{const n=new Set(s);n.has(name)?n.delete(name):n.add(name);return n;}); }
 
@@ -1016,6 +1026,10 @@ function PromoCalendarTab({rows,accounts,byAccountMonth,loading,onUpdated,onInse
             className={`rounded-full px-3.5 py-1.5 text-xs font-semibold ${year===y?"text-white":"border border-border text-muted-foreground"}`}
             style={year===y?{backgroundColor:"#1C2340"}:{}}>{y}</button>
         ))}
+        <select value={fDist} onChange={e=>setFDist(e.target.value)} className="rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold focus:outline-none">
+          <option value="all">Todos los distribuidores</option>
+          {allDists.map(d=><option key={d} value={d}>{d}</option>)}
+        </select>
         <button onClick={()=>setExpanded(new Set(accountNames))} className="text-xs text-muted-foreground hover:text-foreground underline">Expandir todo</button>
         <button onClick={()=>setExpanded(new Set())} className="text-xs text-muted-foreground hover:text-foreground underline">Colapsar todo</button>
       </div>
@@ -1108,12 +1122,149 @@ function PromoCalendarTab({rows,accounts,byAccountMonth,loading,onUpdated,onInse
   );
 }
 
+// ─── Promo Analytics (todas las promos · editable · rentabilidad) ─────────────
+function PromoAnalyticsView({rows,assumptions,onUpdated}:{
+  rows:PromoCalendarRow[];assumptions:Record<string,number>;
+  onUpdated:(r:PromoCalendarRow)=>void;
+}) {
+  const years = Array.from(new Set(rows.map(r=>r.year))).sort();
+  const [year,setYear] = useState<number>(years[0]??2027);
+  const [fRetail,setFRetail] = useState<string>("all");
+  const [fDist,setFDist] = useState<string>("all");
+  const [fSku,setFSku] = useState<string>("all");
+  const [fType,setFType] = useState<string>("all");
+  const [saving,setSaving] = useState<string|null>(null);
+
+  const yearRows = useMemo(()=>rows.filter(r=>r.year===year),[rows,year]);
+  const promos = useMemo(()=>promoAnalytics(yearRows,assumptions),[yearRows,assumptions]);
+
+  const retails = Array.from(new Set(promos.map(p=>p.account_name))).sort();
+  const dists = Array.from(new Set(promos.map(p=>p.distributor))).sort();
+  const skus = Array.from(new Set(promos.map(p=>p.sku_code))).sort();
+  const types = Array.from(new Set(promos.map(p=>(p.promo_label??"—").trim()||"—"))).sort();
+
+  const filtered = promos.filter(p=>
+    (fRetail==="all"||p.account_name===fRetail)&&
+    (fDist==="all"||p.distributor===fDist)&&
+    (fSku==="all"||p.sku_code===fSku)&&
+    (fType==="all"||((p.promo_label??"—").trim()||"—")===fType)
+  ).sort((a,b)=> a.account_name.localeCompare(b.account_name)||a.sku_code.localeCompare(b.sku_code)||a.month-b.month);
+
+  const totCost=filtered.reduce((s,p)=>s+p.total_cost,0);
+  const totNet=filtered.reduce((s,p)=>s+p.netProfit,0);
+  const totIncr=filtered.reduce((s,p)=>s+p.incrementalUnits,0);
+  const paying=filtered.filter(p=>(p.roi??-1)>0).length;
+
+  async function commit(id:string, patch:Partial<PromoCalendarRow>){
+    const orig=rows.find(r=>r.id===id); if(!orig) return;
+    const updated={...orig,...patch};
+    onUpdated(updated); setSaving(id);
+    try{ const {supabase:sb}=await import("@/integrations/supabase/client"); await updatePromoCalendarRow(sb,id,patch); }catch(e){console.error(e);}
+    setSaving(null);
+  }
+
+  const inp="rounded border border-border bg-background px-1.5 py-0.5 text-xs font-mono text-right focus:outline-none focus:ring-1 focus:ring-primary/30 w-16";
+  const sel="rounded-lg border border-border bg-background px-2 py-1 text-xs focus:outline-none";
+  const money=(v:number)=>`$${Math.round(v).toLocaleString()}`;
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-700">
+        🎯 Todas las promos del Promo Calendar en un solo lugar, editables. <strong>Rentabilidad</strong> = margen de las unidades incrementales (que generás por el lift) menos el costo de la promo. Verde = la promo se paga sola, rojo = cuesta más de lo que trae. Editás acá y se actualiza el Promo Calendar.
+      </div>
+
+      {/* KPIs */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {[
+          {l:"Gasto total en promos",v:money(totCost),c:"#A3224A"},
+          {l:"Rentabilidad neta",v:money(totNet),c:totNet>=0?"#10B981":"#EF4444"},
+          {l:"Unidades incrementales",v:Math.round(totIncr).toLocaleString(),c:"#1C2340"},
+          {l:"Promos que se pagan",v:`${paying}/${filtered.length}`,c:"#6B7280"},
+        ].map((k,i)=>(
+          <div key={i} className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">{k.l}</p>
+            <p className="text-xl font-bold font-mono" style={{color:k.c}}>{k.v}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Filtros */}
+      <div className="flex flex-wrap gap-2 items-center">
+        <div className="flex gap-1">
+          {years.map(y=>(
+            <button key={y} onClick={()=>setYear(y)}
+              className={`rounded-full px-3 py-1.5 text-xs font-semibold ${year===y?"text-white":"border border-border text-muted-foreground"}`}
+              style={year===y?{backgroundColor:"#1C2340"}:{}}>{y}</button>
+          ))}
+        </div>
+        <select value={fRetail} onChange={e=>setFRetail(e.target.value)} className={sel}><option value="all">Todos los retails</option>{retails.map(r=><option key={r}>{r}</option>)}</select>
+        <select value={fDist} onChange={e=>setFDist(e.target.value)} className={sel}><option value="all">Todos los DC</option>{dists.map(d=><option key={d}>{d}</option>)}</select>
+        <select value={fSku} onChange={e=>setFSku(e.target.value)} className={sel}><option value="all">Todos los SKU</option>{skus.map(s=><option key={s}>{s}</option>)}</select>
+        <select value={fType} onChange={e=>setFType(e.target.value)} className={sel}><option value="all">Todos los tipos</option>{types.map(t=><option key={t}>{t}</option>)}</select>
+        <span className="text-xs text-muted-foreground ml-auto">{filtered.length} promos</span>
+      </div>
+
+      {/* Tabla */}
+      <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
+        <table className="w-full text-xs min-w-max">
+          <thead>
+            <tr className="text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/40 border-b border-border">
+              <th className="px-3 py-2.5 text-left">Retail</th>
+              <th className="px-3 py-2.5 text-left">DC</th>
+              <th className="px-3 py-2.5 text-left">SKU</th>
+              <th className="px-3 py-2.5 text-left">Mes</th>
+              <th className="px-3 py-2.5 text-left">Promo</th>
+              <th className="px-3 py-2.5 text-right">Lift %</th>
+              <th className="px-3 py-2.5 text-right">Weeks</th>
+              <th className="px-3 py-2.5 text-right">Unit Cost</th>
+              <th className="px-3 py-2.5 text-right">Total Cost</th>
+              <th className="px-3 py-2.5 text-right">Δ Units</th>
+              <th className="px-3 py-2.5 text-right">Net</th>
+              <th className="px-3 py-2.5 text-right">ROI</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length===0 && <tr><td colSpan={12} className="px-3 py-6 text-center text-muted-foreground">No hay promos con este filtro.</td></tr>}
+            {filtered.map(p=>(
+              <tr key={p.id} className={`border-t border-border/60 hover:bg-muted/10 ${saving===p.id?"bg-amber-50/40":""}`}>
+                <td className="px-3 py-1.5 font-semibold" style={{color:"#1C2340"}}>{p.account_name}</td>
+                <td className="px-3 py-1.5 text-muted-foreground">{p.distributor}</td>
+                <td className="px-3 py-1.5 font-semibold">{p.sku_code}</td>
+                <td className="px-3 py-1.5 text-muted-foreground">{MONTHS_SHORT[p.month-1]}</td>
+                <td className="px-3 py-1.5"><input type="text" defaultValue={p.promo_label??""} className="rounded border border-border bg-background px-1.5 py-0.5 text-xs w-24 focus:outline-none" onBlur={e=>commit(p.id,{promo_label:e.target.value===""?null:e.target.value})}/></td>
+                <td className="px-3 py-1.5 text-right"><input type="number" step="0.01" defaultValue={p.lift_pct??""} className={inp} onBlur={e=>commit(p.id,{lift_pct:e.target.value===""?null:parseFloat(e.target.value)})}/></td>
+                <td className="px-3 py-1.5 text-right"><input type="number" step="0.5" defaultValue={p.promo_weeks??""} className={inp} onBlur={e=>commit(p.id,{promo_weeks:e.target.value===""?null:parseFloat(e.target.value)})}/></td>
+                <td className="px-3 py-1.5 text-right"><input type="number" step="0.01" defaultValue={p.unit_cost??""} className={inp} onBlur={e=>commit(p.id,{unit_cost:e.target.value===""?null:parseFloat(e.target.value)})}/></td>
+                <td className="px-3 py-1.5 text-right"><input type="number" step="1" defaultValue={p.total_cost} className={inp} onBlur={e=>commit(p.id,{total_cost:e.target.value===""?null:parseFloat(e.target.value)})}/></td>
+                <td className="px-3 py-1.5 text-right font-mono text-muted-foreground">{Math.round(p.incrementalUnits).toLocaleString()}</td>
+                <td className={`px-3 py-1.5 text-right font-mono font-semibold ${p.netProfit>=0?"text-emerald-600":"text-red-500"}`}>{money(p.netProfit)}</td>
+                <td className={`px-3 py-1.5 text-right font-mono font-semibold ${(p.roi??0)>=0?"text-emerald-600":"text-red-500"}`}>{p.roi==null?"—":`${Math.round(p.roi*100)}%`}</td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
+              <td className="px-3 py-2 font-semibold" colSpan={8}>TOTAL · {filtered.length} promos</td>
+              <td className="px-3 py-2 text-right font-mono font-bold">{money(totCost)}</td>
+              <td className="px-3 py-2 text-right font-mono font-bold text-slate-300">{Math.round(totIncr).toLocaleString()}</td>
+              <td className={`px-3 py-2 text-right font-mono font-bold ${totNet>=0?"text-emerald-400":"text-red-400"}`}>{money(totNet)}</td>
+              <td className="px-3 py-2 text-right font-mono font-bold">{totCost>0?`${Math.round(totNet/totCost*100)}%`:"—"}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ─── Sales Breakdown Tab (mes a mes · units/$ · forecast vs real) ─────────────
 const UNITS_PER_CASE_LOCAL = 8;
-function SalesBreakdownTab({rows,accounts,assumptions,actualBySku,actualByDist,loading}:{
-  rows:PromoCalendarRow[];accounts:SalesAccount[];assumptions:Record<string,number>;
-  actualBySku:Record<string,Record<string,number>>;actualByDist:Record<string,Record<string,number>>;loading:boolean;
+function SalesBreakdownTab({rows,rawRows,accounts,assumptions,actualBySku,actualByDist,onPromoUpdated,loading}:{
+  rows:PromoCalendarRow[];rawRows:PromoCalendarRow[];accounts:SalesAccount[];assumptions:Record<string,number>;
+  actualBySku:Record<string,Record<string,number>>;actualByDist:Record<string,Record<string,number>>;
+  onPromoUpdated:(r:PromoCalendarRow)=>void;loading:boolean;
 }) {
+  const [view,setView] = useState<"ventas"|"promos">("ventas");
   const years = Array.from(new Set(rows.map(r=>r.year))).sort();
   const [year,setYear] = useState<number>(years[0]??2027);
   const [metric,setMetric] = useState<"units"|"value">("value");
@@ -1224,6 +1375,17 @@ function SalesBreakdownTab({rows,accounts,assumptions,actualBySku,actualByDist,l
 
   return (
     <div className="space-y-4">
+      <div className="flex gap-1 rounded-xl bg-muted p-1 w-fit">
+        {([["ventas","📊 Ventas"],["promos","🎯 Promos"]] as const).map(([id,lbl])=>(
+          <button key={id} onClick={()=>setView(id)}
+            className={`rounded-lg px-4 py-1.5 text-xs font-semibold ${view===id?"text-white shadow-sm":"text-muted-foreground"}`}
+            style={view===id?{backgroundColor:"#1C2340"}:{}}>{lbl}</button>
+        ))}
+      </div>
+
+      {view==="promos" ? (
+        <PromoAnalyticsView rows={rawRows} assumptions={assumptions} onUpdated={onPromoUpdated}/>
+      ) : (<>
       <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-700">
         📊 Facturación mes a mes por <strong>Retail</strong>, <strong>Distribuidor</strong> y <strong>SKU</strong>. En DC y SKU se compara <strong>forecast vs real</strong> (el real sale del pipeline de Fulfillment invoiced, a medida que se cargan órdenes). Retail queda solo forecast. Toggle Units/$ y vista Mensual/Quarter.
       </div>
@@ -1261,6 +1423,7 @@ function SalesBreakdownTab({rows,accounts,assumptions,actualBySku,actualByDist,l
           <Section id="sku" title="Por SKU" data={bySku} compareReal={realSkuVal}/>
         </div>
       )}
+      </>)}
     </div>
   );
 }
@@ -1614,7 +1777,7 @@ function SalesPage() {
                                   promoMultipliers={promoMultipliers} onPromoMultipliersChange={setPromoMultipliers}/>}
       {tab==="accounts"      && <AccountsTab accounts={dbAccounts} promoRows={dbPromo} assumptions={assumptions} onAssumptionChange={changeAssumption} loading={dbLoading} onUpdated={refreshAccount} onInserted={addAccounts} onDeleted={removeAccounts}/>}
       {tab==="promocal"      && <PromoCalendarTab rows={dbPromo} accounts={dbAccounts} byAccountMonth={byAccountMonth} loading={dbLoading} onUpdated={refreshPromoRow} onInserted={addPromoRows} onDeleted={removePromoRows}/>}
-      {tab==="breakdown"     && <SalesBreakdownTab rows={displayPromo} accounts={dbAccounts} assumptions={assumptions} actualBySku={actualBySku} actualByDist={actualByDist} loading={dbLoading}/>}
+      {tab==="breakdown"     && <SalesBreakdownTab rows={displayPromo} rawRows={dbPromo} accounts={dbAccounts} assumptions={assumptions} actualBySku={actualBySku} actualByDist={actualByDist} onPromoUpdated={refreshPromoRow} loading={dbLoading}/>}
     </div>
   );
 }
