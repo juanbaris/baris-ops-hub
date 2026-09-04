@@ -393,3 +393,53 @@ export function accountPnLInputs(rows: PromoCalendarRow[], year: number): Map<st
   }
   return map;
 }
+
+// ─── Promo analytics: todas las promos del Promo Calendar con rentabilidad ─────
+export type PromoAnalyticsRow = {
+  id: string;                 // promo calendar row id (para editar)
+  year: number; month: number;
+  account_name: string; distributor: Distributor; sku_code: string;
+  promo_label: string | null;
+  promo_weeks: number | null;
+  lift_pct: number | null;
+  unit_cost: number | null;
+  total_cost: number;         // costo de la promo
+  promo_units: number;
+  incrementalUnits: number;   // unidades que no venderías sin la promo
+  incrementalMargin: number;  // margen de esas unidades (delivered - cogs)
+  netProfit: number;          // incrementalMargin - total_cost
+  roi: number | null;         // netProfit / total_cost
+};
+
+// A row "has promo" if it has a promo_label or promo_units or total_cost > 0.
+export function promoAnalytics(
+  rows: PromoCalendarRow[],
+  assumptions: Record<string, number>,
+): PromoAnalyticsRow[] {
+  const out: PromoAnalyticsRow[] = [];
+  for (const r of rows) {
+    const hasPromo = (r.promo_label && String(r.promo_label).trim() !== "")
+      || (r.promo_units ?? 0) > 0 || (r.total_cost ?? 0) > 0;
+    if (!hasPromo) continue;
+
+    const lift = r.lift_pct ?? 0;                 // e.g. 0.30 for +30%
+    const promoUnits = r.promo_units ?? 0;
+    const totalCost = r.total_cost ?? 0;
+    // incremental units = promoUnits × lift/(1+lift) — the share that is truly extra
+    const incrementalUnits = lift > 0 ? promoUnits * (lift / (1 + lift)) : 0;
+    const delivered = deliveredCostOf(assumptions, r.distributor);
+    const cogs = cogsOf(assumptions, r.sku_code);
+    const incrementalMargin = incrementalUnits * (delivered - cogs);
+    const netProfit = incrementalMargin - totalCost;
+    const roi = totalCost > 0 ? netProfit / totalCost : null;
+
+    out.push({
+      id: r.id, year: r.year, month: r.month,
+      account_name: r.account_name, distributor: r.distributor, sku_code: r.sku_code,
+      promo_label: r.promo_label, promo_weeks: r.promo_weeks, lift_pct: r.lift_pct,
+      unit_cost: r.unit_cost, total_cost: totalCost, promo_units: promoUnits,
+      incrementalUnits, incrementalMargin, netProfit, roi,
+    });
+  }
+  return out;
+}
