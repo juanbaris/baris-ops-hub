@@ -22,9 +22,9 @@ import {
   fetchAssumptions, updateAssumption, deliveredCostOf, distPctOf, cogsOf, fulfillmentPerUnit,
   accountPnLInputs,
   breakdownByRetail, breakdownByDistributor, breakdownBySku, sumOverMonths,
-  promoAnalytics,
+  promoAnalytics, discountsByDistributorMonth,
   type SalesAccount, type PromoCalendarRow, type DbMonthAgg, type AccountActual, type BreakdownRow,
-  type AccountPnLInputs, type PromoAnalyticsRow,
+  type AccountPnLInputs, type PromoAnalyticsRow, type DiscountRow,
 } from "@/lib/sales-database";
 
 const DEFAULT_MIX_PCT: Record<string,number> = {XD:30,PW:25,HM:18,WM:12,WD:8,Matcha:7};
@@ -1257,6 +1257,110 @@ function PromoAnalyticsView({rows,assumptions,onUpdated}:{
   );
 }
 
+// ─── Discounts View (por distribuidor × mes · crudo del retailer) ─────────────
+function DiscountsView({rawRows,accounts,assumptions}:{
+  rawRows:PromoCalendarRow[];accounts:SalesAccount[];assumptions:Record<string,number>;
+}) {
+  const years = Array.from(new Set(rawRows.map(r=>r.year))).sort();
+  const [year,setYear] = useState<number>(years[0]??2027);
+  const [gran,setGran] = useState<"month"|"quarter">("month");
+
+  const yearRows = useMemo(()=>rawRows.filter(r=>r.year===year),[rawRows,year]);
+  const data = useMemo(()=>discountsByDistributorMonth(yearRows,accounts,assumptions),[yearRows,accounts,assumptions]);
+
+  const periods = gran==="month"
+    ? MONTHS_SHORT.map((m,i)=>({label:m,keys:[`${year}-${String(i+1).padStart(2,"0")}`]}))
+    : [1,2,3,4].map(q=>({label:`Q${q}`,keys:[0,1,2].map(o=>`${year}-${String((q-1)*3+o+1).padStart(2,"0")}`)}));
+
+  const money=(v:number)=>v?`$${Math.round(v).toLocaleString()}`:"—";
+  const sumKeys=(bm:DiscountRow["byMonth"],keys:string[],field:keyof DiscountRow["byMonth"][string])=>
+    keys.reduce((s,k)=>s+(bm[k]?.[field]??0),0);
+
+  const LINES: {label:string;field:keyof DiscountRow["byMonth"][string]|"pct";danger?:boolean;indent?:boolean}[] = [
+    {label:"Total Discounts",field:"total",danger:true},
+    {label:"% discount",field:"pct",indent:true},
+    {label:"EDLP",field:"edlp",indent:true},
+    {label:"Promo",field:"promo",indent:true},
+    {label:"Dist Fee",field:"distFee",indent:true},
+    {label:"Dist Allow",field:"distAllow",indent:true},
+    {label:"Paym Terms",field:"payTerms",indent:true},
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+        ⚠️ <strong>Mes crudo del retailer</strong> (sin el shift de 1 mes que sí aplica en Ventas). Descuentos por distribuidor y mes. EDLP y Promo salen directo del Promo Calendar; Dist Fee/Allow/Paym Terms = Gross Sales × % del distribuidor (assumptions).
+      </div>
+
+      <div className="flex flex-wrap gap-3 items-center">
+        <div className="flex gap-1">
+          {years.map(y=>(
+            <button key={y} onClick={()=>setYear(y)}
+              className={`rounded-full px-3.5 py-1.5 text-xs font-semibold ${year===y?"text-white":"border border-border text-muted-foreground"}`}
+              style={year===y?{backgroundColor:"#1C2340"}:{}}>{y}</button>
+          ))}
+        </div>
+        <div className="flex gap-1 rounded-lg bg-muted p-1">
+          {([["month","Mensual"],["quarter","Quarter"]] as const).map(([id,lbl])=>(
+            <button key={id} onClick={()=>setGran(id)}
+              className={`rounded px-3 py-1 text-xs font-semibold ${gran===id?"text-white":"text-muted-foreground"}`}
+              style={gran===id?{backgroundColor:"#A3224A"}:{}}>{lbl}</button>
+          ))}
+        </div>
+      </div>
+
+      {data.length===0 ? (
+        <div className="rounded-2xl border border-border bg-card p-6 text-center text-xs text-muted-foreground">No hay datos para {year}.</div>
+      ) : data.map(d=>{
+        const grandGross=periods.reduce((s,p)=>s+sumKeys(d.byMonth,p.keys,"grossSales"),0);
+        const grandTot=periods.reduce((s,p)=>s+sumKeys(d.byMonth,p.keys,"total"),0);
+        return (
+          <div key={d.distributor} className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
+            <div className="px-5 py-3 border-b border-border bg-muted/30 flex items-center gap-2">
+              <span className="font-bold text-sm" style={{color:"#1C2340"}}>{d.distributor}</span>
+              <span className="text-xs text-muted-foreground">Gross Sales {money(grandGross)}</span>
+              <span className="ml-auto font-mono font-semibold text-sm" style={{color:"#DC2626"}}>Discounts {money(grandTot)}</span>
+            </div>
+            <table className="w-full text-xs min-w-max">
+              <thead>
+                <tr className="text-[10px] uppercase tracking-wide text-muted-foreground border-b border-border bg-muted/20">
+                  <th className="px-3 py-2 text-left sticky left-0 bg-muted/20 z-10">Concepto</th>
+                  {periods.map(p=><th key={p.label} className="px-3 py-2 text-right">{p.label}</th>)}
+                  <th className="px-3 py-2 text-right font-bold border-l border-border">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {LINES.map(line=>{
+                  const vals=periods.map(p=>{
+                    if(line.field==="pct"){
+                      const gross=sumKeys(d.byMonth,p.keys,"grossSales");
+                      const tot=sumKeys(d.byMonth,p.keys,"total");
+                      return gross>0?tot/gross*100:0;
+                    }
+                    return sumKeys(d.byMonth,p.keys,line.field as any);
+                  });
+                  const isPct=line.field==="pct";
+                  const tot = isPct
+                    ? (grandGross>0?grandTot/grandGross*100:0)
+                    : vals.reduce((a,b)=>a+b,0);
+                  const fmtV=(v:number)=> isPct ? (v?`${v.toFixed(1)}%`:"—") : money(v);
+                  return (
+                    <tr key={line.label} className={`border-t border-border/60 ${line.danger?"":""}`} style={line.danger?{backgroundColor:"#FEF2F2"}:{}}>
+                      <td className={`px-3 py-1.5 sticky left-0 z-10 ${line.danger?"font-bold":"text-muted-foreground"} ${line.indent?"pl-6":""}`} style={line.danger?{color:"#DC2626",backgroundColor:"#FEF2F2"}:{backgroundColor:"var(--card,#fff)"}}>{line.label}</td>
+                      {vals.map((v,i)=><td key={i} className={`px-3 py-1.5 text-right font-mono ${line.danger?"font-bold":""}`} style={line.danger?{color:"#DC2626"}:{}}>{fmtV(v)}</td>)}
+                      <td className={`px-3 py-1.5 text-right font-mono font-bold border-l border-border ${line.danger?"":""}`} style={line.danger?{color:"#DC2626"}:{color:"#1C2340"}}>{fmtV(tot)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ─── Sales Breakdown Tab (mes a mes · units/$ · forecast vs real) ─────────────
 const UNITS_PER_CASE_LOCAL = 8;
 function SalesBreakdownTab({rows,rawRows,accounts,assumptions,actualBySku,actualByDist,onPromoUpdated,loading}:{
@@ -1264,7 +1368,7 @@ function SalesBreakdownTab({rows,rawRows,accounts,assumptions,actualBySku,actual
   actualBySku:Record<string,Record<string,number>>;actualByDist:Record<string,Record<string,number>>;
   onPromoUpdated:(r:PromoCalendarRow)=>void;loading:boolean;
 }) {
-  const [view,setView] = useState<"ventas"|"promos">("ventas");
+  const [view,setView] = useState<"ventas"|"promos"|"discounts">("ventas");
   const years = Array.from(new Set(rows.map(r=>r.year))).sort();
   const [year,setYear] = useState<number>(years[0]??2027);
   const [metric,setMetric] = useState<"units"|"value">("value");
@@ -1376,7 +1480,7 @@ function SalesBreakdownTab({rows,rawRows,accounts,assumptions,actualBySku,actual
   return (
     <div className="space-y-4">
       <div className="flex gap-1 rounded-xl bg-muted p-1 w-fit">
-        {([["ventas","📊 Ventas"],["promos","🎯 Promos"]] as const).map(([id,lbl])=>(
+        {([["ventas","📊 Ventas"],["promos","🎯 Promos"],["discounts","🏷️ Discounts"]] as const).map(([id,lbl])=>(
           <button key={id} onClick={()=>setView(id)}
             className={`rounded-lg px-4 py-1.5 text-xs font-semibold ${view===id?"text-white shadow-sm":"text-muted-foreground"}`}
             style={view===id?{backgroundColor:"#1C2340"}:{}}>{lbl}</button>
@@ -1385,6 +1489,8 @@ function SalesBreakdownTab({rows,rawRows,accounts,assumptions,actualBySku,actual
 
       {view==="promos" ? (
         <PromoAnalyticsView rows={rawRows} assumptions={assumptions} onUpdated={onPromoUpdated}/>
+      ) : view==="discounts" ? (
+        <DiscountsView rawRows={rawRows} accounts={accounts} assumptions={assumptions}/>
       ) : (<>
       <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-700">
         📊 Facturación mes a mes por <strong>Retail</strong>, <strong>Distribuidor</strong> y <strong>SKU</strong>. En DC y SKU se compara <strong>forecast vs real</strong> (el real sale del pipeline de Fulfillment invoiced, a medida que se cargan órdenes). Retail queda solo forecast. Toggle Units/$ y vista Mensual/Quarter.
