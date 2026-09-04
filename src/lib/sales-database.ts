@@ -443,3 +443,55 @@ export function promoAnalytics(
   }
   return out;
 }
+
+// ─── Discounts por distribuidor × mes (crudo, sin shift) ──────────────────────
+// Cada línea de descuento, agregada por distribuidor y mes ("YYYY-MM").
+// EDLP = Σ(units × edlp_allowance de la cuenta). Promo = Σ(total_cost del Promo Calendar).
+// Dist Fee/Allow/Paym = Gross Sales × % del distribuidor (assumptions).
+export type DiscountRow = {
+  distributor: string;
+  byMonth: Record<string, {
+    grossSales: number; edlp: number; promo: number;
+    distFee: number; distAllow: number; payTerms: number; total: number;
+  }>;
+};
+
+export function discountsByDistributorMonth(
+  rows: PromoCalendarRow[],
+  accounts: SalesAccount[],
+  assumptions: Record<string, number>,
+): DiscountRow[] {
+  // edlp allowance per account (from Accounts master), keyed year|account
+  const edlpMap = new Map<string, number>();
+  accounts.forEach(a => edlpMap.set(`${a.year}|${a.account_name}`, a.edlp_allowance ?? 0));
+
+  const map = new Map<string, DiscountRow>();
+  for (const r of rows) {
+    const dist = r.distributor;
+    if (!map.has(dist)) map.set(dist, { distributor: dist, byMonth: {} });
+    const d = map.get(dist)!;
+    const mk = `${r.year}-${String(r.month).padStart(2, "0")}`;
+    if (!d.byMonth[mk]) d.byMonth[mk] = { grossSales: 0, edlp: 0, promo: 0, distFee: 0, distAllow: 0, payTerms: 0, total: 0 };
+    const cell = d.byMonth[mk];
+
+    const units = r.total_units ?? 0;
+    const delivered = deliveredCostOf(assumptions, dist);
+    const gross = units * delivered;
+    const edlpAllow = edlpMap.get(`${r.year}|${r.account_name}`) ?? 0;
+
+    cell.grossSales += gross;
+    cell.edlp += units * edlpAllow;
+    cell.promo += r.total_cost ?? 0;
+    cell.distFee += gross * distPctOf(assumptions, "dist_fees", dist);
+    cell.distAllow += gross * distPctOf(assumptions, "dist_allowance", dist);
+    cell.payTerms += gross * distPctOf(assumptions, "payment_terms", dist);
+  }
+  // total per cell
+  for (const d of map.values()) {
+    for (const mk of Object.keys(d.byMonth)) {
+      const c = d.byMonth[mk];
+      c.total = c.edlp + c.promo + c.distFee + c.distAllow + c.payTerms;
+    }
+  }
+  return Array.from(map.values()).sort((a, b) => a.distributor.localeCompare(b.distributor));
+}
