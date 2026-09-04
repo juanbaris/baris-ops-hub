@@ -3489,6 +3489,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
 
   // ─── Confirm forecast PO → create real IP movement ───
   const [confirmingPO, setConfirmingPO] = useState<IPForecastPO | null>(null);
+  const [poFilter, setPoFilter] = useState<{field:""|"mBuy"|"mRecv"|"mPay";month:string}>({field:"",month:""});
   const [confirmSaving, setConfirmSaving] = useState(false);
   async function confirmIpForecastPO() {
     if (!confirmingPO) return;
@@ -4773,11 +4774,18 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       {/* ── IP FORECAST PURCHASES ── */}
       {procTab==="ip_forecast" && (() => {
         // Compute "needed" filtered by shopScope
-        const scopeLabel = shopScope === "next" ? "Next run" : shopScope === "3m" ? "6 months" : "12 months";
+        const scopeMonths = shopScope === "3m" ? 3 : shopScope === "6m" ? 6 : shopScope === "9m" ? 9 : shopScope === "12m" ? 12 : shopScope === "15m" ? 15 : shopScope === "18m" ? 18 : 0;
+        const scopeLabel = shopScope === "custom"
+          ? `${customScopeFrom || "?"} → ${customScopeTo || "?"}`
+          : `${scopeMonths} months`;
         const scopeRange: [number,number] | null = (() => {
-          if (shopScope === "next") { const idx = totalByMonth.findIndex(t=>t>0); return idx >= 0 ? [idx,idx] : [0,0]; }
-          if (shopScope === "3m") return [0, Math.min(5, FORECAST_MONTHS_OPS.length - 1)];
-          return [0, FORECAST_MONTHS_OPS.length - 1];
+          if (shopScope === "custom" && customScopeFrom && customScopeTo) {
+            const fi = FORECAST_KEYS_OPS.indexOf(customScopeFrom);
+            const ti = FORECAST_KEYS_OPS.indexOf(customScopeTo);
+            if (fi >= 0 && ti >= 0) return [fi, ti];
+            return null;
+          }
+          return [0, Math.min(scopeMonths - 1, FORECAST_MONTHS_OPS.length - 1)];
         })();
         const neededFiltered: Record<string, number> = {};
         if (scopeRange) {
@@ -4799,14 +4807,29 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                 <p className="text-sm font-bold text-blue-900">🛒 What you need vs what you have</p>
                 <p className="text-[10px] text-blue-600">Scope: <strong>{scopeLabel}</strong> · {scopeCases.toLocaleString()} cases to produce</p>
               </div>
-              <div className="flex items-center gap-1">
-                {([["next","Next run"],["3m","6 months"],["all","12 months"]] as const).map(([id,label])=>(
+              <div className="flex flex-wrap items-center gap-1">
+                {([["3m","3m"],["6m","6m"],["9m","9m"],["12m","12m"],["15m","15m"],["18m","18m"]] as const).map(([id,label])=>(
                   <button key={id}
-                    className={`rounded-full px-3 py-1 text-[10px] font-semibold transition-colors ${shopScope===id?"bg-blue-700 text-white":"bg-white text-blue-700 border border-blue-300 hover:bg-blue-100"}`}
+                    className={`rounded-full px-2.5 py-1 text-[10px] font-semibold transition-colors ${shopScope===id?"bg-blue-700 text-white":"bg-white text-blue-700 border border-blue-300 hover:bg-blue-100"}`}
                     onClick={()=>setShopScope(id as any)}>
                     {label}
                   </button>
                 ))}
+                <button className={`rounded-full px-2.5 py-1 text-[10px] font-semibold transition-colors ${shopScope==="custom"?"bg-blue-700 text-white":"bg-white text-blue-700 border border-blue-300 hover:bg-blue-100"}`}
+                  onClick={()=>setShopScope("custom")}>Custom</button>
+                {shopScope === "custom" && (
+                  <div className="flex items-center gap-1 ml-1">
+                    <select value={customScopeFrom} onChange={e=>setCustomScopeFrom(e.target.value)} className="rounded border text-[10px] px-1 py-0.5">
+                      <option value="">From</option>
+                      {FORECAST_KEYS_OPS.map((k,i)=><option key={k} value={k}>{FORECAST_MONTHS_OPS[i]}</option>)}
+                    </select>
+                    <span className="text-[10px]">→</span>
+                    <select value={customScopeTo} onChange={e=>setCustomScopeTo(e.target.value)} className="rounded border text-[10px] px-1 py-0.5">
+                      <option value="">To</option>
+                      {FORECAST_KEYS_OPS.map((k,i)=><option key={k} value={k}>{FORECAST_MONTHS_OPS[i]}</option>)}
+                    </select>
+                  </div>
+                )}
               </div>
             </div>
             <div className="overflow-x-auto">
@@ -4856,6 +4879,26 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                 <p className="text-sm font-bold" style={{color:"#1C2340"}}>IP Purchase Orders — Forecast</p>
                 <p className="text-xs text-muted-foreground">Each PO creates a lot with its own $/unit. Lead time & payment terms auto-fill from Raw Materials settings.</p>
               </div>
+              <div className="flex flex-wrap items-center gap-2 px-5 py-2 border-b border-border bg-muted/10">
+                <span className="text-[10px] font-semibold text-muted-foreground">Filter:</span>
+                <select value={poFilter.field} onChange={e=>setPoFilter(p=>({...p,field:e.target.value as any}))}
+                  className="rounded border text-[10px] px-2 py-1">
+                  <option value="">All POs</option>
+                  <option value="mBuy">By Buy month</option>
+                  <option value="mRecv">By Receive month</option>
+                  <option value="mPay">By Pay month</option>
+                </select>
+                {poFilter.field && (
+                  <select value={poFilter.month} onChange={e=>setPoFilter(p=>({...p,month:e.target.value}))}
+                    className="rounded border text-[10px] px-2 py-1">
+                    <option value="">All months</option>
+                    {FORECAST_KEYS_OPS.map((k,i)=><option key={k} value={k}>{FORECAST_MONTHS_OPS[i]}</option>)}
+                  </select>
+                )}
+                {(poFilter.field || poFilter.month) && (
+                  <button onClick={()=>setPoFilter({field:"",month:""})} className="text-[10px] text-red-500 hover:underline">Clear</button>
+                )}
+              </div>
               <button onClick={addIpForecastPO} className="rounded-lg px-4 py-1.5 text-xs font-semibold text-white" style={{backgroundColor:"#A3224A"}}>+ Add Purchase</button>
             </div>
             <table className="w-full text-xs">
@@ -4865,6 +4908,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                   <th className="px-3 py-2 text-right">Qty</th>
                   <th className="px-3 py-2 text-right">Mat. Cost</th>
                   <th className="px-3 py-2 text-right">Freight</th>
+                  <th className="px-3 py-2 text-right font-bold" style={{color:"#DC2626"}}>Total Cost</th>
                   <th className="px-3 py-2 text-right">$/unit</th>
                   <th className="px-3 py-2 text-left">Buy</th>
                   <th className="px-3 py-2 text-left">Receive</th>
@@ -4874,10 +4918,14 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
               </thead>
               <tbody>
                 {ipForecastPOs.length === 0 && (
-                  <tr><td colSpan={9} className="px-4 py-6 text-center text-muted-foreground">No forecast POs yet. Click "+ Add Purchase" to start planning.</td></tr>
+                  <tr><td colSpan={10} className="px-4 py-6 text-center text-muted-foreground">No forecast POs yet. Click "+ Add Purchase" to start planning.</td></tr>
                 )}
-                {ipForecastPOs.map(po => {
+                {ipForecastPOs.filter(po => {
+                  if (!poFilter.field || !poFilter.month) return true;
+                  return po[poFilter.field] === poFilter.month;
+                }).map(po => {
                   const cpu = po.qty > 0 ? (po.matCost + po.freight) / po.qty : 0;
+                  const totalCost = po.matCost + po.freight;
                   return (
                     <tr key={po.id} className="border-t border-border/60 hover:bg-muted/20">
                       <td className="px-3 py-1.5">
@@ -4887,9 +4935,10 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                         </select>
                       </td>
                       <td className="px-3 py-1.5"><input type="number" value={po.qty || ""} onChange={e => updateIpForecastPO(po.id, "qty", Number(e.target.value) || 0)} className={`${inp} w-20 text-right`} placeholder="0" /></td>
-                      <td className="px-3 py-1.5"><input type="number" value={po.matCost || ""} onChange={e => updateIpForecastPO(po.id, "matCost", Number(e.target.value) || 0)} className={`${inp} w-24 text-right`} placeholder="0" /></td>
-                      <td className="px-3 py-1.5"><input type="number" value={po.freight || ""} onChange={e => updateIpForecastPO(po.id, "freight", Number(e.target.value) || 0)} className={`${inp} w-20 text-right`} placeholder="0" /></td>
-                      <td className="px-3 py-1.5 text-right font-mono font-semibold" style={{color:"#7C3AED"}}>{cpu > 0 ? `$${cpu.toFixed(4)}` : "—"}</td>
+                      <td className="px-3 py-1.5 text-right font-mono">${po.matCost > 0 ? po.matCost.toLocaleString() : "0"}</td>
+                      <td className="px-3 py-1.5 text-right font-mono">${po.freight > 0 ? po.freight.toLocaleString() : "0"}</td>
+                      <td className="px-3 py-1.5 text-right font-mono font-bold" style={{color:"#DC2626"}}>${totalCost > 0 ? totalCost.toLocaleString() : "0"}</td>
+                      <td className="px-3 py-1.5 text-right font-mono font-semibold" style={{color:"#7C3AED"}}>{cpu > 0 ? `$${cpu.toFixed(2)}` : "—"}</td>
                       <td className="px-3 py-1.5"><input type="month" value={po.mBuy} onChange={e => updateIpForecastPO(po.id, "mBuy", e.target.value)} className={`${inp} w-36`} /></td>
                       <td className="px-3 py-1.5"><input type="month" value={po.mRecv} onChange={e => updateIpForecastPO(po.id, "mRecv", e.target.value)} className={`${inp} w-36`} /></td>
                       <td className="px-3 py-1.5"><input type="month" value={po.mPay} onChange={e => updateIpForecastPO(po.id, "mPay", e.target.value)} className={`${inp} w-36`} /></td>
@@ -4910,7 +4959,8 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                     <td className="px-3 py-2 text-right font-mono">{ipForecastPOs.reduce((s,p)=>s+p.qty,0).toLocaleString()}</td>
                     <td className="px-3 py-2 text-right font-mono">${Math.round(ipForecastPOs.reduce((s,p)=>s+p.matCost,0)).toLocaleString()}</td>
                     <td className="px-3 py-2 text-right font-mono">${Math.round(ipForecastPOs.reduce((s,p)=>s+p.freight,0)).toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right font-mono font-bold text-emerald-400">${Math.round(ipForecastPOs.reduce((s,p)=>s+p.matCost+p.freight,0)).toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right font-mono font-bold" style={{color:"#FF6B6B"}}>${Math.round(ipForecastPOs.reduce((s,p)=>s+p.matCost+p.freight,0)).toLocaleString()}</td>
+                    <td className="px-3 py-2"></td>
                     <td colSpan={4}></td>
                   </tr>
                 </tfoot>
@@ -5007,9 +5057,21 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                     {allMaterialsList.map(g => (
                       <tr key={g} className="border-t border-border/60">
                         <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{g}</td>
-                        {FR.map(r => {
+                        {FR.map((r, ri) => {
                           const q = r.ipStock[g]?.qty ?? 0;
-                          return <td key={r.mk} className={`px-3 py-1.5 text-right font-mono ${q < 100 ? "text-red-600 font-bold" : q < 500 ? "" : "text-emerald-600"}`}>{Math.round(q).toLocaleString()}</td>;
+                          const consumed = r.ipConsumed[g] ?? 0;
+                          const received = r.ipReceived[g] ?? 0;
+                          const hasProduction = consumed > 0;
+                          const hasPurchase = received > 0;
+                          const stockShort = hasProduction && q < 0;
+                          // Styling: red cell if stock insufficient, green cell if purchase, red text if production
+                          let cellBg = "";
+                          let cellColor = "#000";
+                          if (stockShort) { cellBg = "#DC2626"; cellColor = "#fff"; }
+                          else if (hasPurchase) { cellBg = "#DCFCE7"; cellColor = hasProduction ? "#DC2626" : "#000"; }
+                          else if (hasProduction) { cellColor = "#DC2626"; }
+                          return <td key={r.mk} className="px-3 py-1.5 text-right font-mono font-semibold"
+                            style={{backgroundColor:cellBg||undefined, color:cellColor}}>{Math.round(q).toLocaleString()}</td>;
                         })}
                       </tr>
                     ))}
