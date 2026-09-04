@@ -3344,6 +3344,8 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   const [shopScope, setShopScope] = useState<"3m"|"6m"|"9m"|"12m"|"15m"|"18m"|"custom">(()=>{
     try { const v = window.localStorage.getItem("baris.ops.shopScope.v1"); if (v && ["3m","6m","9m","12m","15m","18m","custom"].includes(v)) return v as any; } catch {} return "3m";
   });
+  const [customScopeFrom, setCustomScopeFrom] = useState("");
+  const [customScopeTo, setCustomScopeTo] = useState("");
   const [bomView, setBomView] = useState<"qty"|"pct">("qty");
   // ─── NEW: truck optimization ───
   const [optimizeTruck, setOptimizeTruck] = useState(()=>{
