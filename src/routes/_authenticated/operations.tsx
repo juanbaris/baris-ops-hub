@@ -3341,8 +3341,8 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   const WIP_KEY="baris.ops.wip.v1";
   const [wip, setWip] = useState<Record<string,{cases:string;due:string}>>(
     Object.fromEntries(SKUS.map(s=>[s,{cases:"",due:""}])));
-  const [shopScope, setShopScope] = useState<"next"|"3m"|"all">(()=>{
-    try { const v = window.localStorage.getItem("baris.ops.shopScope.v1"); if (v) return v as any; } catch {} return "next";
+  const [shopScope, setShopScope] = useState<"3m"|"6m"|"9m"|"12m"|"15m"|"18m"|"custom">(()=>{
+    try { const v = window.localStorage.getItem("baris.ops.shopScope.v1"); if (v && ["3m","6m","9m","12m","15m","18m","custom"].includes(v)) return v as any; } catch {} return "3m";
   });
   const [bomView, setBomView] = useState<"qty"|"pct">("qty");
   // ─── NEW: truck optimization ───
@@ -3756,11 +3756,9 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   const totalByMonth = FORECAST_MONTHS_OPS.map((_,i)=>dynamicProcSkus.reduce((s,sku)=>s+(plan[sku]?.[i]??0),0));
   const nextRunIdx = totalByMonth.findIndex(t=>t>0);
   const shopRange = useMemo(()=>{
-    if(nextRunIdx<0) return null;
-    if(shopScope==="next") return [nextRunIdx,nextRunIdx] as const;
-    if(shopScope==="3m") return [nextRunIdx,Math.min(nextRunIdx+2,FORECAST_MONTHS_OPS.length-1)] as const;
-    return [0,FORECAST_MONTHS_OPS.length-1] as const;
-  },[shopScope,nextRunIdx]);
+    const months = shopScope==="3m"?3:shopScope==="6m"?6:shopScope==="9m"?9:shopScope==="12m"?12:shopScope==="15m"?15:shopScope==="18m"?18:FORECAST_MONTHS_OPS.length;
+    return [0, Math.min(months-1, FORECAST_MONTHS_OPS.length-1)] as const;
+  },[shopScope]);
   const ingWindow = useMemo(()=>{
     const out:Record<string,number>={};
     if(!shopRange) return out;
@@ -4287,7 +4285,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
             </div>
           </div>
           <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-700">
-            {shopScope==="next" && nextRunIdx>=0
+            {false && nextRunIdx>=0
               ? `📅 Next production run: ${FORECAST_MONTHS_OPS[nextRunIdx]} — ${shopCasesWindow.toLocaleString()} cases. `
               : ""}
             💡 Inventory (lbs) = pedido Y recibido en I&P (stock real). Pedido (lbs) = pedido en I&P pero aún no recibido. To Acquire = Needed − Inventory − Pedido. "Paid by" = según los payment terms.
