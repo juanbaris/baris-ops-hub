@@ -495,3 +495,37 @@ export function discountsByDistributorMonth(
   }
   return Array.from(map.values()).sort((a, b) => a.distributor.localeCompare(b.distributor));
 }
+
+// ─── Deductions actuals (real cargado a mano, por distribuidor × mes) ─────────
+export type DeductionActual = { id: string; year: number; month: number; distributor: string; line: string; amount: number | null };
+
+export async function fetchDeductionActuals(supabase: any): Promise<DeductionActual[]> {
+  const { data, error } = await supabase
+    .from("sales_deductions_actuals").select("*")
+    .order("year", { ascending: true }).order("month", { ascending: true })
+    .limit(10000);
+  if (error) { console.error("fetchDeductionActuals error:", error); return []; }
+  return (data ?? []) as DeductionActual[];
+}
+
+export async function upsertDeductionActual(supabase: any, year: number, month: number, distributor: string, line: string, amount: number | null) {
+  const { error } = await supabase
+    .from("sales_deductions_actuals")
+    .upsert({ year, month, distributor, line, amount, updated_at: new Date().toISOString() },
+      { onConflict: "year,month,distributor,line" });
+  if (error) throw error;
+}
+
+// Aggregate a set of DiscountRows into a single TOTAL row (sum across distributors).
+export function totalDiscountRow(rows: DiscountRow[]): DiscountRow {
+  const total: DiscountRow = { distributor: "TOTAL", byMonth: {} };
+  for (const d of rows) {
+    for (const [mk, c] of Object.entries(d.byMonth)) {
+      if (!total.byMonth[mk]) total.byMonth[mk] = { grossSales: 0, edlp: 0, promo: 0, distFee: 0, distAllow: 0, payTerms: 0, total: 0 };
+      const t = total.byMonth[mk];
+      t.grossSales += c.grossSales; t.edlp += c.edlp; t.promo += c.promo;
+      t.distFee += c.distFee; t.distAllow += c.distAllow; t.payTerms += c.payTerms; t.total += c.total;
+    }
+  }
+  return total;
+}
