@@ -22,9 +22,10 @@ import {
   fetchAssumptions, updateAssumption, deliveredCostOf, distPctOf, cogsOf, fulfillmentPerUnit,
   accountPnLInputs,
   breakdownByRetail, breakdownByDistributor, breakdownBySku, sumOverMonths,
-  promoAnalytics, discountsByDistributorMonth,
+  promoAnalytics, discountsByDistributorMonth, totalDiscountRow,
+  fetchDeductionActuals, upsertDeductionActual,
   type SalesAccount, type PromoCalendarRow, type DbMonthAgg, type AccountActual, type BreakdownRow,
-  type AccountPnLInputs, type PromoAnalyticsRow, type DiscountRow,
+  type AccountPnLInputs, type PromoAnalyticsRow, type DiscountRow, type DeductionActual,
 } from "@/lib/sales-database";
 
 const DEFAULT_MIX_PCT: Record<string,number> = {XD:30,PW:25,HM:18,WM:12,WD:8,Matcha:7};
@@ -1257,24 +1258,37 @@ function PromoAnalyticsView({rows,assumptions,onUpdated}:{
   );
 }
 
-// ─── Discounts View (por distribuidor × mes · crudo del retailer) ─────────────
-function DiscountsView({rawRows,accounts,assumptions}:{
-  rawRows:PromoCalendarRow[];accounts:SalesAccount[];assumptions:Record<string,number>;
+// ─── Discounts View (por distribuidor × mes · shift 1 mes · vs real) ──────────
+function DiscountsView({shiftedRows,accounts,assumptions,deductionActuals,onDeductionSaved}:{
+  shiftedRows:PromoCalendarRow[];accounts:SalesAccount[];assumptions:Record<string,number>;
+  deductionActuals:DeductionActual[];onDeductionSaved:(d:DeductionActual)=>void;
 }) {
-  const years = Array.from(new Set(rawRows.map(r=>r.year))).sort();
+  const years = Array.from(new Set(shiftedRows.map(r=>r.year))).sort();
   const [year,setYear] = useState<number>(years[0]??2027);
   const [gran,setGran] = useState<"month"|"quarter">("month");
+  const [openDist,setOpenDist] = useState<Record<string,boolean>>({});
+  const [showLoad,setShowLoad] = useState(false);
 
-  const yearRows = useMemo(()=>rawRows.filter(r=>r.year===year),[rawRows,year]);
+  const yearRows = useMemo(()=>shiftedRows.filter(r=>r.year===year),[shiftedRows,year]);
   const data = useMemo(()=>discountsByDistributorMonth(yearRows,accounts,assumptions),[yearRows,accounts,assumptions]);
+  const total = useMemo(()=>totalDiscountRow(data),[data]);
 
   const periods = gran==="month"
-    ? MONTHS_SHORT.map((m,i)=>({label:m,keys:[`${year}-${String(i+1).padStart(2,"0")}`]}))
-    : [1,2,3,4].map(q=>({label:`Q${q}`,keys:[0,1,2].map(o=>`${year}-${String((q-1)*3+o+1).padStart(2,"0")}`)}));
+    ? MONTHS_SHORT.map((m,i)=>({label:m,keys:[`${year}-${String(i+1).padStart(2,"0")}`],months:[i+1]}))
+    : [1,2,3,4].map(q=>({label:`Q${q}`,keys:[0,1,2].map(o=>`${year}-${String((q-1)*3+o+1).padStart(2,"0")}`),months:[0,1,2].map(o=>(q-1)*3+o+1)}));
 
   const money=(v:number)=>v?`$${Math.round(v).toLocaleString()}`:"—";
   const sumKeys=(bm:DiscountRow["byMonth"],keys:string[],field:keyof DiscountRow["byMonth"][string])=>
     keys.reduce((s,k)=>s+(bm[k]?.[field]??0),0);
+
+  // real deductions total per distributor per month
+  const realMap = useMemo(()=>{
+    const m=new Map<string,number>(); // key `${dist}|${month}`
+    deductionActuals.filter(d=>d.year===year&&d.line==="total").forEach(d=>{ if(d.amount!=null) m.set(`${d.distributor}|${d.month}`,d.amount); });
+    return m;
+  },[deductionActuals,year]);
+  const realFor=(dist:string,months:number[])=> months.reduce((s,mo)=>s+(realMap.get(`${dist}|${mo}`)??0),0);
+  const realTotalFor=(months:number[])=> ["UNFI","KEHE","Rainforest"].reduce((s,d)=>s+realFor(d,months),0);
 
   const LINES: {label:string;field:keyof DiscountRow["byMonth"][string]|"pct";danger?:boolean;indent?:boolean}[] = [
     {label:"Total Discounts",field:"total",danger:true},
@@ -1286,10 +1300,63 @@ function DiscountsView({rawRows,accounts,assumptions}:{
     {label:"Paym Terms",field:"payTerms",indent:true},
   ];
 
+  // renders a discount table for a given DiscountRow; if withReal, adds real+Δ rows under Total
+  function DiscTable({d,withReal}:{d:DiscountRow;withReal:boolean}){
+    const grandGross=periods.reduce((s,p)=>s+sumKeys(d.byMonth,p.keys,"grossSales"),0);
+    const grandTot=periods.reduce((s,p)=>s+sumKeys(d.byMonth,p.keys,"total"),0);
+    const realGrand=withReal?(d.distributor==="TOTAL"?realTotalFor(periods.flatMap(p=>p.months)):realFor(d.distributor,periods.flatMap(p=>p.months))):0;
+    return (
+      <table className="w-full text-xs min-w-max">
+        <thead>
+          <tr className="text-[10px] uppercase tracking-wide text-muted-foreground border-b border-border bg-muted/20">
+            <th className="px-3 py-2 text-left sticky left-0 bg-muted/20 z-10">Concepto</th>
+            {periods.map(p=><th key={p.label} className="px-3 py-2 text-right">{p.label}</th>)}
+            <th className="px-3 py-2 text-right font-bold border-l border-border">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {LINES.map(line=>{
+            const vals=periods.map(p=>{
+              if(line.field==="pct"){ const g=sumKeys(d.byMonth,p.keys,"grossSales"); const t=sumKeys(d.byMonth,p.keys,"total"); return g>0?t/g*100:0; }
+              return sumKeys(d.byMonth,p.keys,line.field as any);
+            });
+            const isPct=line.field==="pct";
+            const tot=isPct?(grandGross>0?grandTot/grandGross*100:0):vals.reduce((a,b)=>a+b,0);
+            const fmtV=(v:number)=> isPct ? (v?`${v.toFixed(1)}%`:"—") : money(v);
+            return (
+              <Fragment key={line.label}>
+                <tr className="border-t border-border/60" style={line.danger?{backgroundColor:"#FEF2F2"}:{}}>
+                  <td className={`px-3 py-1.5 sticky left-0 z-10 ${line.danger?"font-bold":"text-muted-foreground"} ${line.indent?"pl-6":""}`} style={line.danger?{color:"#DC2626",backgroundColor:"#FEF2F2"}:{backgroundColor:"var(--card,#fff)"}}>{line.label}</td>
+                  {vals.map((v,i)=><td key={i} className={`px-3 py-1.5 text-right font-mono ${line.danger?"font-bold":""}`} style={line.danger?{color:"#DC2626"}:{}}>{fmtV(v)}</td>)}
+                  <td className="px-3 py-1.5 text-right font-mono font-bold border-l border-border" style={line.danger?{color:"#DC2626"}:{color:"#1C2340"}}>{fmtV(tot)}</td>
+                </tr>
+                {/* real + Δ rows right under Total Discounts */}
+                {withReal && line.danger && (
+                  <>
+                    <tr className="bg-emerald-50/40">
+                      <td className="px-3 py-1 sticky left-0 bg-emerald-50/40 z-10 text-[11px] text-emerald-700 pl-6">real</td>
+                      {periods.map((p,i)=>{const rv=d.distributor==="TOTAL"?realTotalFor(p.months):realFor(d.distributor,p.months);return <td key={i} className="px-3 py-1 text-right font-mono text-emerald-700">{money(rv)}</td>;})}
+                      <td className="px-3 py-1 text-right font-mono font-semibold text-emerald-700 border-l border-border">{money(realGrand)}</td>
+                    </tr>
+                    <tr className="border-b border-border/60">
+                      <td className="px-3 py-1 sticky left-0 bg-card z-10 text-[11px] text-muted-foreground pl-6">Δ (real − fcst)</td>
+                      {periods.map((p,i)=>{const rv=d.distributor==="TOTAL"?realTotalFor(p.months):realFor(d.distributor,p.months);const fv=sumKeys(d.byMonth,p.keys,"total");const dd=rv-fv;return <td key={i} className={`px-3 py-1 text-right font-mono text-[11px] ${dd<=0?"text-emerald-600":"text-red-500"}`}>{rv===0?"—":(dd>=0?"+":"")+money(dd)}</td>;})}
+                      <td className={`px-3 py-1 text-right font-mono text-[11px] font-semibold border-l border-border ${realGrand-grandTot<=0?"text-emerald-600":"text-red-500"}`}>{realGrand===0?"—":(realGrand-grandTot>=0?"+":"")+money(realGrand-grandTot)}</td>
+                    </tr>
+                  </>
+                )}
+              </Fragment>
+            );
+          })}
+        </tbody>
+      </table>
+    );
+  }
+
   return (
     <div className="space-y-4">
-      <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-800">
-        ⚠️ <strong>Mes crudo del retailer</strong> (sin el shift de 1 mes que sí aplica en Ventas). Descuentos por distribuidor y mes. EDLP y Promo salen directo del Promo Calendar; Dist Fee/Allow/Paym Terms = Gross Sales × % del distribuidor (assumptions).
+      <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-700">
+        🏷️ Deductions por distribuidor y mes (venta del distribuidor, con el <strong>shift de 1 mes</strong> igual que Ventas). El <strong>Total</strong> queda fijo arriba; expandí cada distribuidor para ver el detalle. En <strong>Total Discounts</strong> se compara forecast vs el <strong>real</strong> que cargues (Δ negativo = gastaste menos de lo previsto).
       </div>
 
       <div className="flex flex-wrap gap-3 items-center">
@@ -1307,53 +1374,35 @@ function DiscountsView({rawRows,accounts,assumptions}:{
               style={gran===id?{backgroundColor:"#A3224A"}:{}}>{lbl}</button>
           ))}
         </div>
+        <button onClick={()=>setShowLoad(s=>!s)}
+          className="ml-auto rounded-full border border-emerald-500 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50">
+          {showLoad?"Ocultar carga de real":"＋ Cargar real de deductions"}
+        </button>
       </div>
 
-      {data.length===0 ? (
-        <div className="rounded-2xl border border-border bg-card p-6 text-center text-xs text-muted-foreground">No hay datos para {year}.</div>
-      ) : data.map(d=>{
-        const grandGross=periods.reduce((s,p)=>s+sumKeys(d.byMonth,p.keys,"grossSales"),0);
+      {showLoad && <DeductionLoader year={year} realMap={realMap} onSaved={onDeductionSaved}/>}
+
+      {/* TOTAL (fijo, con comparación vs real) */}
+      <div className="overflow-x-auto rounded-2xl border-2 shadow-sm" style={{borderColor:"#1C2340"}}>
+        <div className="px-5 py-3 border-b bg-muted/30 flex items-center gap-2" style={{borderColor:"#1C2340"}}>
+          <span className="font-bold text-sm" style={{color:"#1C2340"}}>TOTAL — los 3 distribuidores</span>
+          <span className="ml-auto font-mono font-semibold text-sm" style={{color:"#DC2626"}}>Discounts {money(periods.reduce((s,p)=>s+sumKeys(total.byMonth,p.keys,"total"),0))}</span>
+        </div>
+        <DiscTable d={total} withReal={true}/>
+      </div>
+
+      {/* Distribuidores colapsables */}
+      {data.map(d=>{
+        const isOpen=openDist[d.distributor]??false;
         const grandTot=periods.reduce((s,p)=>s+sumKeys(d.byMonth,p.keys,"total"),0);
         return (
-          <div key={d.distributor} className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
-            <div className="px-5 py-3 border-b border-border bg-muted/30 flex items-center gap-2">
+          <div key={d.distributor} className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+            <button onClick={()=>setOpenDist(o=>({...o,[d.distributor]:!isOpen}))} className="w-full px-5 py-3 flex items-center gap-3 bg-muted/30 hover:bg-muted/50 text-left">
+              <span className="text-xs text-muted-foreground transition-transform" style={{transform:isOpen?"rotate(90deg)":"none"}}>▶</span>
               <span className="font-bold text-sm" style={{color:"#1C2340"}}>{d.distributor}</span>
-              <span className="text-xs text-muted-foreground">Gross Sales {money(grandGross)}</span>
               <span className="ml-auto font-mono font-semibold text-sm" style={{color:"#DC2626"}}>Discounts {money(grandTot)}</span>
-            </div>
-            <table className="w-full text-xs min-w-max">
-              <thead>
-                <tr className="text-[10px] uppercase tracking-wide text-muted-foreground border-b border-border bg-muted/20">
-                  <th className="px-3 py-2 text-left sticky left-0 bg-muted/20 z-10">Concepto</th>
-                  {periods.map(p=><th key={p.label} className="px-3 py-2 text-right">{p.label}</th>)}
-                  <th className="px-3 py-2 text-right font-bold border-l border-border">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {LINES.map(line=>{
-                  const vals=periods.map(p=>{
-                    if(line.field==="pct"){
-                      const gross=sumKeys(d.byMonth,p.keys,"grossSales");
-                      const tot=sumKeys(d.byMonth,p.keys,"total");
-                      return gross>0?tot/gross*100:0;
-                    }
-                    return sumKeys(d.byMonth,p.keys,line.field as any);
-                  });
-                  const isPct=line.field==="pct";
-                  const tot = isPct
-                    ? (grandGross>0?grandTot/grandGross*100:0)
-                    : vals.reduce((a,b)=>a+b,0);
-                  const fmtV=(v:number)=> isPct ? (v?`${v.toFixed(1)}%`:"—") : money(v);
-                  return (
-                    <tr key={line.label} className={`border-t border-border/60 ${line.danger?"":""}`} style={line.danger?{backgroundColor:"#FEF2F2"}:{}}>
-                      <td className={`px-3 py-1.5 sticky left-0 z-10 ${line.danger?"font-bold":"text-muted-foreground"} ${line.indent?"pl-6":""}`} style={line.danger?{color:"#DC2626",backgroundColor:"#FEF2F2"}:{backgroundColor:"var(--card,#fff)"}}>{line.label}</td>
-                      {vals.map((v,i)=><td key={i} className={`px-3 py-1.5 text-right font-mono ${line.danger?"font-bold":""}`} style={line.danger?{color:"#DC2626"}:{}}>{fmtV(v)}</td>)}
-                      <td className={`px-3 py-1.5 text-right font-mono font-bold border-l border-border ${line.danger?"":""}`} style={line.danger?{color:"#DC2626"}:{color:"#1C2340"}}>{fmtV(tot)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+            </button>
+            {isOpen && <div className="overflow-x-auto"><DiscTable d={d} withReal={true}/></div>}
           </div>
         );
       })}
@@ -1361,12 +1410,64 @@ function DiscountsView({rawRows,accounts,assumptions}:{
   );
 }
 
+// Compact grid to enter real total deductions per distributor per month
+function DeductionLoader({year,realMap,onSaved}:{year:number;realMap:Map<string,number>;onSaved:(d:DeductionActual)=>void}){
+  const [saving,setSaving]=useState<string|null>(null);
+  const DIST=["UNFI","KEHE","Rainforest"] as const;
+  async function save(dist:string,month:number,raw:string){
+    const num=parseFloat(raw); const val=isNaN(num)?null:num;
+    const key=`${dist}|${month}`;
+    setSaving(key);
+    try{
+      const {supabase:sb}=await import("@/integrations/supabase/client");
+      await upsertDeductionActual(sb,year,month,dist,"total",val);
+      onSaved({id:`${year}-${month}-${dist}-total`,year,month,distributor:dist,line:"total",amount:val});
+    }catch(e){console.error(e);window.alert("No se pudo guardar.");}
+    setSaving(null);
+  }
+  return (
+    <div className="rounded-2xl border border-emerald-300 bg-emerald-50/40 shadow-sm overflow-hidden">
+      <div className="px-5 py-3 border-b border-emerald-200 bg-emerald-50">
+        <p className="text-sm font-bold text-emerald-800">Cargar real de deductions — {year} (total por distribuidor, $)</p>
+        <p className="text-xs text-emerald-700">Ingresá lo que efectivamente te dedujeron cada mes. Se compara contra el forecast en las tablas de arriba.</p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs min-w-max">
+          <thead>
+            <tr className="text-[10px] uppercase text-muted-foreground border-b border-border">
+              <th className="px-3 py-2 text-left">Distribuidor</th>
+              {MONTHS_SHORT.map(m=><th key={m} className="px-2 py-2 text-right">{m}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {DIST.map(dist=>(
+              <tr key={dist} className="border-t border-border/60">
+                <td className="px-3 py-1.5 font-semibold" style={{color:"#1C2340"}}>{dist}</td>
+                {MONTHS_SHORT.map((_,i)=>{
+                  const key=`${dist}|${i+1}`;
+                  return (
+                    <td key={i} className={`px-2 py-1 ${saving===key?"bg-amber-50":""}`}>
+                      <input type="number" step="1" defaultValue={realMap.get(key)??""} className="rounded border border-border bg-background px-1 py-0.5 text-xs font-mono text-right w-16 focus:outline-none focus:ring-1 focus:ring-emerald-400"
+                        onBlur={e=>save(dist,i+1,e.target.value)}/>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ─── Sales Breakdown Tab (mes a mes · units/$ · forecast vs real) ─────────────
 const UNITS_PER_CASE_LOCAL = 8;
-function SalesBreakdownTab({rows,rawRows,accounts,assumptions,actualBySku,actualByDist,onPromoUpdated,loading}:{
+function SalesBreakdownTab({rows,rawRows,accounts,assumptions,actualBySku,actualByDist,onPromoUpdated,deductionActuals,onDeductionSaved,loading}:{
   rows:PromoCalendarRow[];rawRows:PromoCalendarRow[];accounts:SalesAccount[];assumptions:Record<string,number>;
   actualBySku:Record<string,Record<string,number>>;actualByDist:Record<string,Record<string,number>>;
-  onPromoUpdated:(r:PromoCalendarRow)=>void;loading:boolean;
+  onPromoUpdated:(r:PromoCalendarRow)=>void;
+  deductionActuals:DeductionActual[];onDeductionSaved:(d:DeductionActual)=>void;loading:boolean;
 }) {
   const [view,setView] = useState<"ventas"|"promos"|"discounts">("ventas");
   const years = Array.from(new Set(rows.map(r=>r.year))).sort();
@@ -1490,7 +1591,7 @@ function SalesBreakdownTab({rows,rawRows,accounts,assumptions,actualBySku,actual
       {view==="promos" ? (
         <PromoAnalyticsView rows={rawRows} assumptions={assumptions} onUpdated={onPromoUpdated}/>
       ) : view==="discounts" ? (
-        <DiscountsView rawRows={rawRows} accounts={accounts} assumptions={assumptions}/>
+        <DiscountsView shiftedRows={rows} accounts={accounts} assumptions={assumptions} deductionActuals={deductionActuals} onDeductionSaved={onDeductionSaved}/>
       ) : (<>
       <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-700">
         📊 Facturación mes a mes por <strong>Retail</strong>, <strong>Distribuidor</strong> y <strong>SKU</strong>. En DC y SKU se compara <strong>forecast vs real</strong> (el real sale del pipeline de Fulfillment invoiced, a medida que se cargan órdenes). Retail queda solo forecast. Toggle Units/$ y vista Mensual/Quarter.
@@ -1650,6 +1751,14 @@ function SalesPage() {
   const [dbPromo,setDbPromo] = useState<PromoCalendarRow[]>([]);
   const [dbLoading,setDbLoading] = useState(true);
   const [assumptions,setAssumptions] = useState<Record<string,number>>({});
+  const [deductionActuals,setDeductionActuals] = useState<DeductionActual[]>([]);
+  function saveDeductionLocal(d:DeductionActual){
+    setDeductionActuals(prev=>{
+      const i=prev.findIndex(x=>x.year===d.year&&x.month===d.month&&x.distributor===d.distributor&&x.line===d.line);
+      if(i>=0){ const n=[...prev]; n[i]={...n[i],amount:d.amount}; return n; }
+      return [...prev,d];
+    });
+  }
   useEffect(()=>{
     let cancelled=false;
     (async()=>{
@@ -1657,6 +1766,8 @@ function SalesPage() {
         const { supabase: sb } = await import("@/integrations/supabase/client");
         const [accs,rows,ass] = await Promise.all([fetchSalesAccounts(sb), fetchPromoCalendar(sb), fetchAssumptions(sb)]);
         if(!cancelled){ setDbAccounts(accs); setDbPromo(rows); setAssumptions(ass); }
+        const deds = await fetchDeductionActuals(sb);
+        if(!cancelled) setDeductionActuals(deds);
       } catch(e) { console.error("Sales DB load error:", e); }
       if(!cancelled) setDbLoading(false);
     })();
@@ -1883,7 +1994,7 @@ function SalesPage() {
                                   promoMultipliers={promoMultipliers} onPromoMultipliersChange={setPromoMultipliers}/>}
       {tab==="accounts"      && <AccountsTab accounts={dbAccounts} promoRows={dbPromo} assumptions={assumptions} onAssumptionChange={changeAssumption} loading={dbLoading} onUpdated={refreshAccount} onInserted={addAccounts} onDeleted={removeAccounts}/>}
       {tab==="promocal"      && <PromoCalendarTab rows={dbPromo} accounts={dbAccounts} byAccountMonth={byAccountMonth} loading={dbLoading} onUpdated={refreshPromoRow} onInserted={addPromoRows} onDeleted={removePromoRows}/>}
-      {tab==="breakdown"     && <SalesBreakdownTab rows={displayPromo} rawRows={dbPromo} accounts={dbAccounts} assumptions={assumptions} actualBySku={actualBySku} actualByDist={actualByDist} onPromoUpdated={refreshPromoRow} loading={dbLoading}/>}
+      {tab==="breakdown"     && <SalesBreakdownTab rows={displayPromo} rawRows={dbPromo} accounts={dbAccounts} assumptions={assumptions} actualBySku={actualBySku} actualByDist={actualByDist} onPromoUpdated={refreshPromoRow} deductionActuals={deductionActuals} onDeductionSaved={saveDeductionLocal} loading={dbLoading}/>}
     </div>
   );
 }
