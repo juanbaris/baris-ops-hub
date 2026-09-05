@@ -4,7 +4,7 @@ import { useInvoicedActuals } from "@/hooks/use-invoiced-actuals";
 import { supabase } from "@/integrations/supabase/client";
 import { useSalesForecast } from "@/hooks/use-sales-forecast";
 import { forecastFromState, type Scenario } from "@/lib/sales-forecast";
-import { fetchSalesAccounts, fetchPromoCalendar, aggregatePromoCalendar, EXTENDED_SKUS, type DbMonthAgg } from "@/lib/sales-database";
+import { fetchSalesAccounts, fetchPromoCalendar, aggregatePromoCalendar, shiftPromoOneMonthEarlier, discountsByDistributorMonth, totalDiscountRow, fetchAssumptions, cogsOf, EXTENDED_SKUS, type DbMonthAgg } from "@/lib/sales-database";
 import { RunwayTab } from "@/components/runway/runway-tab";
 import { parseAccountfullyPdf } from "@/lib/accountfully-parser";
 
@@ -124,6 +124,94 @@ function useSalesDbAgg() {
     return () => { cancelled = true; };
   }, []);
   return agg;
+}
+
+// ─── Sales breakdown for Finance (SAME source as the Sales "Breakdown" tab) ───
+// Promo Calendar shifted to distributor timing (2027+), gross with delivered_cost
+// from Assumptions, discounts by DC/month, and COGS = units × cogs.SKU (Assumptions).
+// Returns $K maps keyed "YYYY-M" (unpadded, 1-based), scaled by the scenario factor.
+type FinBreakdown = {
+  grossK: Record<string, number>; discountsK: Record<string, number>;
+  dedByLineK: Record<string, Record<string, number>>; cogsK: Record<string, number>;
+  casesK: Record<string, number>; netByDcK: Record<string, Record<string, number>>;
+};
+function useSalesFinBreakdown(scenarioOverride: Scenario): FinBreakdown {
+  const [data, setData] = useState<FinBreakdown>({ grossK:{}, discountsK:{}, dedByLineK:{}, cogsK:{}, casesK:{}, netByDcK:{} });
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [accs, rows, ass] = await Promise.all([fetchSalesAccounts(supabase), fetchPromoCalendar(supabase), fetchAssumptions(supabase)]);
+        const shifted = shiftPromoOneMonthEarlier(rows);
+        const agg = aggregatePromoCalendar(shifted, accs, ass);
+        const disc = discountsByDistributorMonth(shifted, accs, ass);
+        const total = totalDiscountRow(disc);
+        let pct = 25; try { const v = localStorage.getItem("baris.sales.scenarioPct"); if (v != null) pct = parseFloat(v) || 25; } catch { /* ignore */ }
+        const factor = scenarioOverride === "Pessimistic" ? 1 - pct/100 : scenarioOverride === "Optimistic" ? 1 + pct/100 : 1;
+        const grossK: Record<string,number> = {}, discountsK: Record<string,number> = {},
+              dedByLineK: Record<string, Record<string,number>> = {}, cogsK: Record<string,number> = {},
+              casesK: Record<string,number> = {}, netByDcK: Record<string, Record<string,number>> = {};
+        for (const label in agg) {
+          const a = agg[label]; const key = `${a.year}-${a.month}`;
+          grossK[key] = (a.revenue / 1000) * factor;
+          casesK[key] = a.totalCases * factor;
+          let cg = 0;
+          for (const sku in a.bySku) { const units = a.bySku[sku] * 8; const cp = cogsOf(ass, sku) || loadCogsPoteSku(sku); cg += units * cp; }
+          cogsK[key] = (cg / 1000) * factor;
+        }
+        for (const mk in total.byMonth) {
+          const [ys, ms] = mk.split("-"); const key = `${Number(ys)}-${Number(ms)}`;
+          const c = total.byMonth[mk];
+          discountsK[key] = (c.total / 1000) * factor;
+          dedByLineK[key] = {
+            promos: (c.promo/1000)*factor, distributor_fees: (c.distFee/1000)*factor,
+            dsd_programs: (c.distAllow/1000)*factor, payment_terms: (c.payTerms/1000)*factor,
+            kehe_allowance: (c.edlp/1000)*factor,
+          };
+        }
+        for (const d of disc) {
+          for (const mk in d.byMonth) {
+            const [ys, ms] = mk.split("-"); const key = `${Number(ys)}-${Number(ms)}`;
+            const c = d.byMonth[mk];
+            if (!netByDcK[key]) netByDcK[key] = {};
+            netByDcK[key][d.distributor] = ((c.grossSales - c.total)/1000) * factor;
+          }
+        }
+        if (!cancelled) setData({ grossK, discountsK, dedByLineK, cogsK, casesK, netByDcK });
+      } catch (e) { console.error("Finance: Sales breakdown load error", e); }
+    })();
+    return () => { cancelled = true; };
+  }, [scenarioOverride]);
+  return data;
+}
+
+// ─── Engine inputs (gross/AR/discounts/COGS by idx) for Balance + Cash Flow ───
+// 2027/2028 come from the Sales breakdown (shifted, so it matches the P&L and Sales);
+// 2026 keeps the lever forecast. AR = net KeHE + net UNFI (this month) + net Rainforest
+// (prior month, 60-day terms). All in $K.
+function useFinanceEngineInputs(scenario: Scenario) {
+  const scenarioForecast = useFinanceScenarioForecast(scenario);
+  const { julyGrossSales } = useJulyRealFromFulfillment();
+  const fin = useSalesFinBreakdown(scenario);
+  return useMemo(() => {
+    const fcGrossByMonth: Record<number, number> = {};
+    const arByMonth: Record<number, number> = {}, discByMonth: Record<number, number> = {}, cogsByMonth: Record<number, number> = {};
+    for (let idx = 0; idx < 36; idx++) {
+      const y = yearOf(idx), m = monthOf(idx) + 1; const key = `${y}-${m}`;
+      if (y !== 2026 && fin.grossK[key] != null) {
+        fcGrossByMonth[idx] = fin.grossK[key];
+        discByMonth[idx] = fin.discountsK[key] ?? 0;
+        cogsByMonth[idx] = fin.cogsK[key] ?? 0;
+        const prevKey = `${yearOf(idx - 1)}-${monthOf(idx - 1) + 1}`;
+        const nb = fin.netByDcK[key] ?? {}; const nbPrev = fin.netByDcK[prevKey] ?? {};
+        arByMonth[idx] = (nb.KEHE ?? 0) + (nb.UNFI ?? 0) + (nbPrev.Rainforest ?? 0);
+      } else {
+        const v = scenarioForecast[key]; if (v != null) fcGrossByMonth[idx] = v / 1000;
+      }
+    }
+    if (julyGrossSales != null) fcGrossByMonth[6] = julyGrossSales / 1000;
+    return { fcGrossByMonth, arByMonth, discByMonth, cogsByMonth };
+  }, [scenarioForecast, julyGrossSales, fin]);
 }
 
 // ─── Gross sales for the P&L = the SAME series Sales shows in Monthly Detail ───
@@ -497,6 +585,8 @@ type ForecastContext = {
   unitsSold: number;      // cases for this month
   cogsPerUnit: number;    // $/case (blended fallback)
   cogsK?: number;         // $K COGS for the month, per-SKU (overrides cogsPerUnit when present)
+  discountsK?: number;    // $K total discounts (positive), from Sales breakdown — 2027/2028
+  dedByLine?: Record<string, number>; // $K per deduction line (negative), from Sales breakdown — 2027/2028
   logisticsPct: number;   // 0-1, of gross sales
   deductionPct: number;   // 0-1, of gross sales (blended)
   fixedCostsK: Record<string, number>; // $K, keyed by PLRow id, from Best Estimate
@@ -521,16 +611,16 @@ const PL_ROWS: PLRow[] = [
   {id:"g-4500",label:"4500 · Deductions to Income",kind:"group",indent:0},
     {id:"g-disc",parentId:"g-4500",label:"Discounts",kind:"group",indent:1},
       {id:"consumer_returns",parentId:"g-disc",label:"Consumer Returns",kind:"item",indent:2,actualKey:"consumer_returns",forecastFn:()=>0},
-      {id:"distributor_fees",parentId:"g-disc",label:"Distributor Fees",kind:"item",indent:2,actualKey:"distributor_fees",forecastFn:(c)=>-c.grossSales*c.deductionPct*0.10},
-      {id:"dsd_programs",parentId:"g-disc",label:"DSD Programs",kind:"item",indent:2,actualKey:"dsd_programs",forecastFn:(c)=>-c.grossSales*c.deductionPct*0.16},
-      {id:"kehe_allowance",parentId:"g-disc",label:"KeHE Allowance",kind:"item",indent:2,actualKey:"kehe_allowance",forecastFn:(c)=>-c.grossSales*c.deductionPct*0.05},
-      {id:"payment_terms",parentId:"g-disc",label:"Payment Terms",kind:"item",indent:2,actualKey:"payment_terms",forecastFn:(c)=>-c.grossSales*c.deductionPct*0.04},
-      {id:"promos",parentId:"g-disc",label:"Promos",kind:"item",indent:2,actualKey:"promos",forecastFn:(c)=>-c.grossSales*c.deductionPct*0.60},
-      {id:"unfi_allowance",parentId:"g-disc",label:"UNFI Allowance",kind:"item",indent:2,actualKey:"unfi_allowance",forecastFn:(c)=>-c.grossSales*c.deductionPct*0.05},
+      {id:"distributor_fees",parentId:"g-disc",label:"Distributor Fees",kind:"item",indent:2,actualKey:"distributor_fees",forecastFn:(c)=>c.dedByLine?.distributor_fees ?? -c.grossSales*c.deductionPct*0.10},
+      {id:"dsd_programs",parentId:"g-disc",label:"DSD Programs",kind:"item",indent:2,actualKey:"dsd_programs",forecastFn:(c)=>c.dedByLine?.dsd_programs ?? -c.grossSales*c.deductionPct*0.16},
+      {id:"kehe_allowance",parentId:"g-disc",label:"EDLP / Allowances",kind:"item",indent:2,actualKey:"kehe_allowance",forecastFn:(c)=>c.dedByLine?.kehe_allowance ?? -c.grossSales*c.deductionPct*0.05},
+      {id:"payment_terms",parentId:"g-disc",label:"Payment Terms",kind:"item",indent:2,actualKey:"payment_terms",forecastFn:(c)=>c.dedByLine?.payment_terms ?? -c.grossSales*c.deductionPct*0.04},
+      {id:"promos",parentId:"g-disc",label:"Promos",kind:"item",indent:2,actualKey:"promos",forecastFn:(c)=>c.dedByLine?.promos ?? -c.grossSales*c.deductionPct*0.60},
+      {id:"unfi_allowance",parentId:"g-disc",label:"UNFI Allowance",kind:"item",indent:2,actualKey:"unfi_allowance",forecastFn:(c)=>c.dedByLine ? 0 : -c.grossSales*c.deductionPct*0.05},
       {id:"t-disc",parentId:"g-disc",label:"Total Discounts",kind:"total",indent:2},
     {id:"returns_refunds",parentId:"g-4500",label:"Returns / Refunds",kind:"item",indent:1,actualKey:"returns_refunds",forecastFn:()=>0},
     {id:"shipping_qty_var",parentId:"g-4500",label:"Shipping & QTY Variances",kind:"item",indent:1,actualKey:"shipping_qty_var",forecastFn:()=>0},
-    {id:"t-4500",parentId:"g-4500",label:"Total Deductions to Income",kind:"total",indent:1,forecastFn:(c)=>-c.grossSales*c.deductionPct},
+    {id:"t-4500",parentId:"g-4500",label:"Total Deductions to Income",kind:"total",indent:1,forecastFn:(c)=>c.discountsK != null ? -c.discountsK : -c.grossSales*c.deductionPct},
   {id:"t-income",label:"Total Income",kind:"total",indent:0,bold:true},
 
   {id:"s-cogs",label:"COST OF GOODS SOLD",kind:"section",indent:0},
@@ -543,7 +633,7 @@ const PL_ROWS: PLRow[] = [
     {id:"merchant_fees",parentId:"g-6000",label:"Merchant Account Fees",kind:"item",indent:1,actualKey:"merchant_fees",forecastFn:()=>0},
     {id:"warehouse_fulfillment",parentId:"g-6000",label:"Warehouse / Fulfillment",kind:"item",indent:1,actualKey:"warehouse_fulfillment",forecastFn:(c)=>-c.grossSales*c.logisticsPct*0.72},
     {id:"t-6000",parentId:"g-6000",label:"Total 6000 Logistics",kind:"total",indent:1,forecastFn:(c)=>-c.grossSales*c.logisticsPct},
-  {id:"t-cogs",label:"Total Cost of Goods Sold",kind:"total",indent:0,bold:true},
+  {id:"t-cogs",label:"Total Goods Sold",kind:"total",indent:0,bold:true},
 
   {id:"t-gp",label:"GROSS PROFIT",kind:"total",indent:0,bold:true},
   {id:"t-gp-pct",label:"Gross Margin %",kind:"pct",indent:0},
@@ -627,6 +717,7 @@ export function PNLTab({ realMonths, actuals, actualOnly }: { realMonths: number
 
   const scenarioForecast = useFinanceScenarioForecast(scenario); // "2026-8" -> $ (not $K)
   const skuCasesByKey = useFinanceSkuCases(scenario);            // "2027-3" -> { SKU: cases }
+  const fin = useSalesFinBreakdown(scenario);                   // gross/discounts/COGS from the Sales breakdown
   const { julyGrossSales } = useJulyRealFromFulfillment();       // $ (not $K), or null
   const assumptions = useFinanceAssumptions();
 
@@ -661,26 +752,26 @@ export function PNLTab({ realMonths, actuals, actualOnly }: { realMonths: number
     const logisticsPct = assumptions.get('logistics_pct_of_gross', 9.8) / 100;
     const deductionPct = assumptions.get('deduction_pct_overall', 19.78) / 100;
 
-    let grossSalesK: number;
-    if (year === 2026 && idx === 6) {
-      // July 2026: real invoiced $ from Fulfillment if available, else scenario forecast.
-      grossSalesK = julyGrossSales != null ? julyGrossSales / 1000 : (scenarioForecast[`2026-7`] ?? 0) / 1000;
-    } else {
-      grossSalesK = (scenarioForecast[`${year}-${monthNum}`] ?? 0) / 1000;
-    }
+    const key = `${year}-${monthNum}`;
     const cogsPerUnit = year === 2026 ? assumptions.get('cogs_per_unit', 22.27) : loadCogsPote(year) * 8;
-    // COGS 2027/2028: per-SKU real cases (Promo Calendar mix) × per-SKU $/pote (editable in Assumptions).
-    // Falls back to blended when there is no Promo Calendar data (2026 forecast months).
-    const skuCases = year !== 2026 ? skuCasesByKey[`${year}-${monthNum}`] : undefined;
-    let unitsSold: number; let cogsK: number | undefined;
-    if (skuCases && Object.keys(skuCases).length > 0) {
-      let cases = 0, cogsDollars = 0;
-      for (const code in skuCases) { const cs = skuCases[code]; cases += cs; cogsDollars += cs * loadCogsPoteSku(code) * 8; }
-      unitsSold = Math.round(cases);
-      cogsK = -cogsDollars / 1000; // $K, negative
+    let grossSalesK: number; let unitsSold: number; let cogsK: number | undefined;
+    let discountsK: number | undefined; let dedByLine: Record<string, number> | undefined;
+
+    if (year !== 2026 && fin.grossK[key] != null) {
+      // 2027/2028: Gross, Discounts and COGS all come from the Sales breakdown
+      // (distributor-timing shifted), so the P&L matches the Sales tab exactly.
+      grossSalesK = fin.grossK[key];
+      unitsSold = fin.casesK[key] != null ? Math.round(fin.casesK[key]) : Math.round(grossSalesK * 1000 / 37);
+      cogsK = fin.cogsK[key] != null ? -fin.cogsK[key] : undefined;
+      discountsK = fin.discountsK[key] ?? 0;
+      const dl = fin.dedByLineK[key];
+      if (dl) { dedByLine = {}; for (const k in dl) dedByLine[k] = -dl[k]; }
+    } else if (year === 2026 && idx === 6) {
+      grossSalesK = julyGrossSales != null ? julyGrossSales / 1000 : (scenarioForecast[`2026-7`] ?? 0) / 1000;
+      unitsSold = grossSalesK > 0 ? Math.round((grossSalesK * 1000) / 37) : 0; cogsK = undefined;
     } else {
-      unitsSold = grossSalesK > 0 ? Math.round((grossSalesK * 1000) / 37) : 0; // 37 = PRICE_PER_CASE
-      cogsK = undefined;
+      grossSalesK = (scenarioForecast[key] ?? 0) / 1000;
+      unitsSold = grossSalesK > 0 ? Math.round((grossSalesK * 1000) / 37) : 0; cogsK = undefined;
     }
 
     // Expenses: 2026 = flat monthly overrides; 2027/2028 = per-month matrix (live draft while editing).
@@ -692,7 +783,7 @@ export function PNLTab({ realMonths, actuals, actualOnly }: { realMonths: number
       fixedCostsK = Object.fromEntries(Object.keys(DEFAULT_EXPENSE_K).map(k => [k, (mat[k]?.[m0]) ?? 0]));
     }
 
-    return { grossSales: grossSalesK, unitsSold, cogsPerUnit, cogsK, logisticsPct, deductionPct, fixedCostsK };
+    return { grossSales: grossSalesK, unitsSold, cogsPerUnit, cogsK, discountsK, dedByLine, logisticsPct, deductionPct, fixedCostsK };
   }
 
   // Get value for a cell (month idx), in $K
@@ -1050,7 +1141,7 @@ export function PNLTab({ realMonths, actuals, actualOnly }: { realMonths: number
           const aTeam = ((d.contractors ?? 0) + (d.payroll_processing ?? 0) + (d.payroll_taxes ?? 0) + (d.salaries_operations ?? 0)) / 1000;
           const aGA = ((d.bank_charges ?? 0) + (d.dues_subscriptions ?? 0) + (d.rent ?? 0) + (d.utilities ?? 0) + (d.insurance ?? 0) + (d.meals_entertainment ?? 0) + (d.office_supplies ?? 0) + (d.accounting_finance ?? 0) + (d.business_consultation ?? 0) + (d.legal_fees ?? 0) + (d.quality_rd ?? 0) + (d.taxes_licenses ?? 0) + (d.car_rental_uber ?? 0) + (d.flights ?? 0) + (d.hotel ?? 0) + (d.vehicle_expenses ?? 0) + (d.uncategorized ?? 0)) / 1000;
           const aEbitda = aGP + aSell + aMkt + aTeam + aGA; const aOther = (d.other_income ?? 0) / 1000; const aNI = aEbitda + aOther;
-          const fGross = ctx.grossSales; const fDed = -fGross * ctx.deductionPct; const fNet = fGross + fDed;
+          const fGross = ctx.grossSales; const fDed = -(ctx.discountsK ?? fGross * ctx.deductionPct); const fNet = fGross + fDed;
           const fCogs = ctx.cogsK ?? -(ctx.unitsSold * ctx.cogsPerUnit) / 1000; const fLog = -fGross * ctx.logisticsPct; const fGP = fNet + fCogs + fLog;
           const fcK = ctx.fixedCostsK;
           const fSell = (fcK.broker_commissions ?? -10) + (fcK.slotting_fees ?? 0);
@@ -1288,7 +1379,7 @@ const cfKey = (i: number) => `${yearOf(i)}-${monthOf(i) + 1}`;
 // Mirrors PNLTab's getValue logic exactly, so Balance Sheet cash roll-forward stays consistent with the P&L.
 function computeMonthlyNetIncome(ctx: ForecastContext): number {
   const grossProfit = ctx.grossSales
-    - ctx.grossSales * ctx.deductionPct
+    - (ctx.discountsK ?? ctx.grossSales * ctx.deductionPct)
     + (ctx.cogsK ?? -(ctx.unitsSold * ctx.cogsPerUnit) / 1000)
     - ctx.grossSales * ctx.logisticsPct;
   const totalSGA = Object.values(ctx.fixedCostsK).reduce((s, v) => s + (v ?? 0), 0);
@@ -1335,6 +1426,9 @@ function buildFinanceForecast(
   fcGrossByMonth: Record<number, number>,
   get: (k: any, d?: number) => number,
   invAdjust?: Record<number, number>,
+  arByMonth: Record<number, number> = {},   // $K AR from net-by-DC (2027/2028)
+  discByMonth: Record<number, number> = {}, // $K total discounts (2027/2028)
+  cogsByMonth: Record<number, number> = {}, // $K COGS from units×cogs.SKU (2027/2028)
 ): MonthFin[] {
   const bsAt = (i: number) => actuals[PERIODS36[i]]?.bs_detail as Record<string,number> | undefined;
   const pnlAt = (i: number) => actuals[PERIODS36[i]]?.pnl_detail as Record<string,number> | undefined;
@@ -1372,6 +1466,8 @@ function buildFinanceForecast(
       cogsPerUnit: cogsPerCaseFor(yearOf(i), get), logisticsPct: get('logistics_pct_of_gross',9.8)/100,
       deductionPct: dedPct, fixedCostsK: fixedCostsForIdx(i),
     };
+    if (discByMonth[i] != null) ctx.discountsK = discByMonth[i];   // Sales-breakdown discounts
+    if (cogsByMonth[i] != null) ctx.cogsK = -cogsByMonth[i];       // per-SKU COGS
     return computeMonthlyNetIncome(ctx);
   };
 
@@ -1444,9 +1540,13 @@ function buildFinanceForecast(
       rm = Number(bs!['raw_materials_packaging'] ?? 0)/1000;
       inv = fg + rm;
     } else if (isForecast) {
-      const cur = netOf(fcGrossByMonth[i] ?? 0);
-      const prev = netOf(grossK(i-1));
-      ar = cur * mixKU + (cur + prev) * mixRF;
+      if (arByMonth[i] != null) {
+        ar = arByMonth[i]; // Net sales KeHE + UNFI (this month) + Rainforest (prior month, 60-day terms)
+      } else {
+        const cur = netOf(fcGrossByMonth[i] ?? 0);
+        const prev = netOf(grossK(i-1));
+        ar = cur * mixKU + (cur + prev) * mixRF;
+      }
 
       // Inventory: use FIFO bridge from Operations if available
       const periodKey = PERIODS36[i]; // e.g. "2026-08" / "2027-05"
@@ -1537,9 +1637,9 @@ function buildFinanceForecast(
       const gsK = fcGrossByMonth[i] ?? 0;
       const unitsSold = gsK>0 ? Math.round(gsK*1000/37) : 0;
       grossSales = gsK;
-      deductions = -gsK * dedPct;
+      deductions = discByMonth[i] != null ? -discByMonth[i] : -gsK * dedPct;
       netSales = grossSales + deductions;
-      cogsTotal = -((unitsSold*cogsPerCaseFor(yearOf(i),get))/1000) - gsK*get('logistics_pct_of_gross',9.8)/100;
+      cogsTotal = (cogsByMonth[i] != null ? -cogsByMonth[i] : -((unitsSold*cogsPerCaseFor(yearOf(i),get))/1000)) - gsK*get('logistics_pct_of_gross',9.8)/100;
       grossMargin = netSales + cogsTotal;
       ebitda = netIncomeFcst(i);           // NOI (other income ~0 in forecast)
       sgaTot = ebitda - grossMargin;
@@ -1769,17 +1869,10 @@ function CashFlowTab({ actuals, actualOnly, scenario, invAdjust }: { actuals: Re
   const [cfEditMode, setCfEditMode] = useState(false);
   const [cfDraft, setCfDraft] = useState<CfInputs|null>(null);
 
-  const fcGrossByMonth: Record<number, number> = {}; // 0=Jan'26 … 35=Dec'28
-  for (let idx = 0; idx < 36; idx++) {
-    const v = scenarioForecast[`${yearOf(idx)}-${monthOf(idx)+1}`];
-    if (v != null) fcGrossByMonth[idx] = v/1000;
-  }
-  if (julyGrossSales != null) fcGrossByMonth[6] = julyGrossSales/1000;
-
-  // Single source of truth — identical to what the Balance Sheet shows (same scenario).
+  const eng = useFinanceEngineInputs(scenario);
   const S = useMemo(
-    () => buildFinanceForecast(actuals, fcGrossByMonth, assumptions.get, invAdjust),
-    [actuals, assumptions.rows, scenario, julyGrossSales, invAdjust]
+    () => buildFinanceForecast(actuals, eng.fcGrossByMonth, assumptions.get, invAdjust, eng.arByMonth, eng.discByMonth, eng.cogsByMonth),
+    [actuals, assumptions.rows, eng, invAdjust]
   );
 
   const isReal = (i: number) => S[i].isBsReal || S[i].isPnlReal;
@@ -2103,17 +2196,12 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario, invAdjust = {},
     return withBs.length ? Math.max(...withBs) : -1;
   }, [bsByPeriod]);
 
-  const fcGrossByMonth: Record<number, number> = {}; // 0=Jan'26 … 35=Dec'28 -> $K, Gross Sales
-  for (let idx = 0; idx < 36; idx++) { const v = scenarioForecast[`${yearOf(idx)}-${monthOf(idx)+1}`]; if (v != null) fcGrossByMonth[idx] = v/1000; }
-  if (julyGrossSales != null) fcGrossByMonth[6] = julyGrossSales/1000;
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // All forecast values come from the SINGLE shared builder, so the Balance Sheet
-  // and the Cash Flow are always identical. Nothing is computed twice.
-  // ═══════════════════════════════════════════════════════════════════════════
+  // All forecast values come from the SINGLE shared builder (same inputs as the Cash Flow),
+  // 2027/2028 sourced from the Sales breakdown (gross/discounts/COGS/AR).
+  const eng = useFinanceEngineInputs(scenario);
   const S = useMemo(
-    () => buildFinanceForecast(actuals, fcGrossByMonth, assumptions.get, invAdjust),
-    [actuals, assumptions.rows, scenario, julyGrossSales, invAdjust]
+    () => buildFinanceForecast(actuals, eng.fcGrossByMonth, assumptions.get, invAdjust, eng.arByMonth, eng.discByMonth, eng.cogsByMonth),
+    [actuals, assumptions.rows, eng, invAdjust]
   );
   // Adjustments are now baked into S by buildFinanceForecast — no separate adj() needed.
   const forecastAR = (idx: number) => S[idx].ar ?? 0;
@@ -2293,7 +2381,7 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario, invAdjust = {},
           <span className="h-2 w-2 rounded-full bg-emerald-500 inline-block"/>
           <strong className="text-foreground">Bold</strong> = Accountfully real snapshot
         </span>
-        <span className="opacity-60">Gray = forecast · 2027/2028: Bank = Cash End-of-Month del Cashflow; Credit Cards fijo $11k; WC/Factoring loans y Capital salen del Cashflow. Assets = Liab + Equity siempre.</span>
+        <span className="opacity-60">Gray = forecast · 2027/2028: Bank = Cash EOM del Cashflow · AR = net KeHE + UNFI (mes) + Rainforest (mes anterior, 60d) · Inventory = FP+IP de Operations · CC fijo $11k · WC/Factoring loans y Capital del Cashflow. Assets = Liab + Equity.</span>
       </div>
 
       <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
