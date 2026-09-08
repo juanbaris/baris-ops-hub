@@ -4189,7 +4189,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                           className={`${inp} w-20 text-right`}/>
                       </td>
                       <td className="px-4 py-1.5 text-right font-mono font-bold" style={{color:"#1C2340"}}>
-                        {(()=>{const t=dynamicProcSkus.reduce((s,sku)=>s+(bomQty[sku]?.[mat]??0),0);return t>0?t.toFixed(3):"—";})()}
+                        {(()=>{if(!raw) return "—"; const t=dynamicProcSkus.reduce((s,sku)=>s+(bomQty[sku]?.[mat]??0),0);return t>0?t.toFixed(3):"—";})()}
                       </td>
                     </tr>
                   );
@@ -4199,12 +4199,12 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                 <tr className="border-t-2 border-border font-bold" style={{backgroundColor:"#1C2340",color:"#fff"}}>
                   <td className="px-4 py-2 text-xs uppercase tracking-wide" colSpan={2}>Total lbs</td>
                   {dynamicProcSkus.map(sku=>{
-                    const total=allMaterialsList.reduce((s,m)=>s+(bomQty[sku]?.[m]??0),0);
+                    const total=rawMatsLive.reduce((s,m)=>s+(bomQty[sku]?.[m]??0),0);
                     return <td key={sku} className="px-2 py-2 text-center font-mono">{total>0?total.toFixed(3):"—"}</td>;
                   })}
                   <td/>
                   <td className="px-4 py-2 text-right font-mono">
-                    {(()=>{const gt=dynamicProcSkus.reduce((s,sku)=>s+allMaterialsList.reduce((s2,m)=>s2+(bomQty[sku]?.[m]??0),0),0);return gt>0?gt.toFixed(3):"—";})()}
+                    {(()=>{const gt=dynamicProcSkus.reduce((s,sku)=>s+rawMatsLive.reduce((s2,m)=>s2+(bomQty[sku]?.[m]??0),0),0);return gt>0?gt.toFixed(3):"—";})()}
                   </td>
                 </tr>
                 {bomView==="pct" && (
