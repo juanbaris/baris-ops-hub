@@ -374,7 +374,7 @@ export function fulfillmentPerUnit(a: Assumptions): number { return a["fulfillme
 // For a given year, per account: total units, regular units, promo units,
 // promo cost (sum of total_cost), and units split by SKU (for COGS).
 export type AccountPnLInputs = {
-  totalUnits: number; regUnits: number; promoUnits: number; promoCost: number;
+  totalUnits: number; regUnits: number; promoUnits: number; promoCost: number; edlpCost: number;
   unitsBySku: Record<string, number>;
 };
 
@@ -382,13 +382,14 @@ export function accountPnLInputs(rows: PromoCalendarRow[], year: number): Map<st
   const map = new Map<string, AccountPnLInputs>();
   for (const r of rows) {
     if (r.year !== year) continue;
-    if (!map.has(r.account_name)) map.set(r.account_name, { totalUnits: 0, regUnits: 0, promoUnits: 0, promoCost: 0, unitsBySku: {} });
+    if (!map.has(r.account_name)) map.set(r.account_name, { totalUnits: 0, regUnits: 0, promoUnits: 0, promoCost: 0, edlpCost: 0, unitsBySku: {} });
     const m = map.get(r.account_name)!;
     const u = r.total_units ?? 0;
     m.totalUnits += u;
     m.regUnits += r.reg_units ?? 0;
     m.promoUnits += r.promo_units ?? 0;
     m.promoCost += r.total_cost ?? 0;
+    m.edlpCost += r.edlp_cost ?? 0;
     m.unitsBySku[r.sku_code] = (m.unitsBySku[r.sku_code] ?? 0) + u;
   }
   return map;
@@ -461,10 +462,6 @@ export function discountsByDistributorMonth(
   accounts: SalesAccount[],
   assumptions: Record<string, number>,
 ): DiscountRow[] {
-  // edlp allowance per account (from Accounts master), keyed year|account
-  const edlpMap = new Map<string, number>();
-  accounts.forEach(a => edlpMap.set(`${a.year}|${a.account_name}`, a.edlp_allowance ?? 0));
-
   const map = new Map<string, DiscountRow>();
   for (const r of rows) {
     const dist = r.distributor;
@@ -477,10 +474,9 @@ export function discountsByDistributorMonth(
     const units = r.total_units ?? 0;
     const delivered = deliveredCostOf(assumptions, dist);
     const gross = units * delivered;
-    const edlpAllow = edlpMap.get(`${r.year}|${r.account_name}`) ?? 0;
 
     cell.grossSales += gross;
-    cell.edlp += units * edlpAllow;
+    cell.edlp += r.edlp_cost ?? 0;   // método B: EDLP directo del Promo Calendar (columna edlp_cost)
     cell.promo += r.total_cost ?? 0;
     cell.distFee += gross * distPctOf(assumptions, "dist_fees", dist);
     cell.distAllow += gross * distPctOf(assumptions, "dist_allowance", dist);
