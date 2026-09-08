@@ -3482,6 +3482,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       matCost: Number(data.mat_cost) || 0, freight: Number(data.freight) || 0,
       mBuy: data.month_buy ?? "", mRecv: data.month_receive ?? "", mPay: data.month_pay ?? "",
     }]);
+    setEditingPOId(data.id);
   }
   async function removeIpForecastPO(id: number) {
     const { error } = await supabase.from("ops_forecast_po" as any).delete().eq("id", id);
@@ -3492,7 +3493,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   // ─── Confirm forecast PO → create real IP movement ───
   const [confirmingPO, setConfirmingPO] = useState<IPForecastPO | null>(null);
   const [poFilter, setPoFilter] = useState<{field:""|"mBuy"|"mRecv"|"mPay";month:string}>({field:"",month:""});
-  const [editingPOId, setEditingPOId] = useState<string|null>(null);
+  const [editingPOId, setEditingPOId] = useState<number|null>(null);
   const [confirmSaving, setConfirmSaving] = useState(false);
   async function confirmIpForecastPO() {
     if (!confirmingPO) return;
