@@ -4159,6 +4159,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                   <th className="px-2 py-2.5 text-center">UOM</th>
                   {dynamicProcSkus.map(s=><th key={s} className="px-3 py-2.5 text-center" title={PROC_SKU_LABEL[s]}>{s}</th>)}
                   <th className="px-4 py-2.5 text-right">$/unit</th>
+                  <th className="px-4 py-2.5 text-right font-bold" style={{color:"#1C2340"}}>Total</th>
                 </tr>
               </thead>
               <tbody>
@@ -4187,12 +4188,26 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                           onChange={e=>handleIngPriceChange(mat, parseFloat(e.target.value)||0)}
                           className={`${inp} w-20 text-right`}/>
                       </td>
+                      <td className="px-4 py-1.5 text-right font-mono font-bold" style={{color:"#1C2340"}}>
+                        {(()=>{const t=dynamicProcSkus.reduce((s,sku)=>s+(bomQty[sku]?.[mat]??0),0);return t>0?t.toFixed(3):"—";})()}
+                      </td>
                     </tr>
                   );
                 })}
               </tbody>
-              {bomView==="pct" && (
-                <tfoot>
+              <tfoot>
+                <tr className="border-t-2 border-border font-bold" style={{backgroundColor:"#1C2340",color:"#fff"}}>
+                  <td className="px-4 py-2 text-xs uppercase tracking-wide" colSpan={2}>Total lbs</td>
+                  {dynamicProcSkus.map(sku=>{
+                    const total=allMaterialsList.reduce((s,m)=>s+(bomQty[sku]?.[m]??0),0);
+                    return <td key={sku} className="px-2 py-2 text-center font-mono">{total>0?total.toFixed(3):"—"}</td>;
+                  })}
+                  <td/>
+                  <td className="px-4 py-2 text-right font-mono">
+                    {(()=>{const gt=dynamicProcSkus.reduce((s,sku)=>s+allMaterialsList.reduce((s2,m)=>s2+(bomQty[sku]?.[m]??0),0),0);return gt>0?gt.toFixed(3):"—";})()}
+                  </td>
+                </tr>
+                {bomView==="pct" && (
                   <tr className="border-t border-border bg-muted/10">
                     <td className="px-4 py-1.5 text-[10px] uppercase tracking-wide text-muted-foreground" colSpan={2}>Σ % (raw)</td>
                     {dynamicProcSkus.map(sku=>{
@@ -4201,9 +4216,10 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                       return <td key={sku} className={`px-2 py-1.5 text-center font-mono text-[10px] ${sum>0?"text-emerald-600":"text-muted-foreground"}`}>{sum?sum.toFixed(0)+"%":"—"}</td>;
                     })}
                     <td/>
+                    <td/>
                   </tr>
-                </tfoot>
-              )}
+                )}
+              </tfoot>
             </table>
           </div>
 
