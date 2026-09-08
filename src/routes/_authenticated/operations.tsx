@@ -886,8 +886,11 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
               {IP_CONCEPTS.map(c => <option key={c} value={c}>{c}</option>)}
             </select></div>
           <div><Lbl>Material *</Lbl>
-            <input className={`${inp} mt-1`} value={form.material}
-              onChange={e => set("material", e.target.value)} placeholder="e.g. IQF Rasp" /></div>
+            <select className={`${inp} mt-1`} value={form.material}
+              onChange={e => set("material", e.target.value)}>
+              <option value="">— Select material —</option>
+              {ALL_INGS.map(m => <option key={m} value={m}>{m}</option>)}
+            </select></div>
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
