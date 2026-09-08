@@ -3492,6 +3492,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   // ─── Confirm forecast PO → create real IP movement ───
   const [confirmingPO, setConfirmingPO] = useState<IPForecastPO | null>(null);
   const [poFilter, setPoFilter] = useState<{field:""|"mBuy"|"mRecv"|"mPay";month:string}>({field:"",month:""});
+  const [editingPOId, setEditingPOId] = useState<string|null>(null);
   const [confirmSaving, setConfirmSaving] = useState(false);
   async function confirmIpForecastPO() {
     if (!confirmingPO) return;
@@ -4942,24 +4943,40 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                 }).map(po => {
                   const cpu = po.qty > 0 ? (po.matCost + po.freight) / po.qty : 0;
                   const totalCost = po.matCost + po.freight;
+                  const editing = editingPOId === po.id;
+                  const fmtMonth = (v:string) => { if(!v) return "—"; const [y,m]=v.split("-"); const mn=["","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]; return `${mn[+m]} ${y}`; };
                   return (
-                    <tr key={po.id} className="border-t border-border/60 hover:bg-muted/20">
-                      <td className="px-3 py-1.5">
-                        <select value={po.material} onChange={e => updateIpForecastPO(po.id, "material", e.target.value)}
-                          className={`${inp} w-full`}>
-                          {allMaterialsList.map(m => <option key={m} value={m}>{m}</option>)}
-                        </select>
-                      </td>
-                      <td className="px-3 py-1.5"><input type="number" value={po.qty || ""} onChange={e => updateIpForecastPO(po.id, "qty", Number(e.target.value) || 0)} className={`${inp} w-20 text-right`} placeholder="0" /></td>
-                      <td className="px-3 py-1.5 text-right font-mono">${po.matCost > 0 ? po.matCost.toLocaleString() : "0"}</td>
-                      <td className="px-3 py-1.5 text-right font-mono">${po.freight > 0 ? po.freight.toLocaleString() : "0"}</td>
-                      <td className="px-3 py-1.5 text-right font-mono font-bold" style={{color:"#DC2626"}}>${totalCost > 0 ? totalCost.toLocaleString() : "0"}</td>
-                      <td className="px-3 py-1.5 text-right font-mono font-semibold" style={{color:"#7C3AED"}}>{cpu > 0 ? `$${cpu.toFixed(2)}` : "—"}</td>
-                      <td className="px-3 py-1.5"><input type="month" value={po.mBuy} onChange={e => updateIpForecastPO(po.id, "mBuy", e.target.value)} className={`${inp} w-36`} /></td>
-                      <td className="px-3 py-1.5"><input type="month" value={po.mRecv} onChange={e => updateIpForecastPO(po.id, "mRecv", e.target.value)} className={`${inp} w-36`} /></td>
-                      <td className="px-3 py-1.5"><input type="month" value={po.mPay} onChange={e => updateIpForecastPO(po.id, "mPay", e.target.value)} className={`${inp} w-36`} /></td>
+                    <tr key={po.id} className={`border-t border-border/60 ${editing?"bg-amber-50":"hover:bg-muted/20"}`}>
+                      {editing ? (<>
+                        <td className="px-3 py-1.5">
+                          <select value={po.material} onChange={e => updateIpForecastPO(po.id, "material", e.target.value)} className={`${inp} w-full`}>
+                            {allMaterialsList.map(m => <option key={m} value={m}>{m}</option>)}
+                          </select>
+                        </td>
+                        <td className="px-3 py-1.5"><input type="number" value={po.qty || ""} onChange={e => updateIpForecastPO(po.id, "qty", Number(e.target.value) || 0)} className={`${inp} w-20 text-right`} placeholder="0" /></td>
+                        <td className="px-3 py-1.5"><div className="flex items-center gap-0.5"><span className="text-[10px] text-muted-foreground">$</span><input type="number" value={po.matCost || ""} onChange={e => updateIpForecastPO(po.id, "matCost", Number(e.target.value) || 0)} className={`${inp} w-24 text-right`} placeholder="0" /></div></td>
+                        <td className="px-3 py-1.5"><div className="flex items-center gap-0.5"><span className="text-[10px] text-muted-foreground">$</span><input type="number" value={po.freight || ""} onChange={e => updateIpForecastPO(po.id, "freight", Number(e.target.value) || 0)} className={`${inp} w-20 text-right`} placeholder="0" /></div></td>
+                        <td className="px-3 py-1.5 text-right font-mono font-bold" style={{color:"#DC2626"}}>${totalCost > 0 ? totalCost.toLocaleString() : "0"}</td>
+                        <td className="px-3 py-1.5 text-right font-mono font-semibold" style={{color:"#7C3AED"}}>{cpu > 0 ? `$${cpu.toFixed(2)}` : "—"}</td>
+                        <td className="px-3 py-1.5"><input type="month" value={po.mBuy} onChange={e => updateIpForecastPO(po.id, "mBuy", e.target.value)} className={`${inp} w-36`} /></td>
+                        <td className="px-3 py-1.5"><input type="month" value={po.mRecv} onChange={e => updateIpForecastPO(po.id, "mRecv", e.target.value)} className={`${inp} w-36`} /></td>
+                        <td className="px-3 py-1.5"><input type="month" value={po.mPay} onChange={e => updateIpForecastPO(po.id, "mPay", e.target.value)} className={`${inp} w-36`} /></td>
+                      </>) : (<>
+                        <td className="px-3 py-1.5 font-medium">{po.material}</td>
+                        <td className="px-3 py-1.5 text-right font-mono">{po.qty.toLocaleString()}</td>
+                        <td className="px-3 py-1.5 text-right font-mono">${po.matCost.toLocaleString()}</td>
+                        <td className="px-3 py-1.5 text-right font-mono">${po.freight.toLocaleString()}</td>
+                        <td className="px-3 py-1.5 text-right font-mono font-bold" style={{color:"#DC2626"}}>${totalCost > 0 ? totalCost.toLocaleString() : "0"}</td>
+                        <td className="px-3 py-1.5 text-right font-mono font-semibold" style={{color:"#7C3AED"}}>{cpu > 0 ? `$${cpu.toFixed(2)}` : "—"}</td>
+                        <td className="px-3 py-1.5 text-[11px]">{fmtMonth(po.mBuy)}</td>
+                        <td className="px-3 py-1.5 text-[11px]">{fmtMonth(po.mRecv)}</td>
+                        <td className="px-3 py-1.5 text-[11px]">{fmtMonth(po.mPay)}</td>
+                      </>)}
                       <td className="px-3 py-1.5">
                         <div className="flex gap-1">
+                          <button onClick={() => setEditingPOId(editing ? null : po.id)}
+                            className={`rounded px-2 py-0.5 text-[10px] font-semibold text-white ${editing?"bg-amber-500":"bg-amber-400 hover:bg-amber-500"}`}
+                            title={editing ? "Done editing" : "Edit PO"}>✏️</button>
                           <button onClick={() => setConfirmingPO(po)} className="rounded bg-emerald-600 px-2 py-0.5 text-[10px] font-semibold text-white" title="Confirm PO → create real IP movement">✓</button>
                           <button onClick={() => removeIpForecastPO(po.id)} className="rounded bg-red-600 px-2 py-0.5 text-[10px] font-semibold text-white" title="Delete forecast PO">✕</button>
                         </div>
