@@ -742,10 +742,10 @@ type AcctRow = AcctField
   | { kind: "formula"; label: string; danger?: boolean; fn: (a: SalesAccount, ctx: AcctCtx) => string };
 
 // helpers reused across formulas
-function _pnl(a: SalesAccount, ctx: AcctCtx) { return ctx.pnl.get(a.account_name) ?? { totalUnits:0, regUnits:0, promoUnits:0, promoCost:0, unitsBySku:{} }; }
+function _pnl(a: SalesAccount, ctx: AcctCtx) { return ctx.pnl.get(a.account_name) ?? { totalUnits:0, regUnits:0, promoUnits:0, promoCost:0, edlpCost:0, unitsBySku:{} }; }
 function _dc(a: SalesAccount, ctx: AcctCtx) { return deliveredCostOf(ctx.assumptions, a.distributor); }
 function _grossSales(a: SalesAccount, ctx: AcctCtx) { return _pnl(a,ctx).totalUnits * _dc(a,ctx); }
-function _edlpTotal(a: SalesAccount, ctx: AcctCtx) { return _pnl(a,ctx).totalUnits * (a.edlp_allowance ?? 0); }
+function _edlpTotal(a: SalesAccount, ctx: AcctCtx) { return _pnl(a,ctx).edlpCost; }
 function _distFee(a: SalesAccount, ctx: AcctCtx) { return _grossSales(a,ctx) * distPctOf(ctx.assumptions,"dist_fees",a.distributor); }
 function _distAllow(a: SalesAccount, ctx: AcctCtx) { return _grossSales(a,ctx) * distPctOf(ctx.assumptions,"dist_allowance",a.distributor); }
 function _payTerms(a: SalesAccount, ctx: AcctCtx) { return _grossSales(a,ctx) * distPctOf(ctx.assumptions,"payment_terms",a.distributor); }
