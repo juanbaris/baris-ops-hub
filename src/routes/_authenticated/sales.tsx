@@ -32,6 +32,17 @@ const DEFAULT_MIX_PCT: Record<string,number> = {XD:30,PW:25,HM:18,WM:12,WD:8,Mat
 const MIX_SKUS = ["XD","PW","HM","WM","WD","Matcha"];
 const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
+// Month status relative to today: "closed" (past, 100% real), "current" (mix of
+// real + open + remaining forecast), or "future" (forecast, maybe with open POs).
+function monthStatus(year: number, month: number): "closed" | "current" | "future" {
+  const now = new Date();
+  const cy = now.getFullYear(), cm = now.getMonth() + 1;
+  const ym = year * 12 + month, cur = cy * 12 + cm;
+  if (ym < cur) return "closed";
+  if (ym === cur) return "current";
+  return "future";
+}
+
 type HistRow = { label: string; cases: number; revenue: number };
 const DIST_MIX = [
   {dist:"KeHE",pct:0.55,color:"#A3224A"},
@@ -54,7 +65,12 @@ declare global { interface Window { Chart: any } }
 // ─── Real Monthly Tab (derived from invoiced pipeline) ───────────────────────
 function RealMonthlyTab({actuals,loading}:{actuals:Record<string,MonthActual>;loading:boolean}) {
   const SKU_FIELDS = ["xd","pw","hm","wm","wd","matcha"] as const;
-  const YTD_MONTHS = ["Jan 2026","Feb 2026","Mar 2026","Apr 2026","May 2026","Jun 2026","Jul 2026"];
+  // YTD = every 2026 month that already has invoiced actuals (grows automatically
+  // as months close and POs get invoiced — Aug appears once it has invoices).
+  const YTD_MONTHS = Object.values(actuals)
+    .filter(a=>a.year===2026 && (a.cases>0||a.revenue>0))
+    .sort((a,b)=>a.month-b.month)
+    .map(a=>a.label);
 
   const ytdCases = YTD_MONTHS.reduce((s,m)=>s+(actuals[m]?.cases??0),0);
   const ytdRev = YTD_MONTHS.reduce((s,m)=>s+(actuals[m]?.revenue??0),0);
@@ -65,8 +81,8 @@ function RealMonthlyTab({actuals,loading}:{actuals:Record<string,MonthActual>;lo
     <div className="space-y-5">
       <div className="grid grid-cols-3 gap-4">
         {[
-          {label:"YTD 2026 Revenue (Jan–Jul)",value:`$${Math.round(ytdRev/1000)}K`,color:"#A3224A"},
-          {label:"YTD 2026 Cases (Jan–Jul)",value:ytdCases.toLocaleString(),color:"#1C2340"},
+          {label:`YTD 2026 Revenue (${YTD_MONTHS.length} mo)`,value:`$${Math.round(ytdRev/1000)}K`,color:"#A3224A"},
+          {label:`YTD 2026 Cases (${YTD_MONTHS.length} mo)`,value:ytdCases.toLocaleString(),color:"#1C2340"},
           {label:"Avg $/case YTD",value:`$${ytdCases>0?(ytdRev/ytdCases).toFixed(2):"—"}`,color:"#1C2340"},
         ].map((k,i)=>(
           <div key={i} className="rounded-2xl border border-border bg-card p-5 shadow-sm">
@@ -133,53 +149,65 @@ function RealMonthlyTab({actuals,loading}:{actuals:Record<string,MonthActual>;lo
 }
 
 // ─── Summary Tab ──────────────────────────────────────────────────────────────
-function SummaryTab({forecast,scenario,reals,history,committedCount=0}:{forecast:any[];scenario:string;reals:Record<string,number>;history:HistRow[];committedCount?:number}) {
+function SummaryTab({forecast,scenario,reals,history,openByLabel={},committedCount=0}:{forecast:any[];scenario:string;reals:Record<string,number>;history:HistRow[];openByLabel?:Record<string,{revenue:number;cases:number;orders:number}>;committedCount?:number}) {
   const mainCanvas = useRef<HTMLCanvasElement>(null);
   useEffect(()=>{
     if(!mainCanvas.current||!window.Chart) return;
     const existing = (mainCanvas.current as any)._chart;
     if(existing) existing.destroy();
-    // Exclude history months that overlap with forecast (avoids Aug 2026 duplication)
     const forecastLabels = new Set(forecast.map((f:any)=>f.label));
     const pureHist = history.filter(h=>!forecastLabels.has(h.label));
     const allMonths = [...pureHist.map(h=>h.label), ...forecast.map((f:any)=>f.label)];
-    // Green = real confirmed; Pink = forecast remaining
-    const actualVals = allMonths.map(label=>{
-      const h = pureHist.find(x=>x.label===label);
-      if(h) return h.cases;
-      return reals[label]??0;
-    });
-    const remainingVals = allMonths.map(label=>{
-      const fcst = forecast.find((f:any)=>f.label===label);
-      if(!fcst) return 0;
-      const actual = reals[label]??0;
-      return Math.max(0, fcst.totalCases - actual);
-    });
-    const budgetVals = allMonths.map(label=>{
-      const fcst = forecast.find((f:any)=>f.label===label);
-      return fcst ? fcst.budgetCases : null;
-    });
+
+    const labelToYM=(label:string)=>{const [mo,yr]=label.split(" ");return {y:parseInt(yr),m:MONTHS_SHORT.indexOf(mo)+1};};
+
+    // For each month: green = real (invoiced), yellow = open POs, pink = remaining forecast.
+    const realVals:number[]=[], openVals:number[]=[], remainingVals:number[]=[], budgetVals:(number|null)[]=[];
+    for(const label of allMonths){
+      const {y,m}=labelToYM(label);
+      const st=monthStatus(y,m);
+      const fcst=forecast.find((f:any)=>f.label===label);
+      const histRow=pureHist.find(x=>x.label===label);
+      const realCases=(histRow?histRow.cases:(reals[label]??0));
+      const openCases=openByLabel[label]?.cases??0;
+      const fcstCases=fcst?fcst.totalCases:0;
+
+      if(st==="closed"){
+        // 100% real (past month). If no forecast row (pure history), just real.
+        realVals.push(realCases); openVals.push(0); remainingVals.push(0);
+      } else if(st==="current"){
+        // real + open + remaining forecast (not below zero)
+        realVals.push(realCases);
+        openVals.push(openCases);
+        remainingVals.push(Math.max(0, fcstCases - realCases - openCases));
+      } else {
+        // future: forecast, plus any open POs already loaded
+        realVals.push(0);
+        openVals.push(openCases);
+        remainingVals.push(Math.max(0, fcstCases - openCases));
+      }
+      budgetVals.push(fcst?fcst.budgetCases:null);
+    }
+
     const chart = new window.Chart(mainCanvas.current,{
       type:"bar",
       data:{labels:allMonths,datasets:[
-        {label:"Real",   data:actualVals,   backgroundColor:"#10B981",              stack:"cases",borderRadius:3},
-        {label:"Forecast",data:remainingVals,backgroundColor:"rgba(163,34,74,0.45)",stack:"cases",borderRadius:3},
+        {label:"Real (invoiced)", data:realVals,     backgroundColor:"#10B981",              stack:"cases",borderRadius:3},
+        {label:"Open orders",     data:openVals,     backgroundColor:"#F59E0B",              stack:"cases",borderRadius:3},
+        {label:"Forecast",        data:remainingVals,backgroundColor:"rgba(163,34,74,0.45)", stack:"cases",borderRadius:3},
         {type:"line",label:"Budget",data:budgetVals,borderColor:"#9CA3AF",borderDash:[4,3],pointRadius:3,fill:false,tension:0.3},
       ]},
       options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
-        scales:{
-          x:{stacked:true},
-          y:{stacked:true,ticks:{callback:(v:number)=>v.toLocaleString()}}
-        }
+        scales:{x:{stacked:true},y:{stacked:true,ticks:{callback:(v:number)=>v.toLocaleString()}}}
       }
     });
     (mainCanvas.current as any)._chart = chart;
-  },[forecast,reals,history]);
+  },[forecast,reals,history,openByLabel]);
 
   const totalFcst=forecast.reduce((s,f)=>s+f.totalCases,0);
   const totalRev=forecast.reduce((s,f)=>s+f.revenue,0);
   const totalBudget=forecast.reduce((s,f)=>s+f.budgetCases,0);
-  const coveredMonths=forecast.filter(f=>reals[f.label]!=null).length;
+  const coveredMonths=forecast.filter(f=>{const [mo,yr]=f.label.split(" ");return monthStatus(parseInt(yr),MONTHS_SHORT.indexOf(mo)+1)!=="future";}).length;
 
   return (
     <div className="space-y-5">
@@ -200,7 +228,8 @@ function SummaryTab({forecast,scenario,reals,history,committedCount=0}:{forecast
       <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
         <h3 className="text-sm font-bold mb-1" style={{color:"#1C2340"}}>Real · Forecast · Budget — Jan 2026 → Dec 2028</h3>
         <div className="flex items-center gap-4 mb-3 text-[11px] text-muted-foreground">
-          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{backgroundColor:"#10B981"}}/>Real</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{backgroundColor:"#10B981"}}/>Real (invoiced)</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{backgroundColor:"#F59E0B"}}/>Open orders</span>
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{backgroundColor:"rgba(163,34,74,0.45)"}}/>Forecast remaining</span>
           <span className="flex items-center gap-1.5"><span className="w-4 h-0 border-t-2 border-dashed" style={{borderColor:"#9CA3AF"}}/>Budget</span>
         </div>
@@ -1714,7 +1743,7 @@ function SalesPage() {
   const [tab,setTab] = useState<SalesTab>("real");
   const [scenario,setScenario] = useState<"Pessimistic"|"Normal"|"Optimistic">("Normal");
   const [reals,setReals] = useState<Record<string,number>>({});
-  const {byLabel, casesByLabel, loading:loadingActuals} = useInvoicedActuals();
+  const {byLabel, openByLabel, casesByLabel, loading:loadingActuals} = useInvoicedActuals();
   const {bySkuMonth:actualBySku, byDistMonth:actualByDist} = useInvoicedBreakdown();
   const history: HistRow[] = useMemo(()=>Object.values(byLabel)
     .sort((a,b)=>a.year-b.year||a.month-b.month)
@@ -1984,7 +2013,7 @@ function SalesPage() {
         ))}
       </div>
       {tab==="real"          && <RealMonthlyTab actuals={byLabel} loading={loadingActuals}/>}
-      {tab==="resumen"       && <SummaryTab forecast={dbMergedForecast} scenario={scenario} reals={mergedReals} history={history} committedCount={committedCount}/>}
+      {tab==="resumen"       && <SummaryTab forecast={dbMergedForecast} scenario={scenario} reals={mergedReals} history={history} openByLabel={openByLabel} committedCount={committedCount}/>}
       {tab==="detalle"       && <DetalleTab forecast={dbMergedForecast} reals={mergedReals} history={history} committedCount={committedCount} onRealUpdate={(l,v)=>setReals(r=>({...r,[l]:v}))} scenario={scenario} scenarioPct={scenarioPct} onScenarioPctChange={setScenarioPct}/>}
       {tab==="sku"           && <SKUTab forecast={dbMergedSkuTabForecast} newSkus={skuTabNewSkus}
                                   mixOverrides={mixOverrides} mixOverrideActive={mixOverrideActive&&(committedCount===0||mixCommitted)}
