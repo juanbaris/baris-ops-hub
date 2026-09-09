@@ -2543,15 +2543,15 @@ const PAY_TERM_LABEL: Record<PayTerm,string> = { t0:"On order (t=0)", lead:"On a
 const PAY_TERM_KEY = "baris.ops.payTerms.v1";
 
 
-// Fixed forecast horizon matching Sales tab: Aug 2026 → Dec 2028
-// FORECAST_MONTHS_OPS_FULL uses "Aug 2026" to match DB monthLabel keys (dbSkuByMonth).
-// FORECAST_MONTHS_OPS uses "Aug 26" for compact column headers.
+// Fixed forecast horizon: Sep 2026 → Dec 2028
+// FORECAST_MONTHS_OPS_FULL uses "Sep 2026" to match DB monthLabel keys (dbSkuByMonth).
+// FORECAST_MONTHS_OPS uses "Sep 26" for compact column headers.
 const FORECAST_MONTHS_OPS: string[] = [];
 const FORECAST_MONTHS_OPS_FULL: string[] = [];
 const FORECAST_KEYS_OPS: string[] = [];
 (() => {
   const MONTHS_EN = ["","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-  let y = 2026, m = 8;
+  let y = 2026, m = 9;
   while (y < 2029) {
     FORECAST_MONTHS_OPS.push(`${MONTHS_EN[m]} ${String(y).slice(-2)}`);
     FORECAST_MONTHS_OPS_FULL.push(`${MONTHS_EN[m]} ${y}`);
@@ -2605,7 +2605,7 @@ const IP_FORECAST_KEY = "baris.ops.ipForecastPOs.v1";
 const FORECAST_HORIZON_MONTHS = (() => {
   const out: { key: string; label: string }[] = [];
   const MONTHS_EN = ["","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-  let y = 2026, m = 8;
+  let y = 2026, m = 9;
   while (y < 2029) {
     out.push({ key: `${y}-${String(m).padStart(2,"0")}`, label: `${MONTHS_EN[m]} ${String(y).slice(-2)}` });
     m++; if (m > 12) { m = 1; y++; }
