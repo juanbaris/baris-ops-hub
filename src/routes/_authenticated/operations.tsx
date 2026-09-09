@@ -2861,7 +2861,7 @@ function calcCOGSFull(prices: Record<string,number>, costs: typeof DEFAULT_PROD_
     for (const [mat,qty] of Object.entries(bom)) {
       if (!qty) continue;
       const price=prices[mat]??0;
-      const factor=(1+(matScrap[mat]??0)/100)*(1+(matOverfill[mat]??0)/100);
+      const factor=(()=>{const s=(matScrap[mat]??0)/100;const o=(matOverfill[mat]??0)/100;return (s<1?1/(1-s):1)*(1+o);})();
       const cost=qty*price*factor;   // per case
       if (isRawMat(mat) || !mat.startsWith("Cup") && !mat.startsWith("Lid") && !mat.startsWith("Sealer") && !mat.startsWith("Master")) {
         if (mat==="IQF Raspberries") rasp+=cost;
@@ -2918,7 +2918,7 @@ function calcProdSchedule(
         const bom=bomQty[sku]??{};
         for(const [mat,q] of Object.entries(bom)) {
           if(!q) continue;
-          const factor=(1+(matScrap[mat]??0)/100)*(1+(matOverfill[mat]??0)/100);
+          const factor=(()=>{const s=(matScrap[mat]??0)/100;const o=(matOverfill[mat]??0)/100;return (s<1?1/(1-s):1)*(1+o);})();
           const qty=q*produce*factor;
           ingNeeded[mat]=(ingNeeded[mat]??0)+qty;
           if(!ingByMonth[mat]) ingByMonth[mat]=FORECAST_MONTHS_OPS.map(()=>0);
