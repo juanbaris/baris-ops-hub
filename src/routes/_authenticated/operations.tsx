@@ -677,6 +677,19 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
   const receiptRef = useRef<HTMLInputElement>(null);
   const pendingUploadId = useRef<string | null>(null);
 
+  // Dynamic materials list: hardcoded + any extras from Supabase
+  const [ipMaterialsList, setIpMaterialsList] = useState<string[]>([...ALL_INGS]);
+  useEffect(() => {
+    (async () => {
+      const { data } = await (supabase.from("ops_raw_materials" as any) as any).select("material, active").eq("active", true);
+      if (data) {
+        const hardcoded = new Set(ALL_INGS);
+        const extras = (data as any[]).filter(m => !hardcoded.has(m.material)).map(m => m.material as string);
+        setIpMaterialsList([...ALL_INGS, ...extras]);
+      }
+    })();
+  }, []);
+
   async function uploadReceipt(file: File, movementId: string) {
     setUploadingId(movementId);
     const ext = file.name.split('.').pop();
@@ -889,7 +902,7 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
             <select className={`${inp} mt-1`} value={form.material}
               onChange={e => set("material", e.target.value)}>
               <option value="">— Select material —</option>
-              {ALL_INGS.map(m => <option key={m} value={m}>{m}</option>)}
+              {ipMaterialsList.map(m => <option key={m} value={m}>{m}</option>)}
             </select></div>
         </div>
 
