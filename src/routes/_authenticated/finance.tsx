@@ -1521,6 +1521,7 @@ function buildFinanceForecast(
   };
 
   const out: MonthFin[] = [];
+  let lastRealFg: number|null = null, lastRealRm: number|null = null, lastRealInv: number|null = null;
   for (let i = 0; i < 36; i++) {
     const bs = bsAt(i); const pnl = pnlAt(i);
     const isBsReal = !!bs; const isPnlReal = !!pnl;
@@ -1539,6 +1540,7 @@ function buildFinanceForecast(
       fg = Number(bs!['finished_goods'] ?? 0)/1000;
       rm = Number(bs!['raw_materials_packaging'] ?? 0)/1000;
       inv = fg + rm;
+      lastRealFg = fg; lastRealRm = rm; lastRealInv = inv;
     } else if (isForecast) {
       if (arByMonth[i] != null) {
         ar = arByMonth[i]; // Net sales KeHE + UNFI (this month) + Rainforest (prior month, 60-day terms)
@@ -1556,13 +1558,9 @@ function buildFinanceForecast(
         fg = fifoMonth.fp / 1000;   // FP stock value → Finished Goods
         rm = fifoMonth.ip / 1000;   // IP stock value → Raw Materials
         inv = fifoMonth.total / 1000;
-      } else {
-        // Fallback: simple model
-        fg = fgAt(i);
-        let rmv = rmTarget(i);
-        if (fg + rmv > INV_CAP) rmv = Math.max(0, INV_CAP - fg);
-        rm = rmv;
-        inv = fg + rmv;
+      } else if (lastRealInv != null) {
+        // No bridge data (e.g. Aug 2026): carry forward last real stock
+        fg = lastRealFg; rm = lastRealRm; inv = lastRealInv;
       }
       // Apply manual inventory adjustment ($K: positive = more inventory, less cash via balancing)
       const adjK = invAdjust?.[i] ?? 0;
