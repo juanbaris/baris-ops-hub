@@ -1888,7 +1888,7 @@ function CashFlowTab({ actuals, actualOnly, scenario, invAdjust }: { actuals: Re
     return S[i].hasPnl ? 0 : null; // forecast: assume ~0 unless modeled
   };
   // Capital Contributions ($K) for a month, from the Balance Sheet.
-  const capitalK = (i: number): number|null => (S[i].isBsReal || S[i].isForecast) ? S[i].capital : null;
+  const capitalK = (i: number): number|null => (i >= 0 && i < S.length && S[i] && (S[i].isBsReal || S[i].isForecast)) ? S[i].capital : null;
 
   const N = 36;
   const netIncome: (number|null)[] = [], dAR: (number|null)[] = [], dInv: (number|null)[] = [],
