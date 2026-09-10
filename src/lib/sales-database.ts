@@ -378,7 +378,9 @@ export type AccountPnLInputs = {
   unitsBySku: Record<string, number>;
 };
 
-export function accountPnLInputs(rows: PromoCalendarRow[], year: number): Map<string, AccountPnLInputs> {
+export function accountPnLInputs(rows: PromoCalendarRow[], year: number, accounts: SalesAccount[] = []): Map<string, AccountPnLInputs> {
+  const edlpMap = new Map<string, number>();
+  accounts.forEach(a => edlpMap.set(`${a.year}|${a.account_name}`, a.edlp_allowance ?? 0));
   const map = new Map<string, AccountPnLInputs>();
   for (const r of rows) {
     if (r.year !== year) continue;
@@ -388,8 +390,8 @@ export function accountPnLInputs(rows: PromoCalendarRow[], year: number): Map<st
     m.totalUnits += u;
     m.regUnits += r.reg_units ?? 0;
     m.promoUnits += r.promo_units ?? 0;
-    m.promoCost += r.total_cost ?? 0;
-    m.edlpCost += r.edlp_cost ?? 0;
+    m.promoCost += promoCostFormula(r);
+    m.edlpCost += edlpCostFormula(r, edlpMap.get(`${r.year}|${r.account_name}`) ?? 0);
     m.unitsBySku[r.sku_code] = (m.unitsBySku[r.sku_code] ?? 0) + u;
   }
   return map;
@@ -425,7 +427,7 @@ export function promoAnalytics(
 
     const lift = r.lift_pct ?? 0;                 // e.g. 0.30 for +30%
     const promoUnits = r.promo_units ?? 0;
-    const totalCost = r.total_cost ?? 0;
+    const totalCost = promoCostFormula(r);        // unit_cost × promo_units + AD$
     // incremental units = promoUnits × lift/(1+lift) — the share that is truly extra
     const incrementalUnits = lift > 0 ? promoUnits * (lift / (1 + lift)) : 0;
     const delivered = deliveredCostOf(assumptions, r.distributor);
@@ -457,11 +459,23 @@ export type DiscountRow = {
   }>;
 };
 
+// EDLP cost = edlp_allowance (cuenta) × total units × (KeHE ? 1.08 : 1)
+export function edlpCostFormula(r: PromoCalendarRow, edlpAllowance: number): number {
+  const kehe = r.distributor === "KEHE" ? 1.08 : 1;
+  return edlpAllowance * (r.total_units ?? 0) * kehe;
+}
+// Total Cost Promo = unit_cost × promo_units + AD$
+export function promoCostFormula(r: PromoCalendarRow): number {
+  return (r.unit_cost ?? 0) * (r.promo_units ?? 0) + (r.ad_dollars ?? 0);
+}
+
 export function discountsByDistributorMonth(
   rows: PromoCalendarRow[],
   accounts: SalesAccount[],
   assumptions: Record<string, number>,
 ): DiscountRow[] {
+  const edlpMap = new Map<string, number>();
+  accounts.forEach(a => edlpMap.set(`${a.year}|${a.account_name}`, a.edlp_allowance ?? 0));
   const map = new Map<string, DiscountRow>();
   for (const r of rows) {
     const dist = r.distributor;
@@ -474,10 +488,11 @@ export function discountsByDistributorMonth(
     const units = r.total_units ?? 0;
     const delivered = deliveredCostOf(assumptions, dist);
     const gross = units * delivered;
+    const edlpAllow = edlpMap.get(`${r.year}|${r.account_name}`) ?? 0;
 
     cell.grossSales += gross;
-    cell.edlp += r.edlp_cost ?? 0;   // método B: EDLP directo del Promo Calendar (columna edlp_cost)
-    cell.promo += r.total_cost ?? 0;
+    cell.edlp += edlpCostFormula(r, edlpAllow);      // EDLP = allowance × units × (KeHE?1.08:1)
+    cell.promo += promoCostFormula(r);               // Total Cost = unit_cost × promo_units + AD$
     cell.distFee += gross * distPctOf(assumptions, "dist_fees", dist);
     cell.distAllow += gross * distPctOf(assumptions, "dist_allowance", dist);
     cell.payTerms += gross * distPctOf(assumptions, "payment_terms", dist);
