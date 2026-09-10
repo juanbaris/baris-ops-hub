@@ -794,7 +794,7 @@ const ACCT_ROWS: AcctRow[] = [
   { key: "edlp_allowance", label: "EDLP", money: true },
   { key: "srp", label: "SRP", money: true },
   { kind: "formula", label: "Account Cost", fn: (a,ctx) => "$"+(_dc(a,ctx)*(1+(a.dist_markup_pct??0))).toFixed(4) },
-  { kind: "formula", label: "Account GM", fn: (a,ctx) => { const srp=a.srp??0; if(!srp) return "—"; const ac=_dc(a,ctx)*(1+(a.dist_markup_pct??0)); return ((srp-ac)/srp*100).toFixed(1)+"%"; }},
+  { kind: "formula", label: "Account GM", fn: (a,ctx) => { const srp=a.srp??0; if(!srp) return "—"; const ac=_dc(a,ctx)*(1+(a.dist_markup_pct??0)); const edlp=a.edlp_allowance??0; return ((srp-(ac-edlp))/srp*100).toFixed(1)+"%"; }},
 
   // ── 52W P&L (todo fórmula) ──
   { kind: "separator", label: "52W P&L" },
@@ -804,12 +804,13 @@ const ACCT_ROWS: AcctRow[] = [
   { kind: "formula", label: "Gross Sales", fn: (a,ctx) => _money(_grossSales(a,ctx)) },
 
   { kind: "separator", label: "Total Discounts", danger: true },
-  { kind: "formula", label: "   % discount", fn: (a,ctx) => { const gs=_grossSales(a,ctx); if(!gs) return "—"; return (_totalDiscounts(a,ctx)/gs*100).toFixed(1)+"%"; }},
-  { kind: "formula", label: "   EDLP", fn: (a,ctx) => _money(_edlpTotal(a,ctx)) },
-  { kind: "formula", label: "   Promo", fn: (a,ctx) => _money(_promoCost(a,ctx)) },
-  { kind: "formula", label: "   Dist Fee", fn: (a,ctx) => _money(_distFee(a,ctx)) },
-  { kind: "formula", label: "   Dist Allow", fn: (a,ctx) => _money(_distAllow(a,ctx)) },
-  { kind: "formula", label: "   Paym Terms", fn: (a,ctx) => _money(_payTerms(a,ctx)) },
+  { kind: "formula", label: "Total Discounts $", danger: true, fn: (a,ctx) => _money(_totalDiscounts(a,ctx)) },
+  { kind: "formula", label: "   % discount (vs gross)", fn: (a,ctx) => { const gs=_grossSales(a,ctx); if(!gs) return "—"; return (_totalDiscounts(a,ctx)/gs*100).toFixed(1)+"%"; }},
+  { kind: "formula", label: "   EDLP", fn: (a,ctx) => { const td=_totalDiscounts(a,ctx); const v=_edlpTotal(a,ctx); return _money(v)+(td>0?` (${Math.round(v/td*100)}%)`:""); }},
+  { kind: "formula", label: "   Promo", fn: (a,ctx) => { const td=_totalDiscounts(a,ctx); const v=_promoCost(a,ctx); return _money(v)+(td>0?` (${Math.round(v/td*100)}%)`:""); }},
+  { kind: "formula", label: "   Dist Fee", fn: (a,ctx) => { const td=_totalDiscounts(a,ctx); const v=_distFee(a,ctx); return _money(v)+(td>0?` (${Math.round(v/td*100)}%)`:""); }},
+  { kind: "formula", label: "   Dist Allow", fn: (a,ctx) => { const td=_totalDiscounts(a,ctx); const v=_distAllow(a,ctx); return _money(v)+(td>0?` (${Math.round(v/td*100)}%)`:""); }},
+  { kind: "formula", label: "   Paym Terms", fn: (a,ctx) => { const td=_totalDiscounts(a,ctx); const v=_payTerms(a,ctx); return _money(v)+(td>0?` (${Math.round(v/td*100)}%)`:""); }},
 
   { kind: "separator", label: "Net Sales", danger: true },
   { kind: "formula", label: "Net Sales", danger: true, fn: (a,ctx) => _money(_netSales(a,ctx)) },
@@ -830,7 +831,7 @@ function AccountsTab({accounts,promoRows,assumptions,onAssumptionChange,loading,
   const [showAssumptions,setShowAssumptions] = useState(false);
   const years = Array.from(new Set(accounts.map(a=>a.year))).sort();
   const cols = accounts.filter(a=>a.year===year).sort((a,b)=>a.account_name.localeCompare(b.account_name));
-  const ctx: AcctCtx = useMemo(()=>({ year, assumptions, pnl: accountPnLInputs(promoRows, year) }),[year,assumptions,promoRows]);
+  const ctx: AcctCtx = useMemo(()=>({ year, assumptions, pnl: accountPnLInputs(promoRows, year, accounts) }),[year,assumptions,promoRows,accounts]);
 
   async function commitCell(acc:SalesAccount, field:AcctField, rawInput:string){
     let val:any;
@@ -1005,10 +1006,26 @@ function PromoCalendarTab({rows,accounts,byAccountMonth,loading,onUpdated,onInse
     const hasPromo=pw>0;
     const reg=hasPromo?s*v*(w-pw):s*v*w;
     const promo=hasPromo?s*v*(1+lift)*pw:0;
-    return {reg_units:Math.round(reg*1000)/1000, promo_units:Math.round(promo*1000)/1000, total_units:Math.round((reg+promo)*1000)/1000};
+    const totalUnits=reg+promo;
+    // EDLP = edlp_allowance (cuenta) × total units × (KeHE ? 1.08 : 1)
+    const acct=accounts.find(a=>a.year===r.year&&a.account_name===r.account_name);
+    const edlpAllow=acct?.edlp_allowance??0;
+    const kehe=r.distributor==="KEHE"?1.08:1;
+    const edlp=edlpAllow*totalUnits*kehe;
+    // Total Cost Promo = unit_cost × promo_units + ad$
+    const uc=patch.unit_cost??r.unit_cost??0;
+    const ad=patch.ad_dollars??r.ad_dollars??0;
+    const totalCost=uc*promo+ad;
+    return {
+      reg_units:Math.round(reg*1000)/1000,
+      promo_units:Math.round(promo*1000)/1000,
+      total_units:Math.round(totalUnits*1000)/1000,
+      edlp_cost:Math.round(edlp*100)/100,
+      total_cost:Math.round(totalCost*100)/100,
+    };
   }
   async function commit(row:PromoCalendarRow, patch:Partial<PromoCalendarRow>){
-    const recompute=("stores" in patch||"reg_avg_vel" in patch||"weeks" in patch||"promo_weeks" in patch||"lift_pct" in patch);
+    const recompute=("stores" in patch||"reg_avg_vel" in patch||"weeks" in patch||"promo_weeks" in patch||"lift_pct" in patch||"unit_cost" in patch||"ad_dollars" in patch);
     const units=recompute?computeUnits(row,patch):{};
     const fullPatch={...patch,...units};
     const updated={...row,...fullPatch};
@@ -1130,8 +1147,8 @@ function PromoCalendarTab({rows,accounts,byAccountMonth,loading,onUpdated,onInse
                               <td className="px-3 py-1 text-right"><input type="number" step="0.01" defaultValue={row.lift_pct??""} className={`${inp} w-12`} onBlur={e=>commit(row,{lift_pct:e.target.value===""?null:parseFloat(e.target.value)})}/></td>
                               <td className="px-3 py-1 text-right"><input type="number" step="0.01" defaultValue={row.unit_cost??""} className={`${inp} w-16`} onBlur={e=>commit(row,{unit_cost:e.target.value===""?null:parseFloat(e.target.value)})}/></td>
                               <td className="px-3 py-1 text-right"><input type="number" step="1" defaultValue={row.ad_dollars??""} className={`${inp} w-16`} onBlur={e=>commit(row,{ad_dollars:e.target.value===""?null:parseFloat(e.target.value)})}/></td>
-                              <td className="px-3 py-1 text-right font-mono text-muted-foreground">{(row.total_cost??0)>0?(row.total_cost!).toLocaleString(undefined,{maximumFractionDigits:0}):"—"}</td>
-                              <td className="px-3 py-1 text-right font-mono text-muted-foreground">{(row.edlp_cost??0)>0?(row.edlp_cost!).toLocaleString(undefined,{maximumFractionDigits:0}):"—"}</td>
+                              <td className="px-3 py-1 text-right font-mono text-muted-foreground">{(()=>{const tc=(row.unit_cost??0)*promoU+(row.ad_dollars??0);return tc>0?tc.toLocaleString(undefined,{maximumFractionDigits:0}):"—";})()}</td>
+                              <td className="px-3 py-1 text-right font-mono text-muted-foreground">{(()=>{const acct=accounts.find(a=>a.year===row.year&&a.account_name===row.account_name);const ea=acct?.edlp_allowance??0;const kehe=row.distributor==="KEHE"?1.08:1;const ed=ea*(regU+promoU)*kehe;return ed>0?ed.toLocaleString(undefined,{maximumFractionDigits:0}):"—";})()}</td>
                             </tr>
                             );
                           })}
@@ -1163,6 +1180,7 @@ function PromoAnalyticsView({rows,assumptions,onUpdated}:{
   const [fDist,setFDist] = useState<string>("all");
   const [fSku,setFSku] = useState<string>("all");
   const [fType,setFType] = useState<string>("all");
+  const [fMonth,setFMonth] = useState<string>("all");
   const [saving,setSaving] = useState<string|null>(null);
 
   const yearRows = useMemo(()=>rows.filter(r=>r.year===year),[rows,year]);
@@ -1177,8 +1195,9 @@ function PromoAnalyticsView({rows,assumptions,onUpdated}:{
     (fRetail==="all"||p.account_name===fRetail)&&
     (fDist==="all"||p.distributor===fDist)&&
     (fSku==="all"||p.sku_code===fSku)&&
+    (fMonth==="all"||p.month===parseInt(fMonth))&&
     (fType==="all"||((p.promo_label??"—").trim()||"—")===fType)
-  ).sort((a,b)=> a.account_name.localeCompare(b.account_name)||a.sku_code.localeCompare(b.sku_code)||a.month-b.month);
+  ).sort((a,b)=> a.month-b.month||a.account_name.localeCompare(b.account_name)||a.sku_code.localeCompare(b.sku_code));
 
   const totCost=filtered.reduce((s,p)=>s+p.total_cost,0);
   const totNet=filtered.reduce((s,p)=>s+p.netProfit,0);
@@ -1230,6 +1249,7 @@ function PromoAnalyticsView({rows,assumptions,onUpdated}:{
         <select value={fRetail} onChange={e=>setFRetail(e.target.value)} className={sel}><option value="all">Todos los retails</option>{retails.map(r=><option key={r}>{r}</option>)}</select>
         <select value={fDist} onChange={e=>setFDist(e.target.value)} className={sel}><option value="all">Todos los DC</option>{dists.map(d=><option key={d}>{d}</option>)}</select>
         <select value={fSku} onChange={e=>setFSku(e.target.value)} className={sel}><option value="all">Todos los SKU</option>{skus.map(s=><option key={s}>{s}</option>)}</select>
+        <select value={fMonth} onChange={e=>setFMonth(e.target.value)} className={sel}><option value="all">Todos los meses</option>{MONTHS_SHORT.map((m,i)=><option key={m} value={i+1}>{m}</option>)}</select>
         <select value={fType} onChange={e=>setFType(e.target.value)} className={sel}><option value="all">Todos los tipos</option>{types.map(t=><option key={t}>{t}</option>)}</select>
         <span className="text-xs text-muted-foreground ml-auto">{filtered.length} promos</span>
       </div>
