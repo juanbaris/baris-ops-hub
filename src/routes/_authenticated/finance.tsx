@@ -1584,16 +1584,14 @@ function buildFinanceForecast(
       totEquity = totAssets - totLiab;
     } else if (isForecast) {
       accrued = accruedFwd;
-      const cashDriven = yearOf(i) >= 2027; // 2027/2028 = cash-driven; 2026 forecast keeps the plug
-      cc = cashDriven ? 11 : avgCC;         // Credit Cards fixed $11k for 2027/2028
-      // Cumulative from last real close: operating NI (+ net interest for 2027/2028), capital, loan draws.
+      const cashDriven = true; // every forecast month (Jul 2026 →) is cash-driven & editable
+      cc = yearOf(i) >= 2027 ? 11 : avgCC;  // Credit Cards fixed $11k for 2027/2028
+      // Cumulative from last real close: operating NI + net interest, capital, loan draws (all editable per month).
       let cumNI = 0, capCum = 0, wcCum = 0, fctCum = 0;
       for (let j = latestBsIdx + 1; j <= i; j++) {
         const opNIj = (netIncomeReal(j) ?? netIncomeFcst(j));
-        if (yearOf(j) >= 2027) {
-          cumNI += opNIj + (cfv('investInt', j) - cfv('wcInt', j) - cfv('fctInt', j)); // net interest hits retained earnings
-          capCum += cfv('capital', j); wcCum += cfv('wcDraw', j); fctCum += cfv('fctDraw', j);
-        } else { cumNI += opNIj; }
+        cumNI += opNIj + (cfv('investInt', j) - cfv('wcInt', j) - cfv('fctInt', j)); // net interest hits retained earnings
+        capCum += cfv('capital', j); wcCum += cfv('wcDraw', j); fctCum += cfv('fctDraw', j);
       }
       netIncEq = fwd.netIncEq + cumNI;
       capitalTotal = fwd.capital + capCum;
@@ -1901,49 +1899,43 @@ function CashFlowTab({ actuals, actualOnly, scenario, invAdjust }: { actuals: Re
 
   const cfIn = (cfEditMode && cfDraft) ? cfDraft : loadCfInputs();
   const cfget = (field: keyof CfInputs, i: number) => cfIn[field]?.[cfKey(i)] ?? 0;
-  let runEop: number|null = null; // chains Cash EOM through 2027/2028 (live during edit)
+  let runEop: number|null = null; // chains Cash EOM across all forecast months (live during edit)
 
   for (let i = 0; i < N; i++) {
     const m = S[i], prev = i > 0 ? S[i-1] : null;
     netIncome[i] = m.netIncome;
-    const driven = m.isForecast && yearOf(i) >= 2027;
+    // Working-capital deltas whenever both months have a balance sheet.
+    const hasW = m.ar != null && m.inventory != null && prev != null && prev.ar != null && prev.inventory != null;
+    dAR[i]  = hasW ? -((m.ar as number) - (prev!.ar as number)) : null;
+    dInv[i] = hasW ? -((m.inventory as number) - (prev!.inventory as number)) : null;
+    dAP[i]  = prev != null ? (((m.creditCards ?? 0) + (m.accrued ?? 0)) - ((prev.creditCards ?? 0) + (prev.accrued ?? 0))) : null;
+    const wc = (dAR[i] ?? 0) + (dInv[i] ?? 0) + (dAP[i] ?? 0);
+    const cfoV = (m.netIncome != null && prev != null) ? (m.netIncome + wc) : null; // Cash from Operations = NI + ΔWC
+    cfo[i] = cfoV;
 
-    if (driven) {
+    if (m.isForecast) {
+      // Cash-driven: EOM = BOM + CFO + CFI, CFI = the six editable lines. Reconciles by construction.
       const bop = runEop != null ? runEop : (prev?.cash ?? 0);
       cashBop[i] = bop;
-      dAR[i]  = (m.ar != null && prev?.ar != null) ? -((m.ar) - (prev.ar)) : 0;
-      dInv[i] = (m.inventory != null && prev?.inventory != null) ? -((m.inventory) - (prev.inventory)) : 0;
-      dAP[i]  = ((m.creditCards ?? 0) + (m.accrued ?? 0)) - ((prev?.creditCards ?? 0) + (prev?.accrued ?? 0));
-      const cfoV = (m.netIncome ?? 0) + (dAR[i] as number) + (dInv[i] as number) + (dAP[i] as number);
-      cfo[i] = cfoV;
       capContrib[i] = cfget('capital', i); wcDrawA[i] = cfget('wcDraw', i); fctDrawA[i] = cfget('fctDraw', i);
       wcIntA[i] = cfget('wcInt', i); fctIntA[i] = cfget('fctInt', i); investIntA[i] = cfget('investInt', i);
       const netInt = (investIntA[i] as number) - (wcIntA[i] as number) - (fctIntA[i] as number);
       const cfiV = (capContrib[i] as number) + (wcDrawA[i] as number) + (fctDrawA[i] as number) + netInt;
       cfi[i] = cfiV;
-      cashMove[i] = cfoV + cfiV;
+      cashMove[i] = (cfoV ?? 0) + cfiV;
       const eop = bop + (cashMove[i] as number);
       cashEop[i] = eop; runEop = eop;
     } else {
+      // Real months: EOM is the actual cash; CFI reconciles as (Movement − CFO).
       runEop = null;
       cashEop[i] = m.cash;
-      capContrib[i] = null; wcDrawA[i] = null; fctDrawA[i] = null;
-      wcIntA[i] = null; fctIntA[i] = null; cashMove[i] = null;
-      // 2026: keep the indirect bridge (cash was the balancing figure).
-      const canBridge = hasBS(i) && prev != null && prev.ar != null && prev.inventory != null && prev.cash != null;
-      if (canBridge) {
-        dAR[i]  = -((m.ar as number) - (prev!.ar as number));
-        dInv[i] = -((m.inventory as number) - (prev!.inventory as number));
-        dAP[i]  = ((m.creditCards ?? 0) + (m.accrued ?? 0)) - ((prev!.creditCards ?? 0) + (prev!.accrued ?? 0));
-        cashBop[i] = prev!.cash as number;
-        cfo[i] = (m.cash as number) - (prev!.cash as number);
-        const capNow = capitalK(i), capPrev = capitalK(i-1);
-        capContrib[i] = (capNow != null && capPrev != null) ? (capNow - capPrev) : null;
-        investIntA[i] = otherIncomeK(i); // 2026: P&L other income shown as investing interest
-        cfi[i] = (capContrib[i] ?? 0) + (investIntA[i] ?? 0);
-      } else {
-        dAR[i] = null; dInv[i] = null; dAP[i] = null; cfo[i] = null; cashBop[i] = null; cfi[i] = null; investIntA[i] = null;
-      }
+      cashBop[i] = prev?.cash ?? null;
+      cashMove[i] = (m.cash != null && prev?.cash != null) ? ((m.cash as number) - (prev.cash as number)) : null;
+      cfi[i] = (cashMove[i] != null && cfoV != null) ? ((cashMove[i] as number) - cfoV) : null;
+      const capNow = capitalK(i), capPrev = capitalK(i-1);
+      capContrib[i] = (capNow != null && capPrev != null) ? (capNow - capPrev) : null;
+      investIntA[i] = otherIncomeK(i);
+      wcDrawA[i] = null; fctDrawA[i] = null; wcIntA[i] = null; fctIntA[i] = null;
     }
   }
 
@@ -2009,7 +2001,7 @@ function CashFlowTab({ actuals, actualOnly, scenario, invAdjust }: { actuals: Re
             </button>
           ))}
         </div>
-        {(yearFilter === 2027 || yearFilter === 2028) && (
+        {(yearFilter === 2026 || yearFilter === 2027 || yearFilter === 2028 || yearFilter === 'all') && (
           cfEditMode ? (
             <span className="flex items-center gap-1">
               <button onClick={() => { if (cfDraft) saveCfInputs(cfDraft); window.location.reload(); }}
@@ -2019,7 +2011,7 @@ function CashFlowTab({ actuals, actualOnly, scenario, invAdjust }: { actuals: Re
             </span>
           ) : (
             <button onClick={() => { setCfEditMode(true); setCfDraft(loadCfInputs()); }}
-              className="rounded-full border border-[#A3224A] text-[#A3224A] px-2 py-0.5 hover:bg-[#FFF5F7]">✏️ Editar cashflow {yearFilter}</button>
+              className="rounded-full border border-[#A3224A] text-[#A3224A] px-2 py-0.5 hover:bg-[#FFF5F7]">✏️ Editar cashflow{yearFilter === 'all' ? '' : ` ${yearFilter}`}</button>
           )
         )}
       </div>
@@ -2058,7 +2050,7 @@ function CashFlowTab({ actuals, actualOnly, scenario, invAdjust }: { actuals: Re
                     style={{color:"#1C2340"}}>{row.name}</td>
                   {visIdx.map((i) => {
                     const v = row.data[i];
-                    if (row.editable && cfEditMode && S[i].isForecast && yearOf(i) >= 2027) {
+                    if (row.editable && cfEditMode && S[i].isForecast) {
                       const k = cfKey(i);
                       const cur = cfDraft?.[row.editable]?.[k] ?? 0;
                       return (
