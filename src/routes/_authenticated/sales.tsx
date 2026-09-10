@@ -282,11 +282,21 @@ function DetalleTab({forecast,reals,onRealUpdate,history,committedCount=0,scenar
   const [editVal,setEditVal]=useState("");
   const [range,setRange]=useState<DetalleRange>("all");
 
-  // History rows: Jan-Jul 2026 only — exclude any month that's also in forecast (prevents Aug duplication)
-  const forecastLabels = new Set(forecast.map(f=>f.label));
-  const showHist = range==="all"||range==="ytd"||range==="y2026";
-  const histRows: HistRow[] = showHist ? history.filter(h=>!forecastLabels.has(h.label)) : [];
+  // History rows: every closed month with invoiced actuals, filtered to the
+  // selected range.  Forecast rows exclude months already shown as actuals so
+  // the "FORECAST →" divider sits between the last closed month and the first
+  // open one (moves automatically as months close).
+  const histRows: HistRow[] = history.filter(h=>{
+    if(range==="all"||range==="ytd"||range==="y2026") return true;
+    if(range==="rest2026") return REST2026_LABELS.includes(h.label);
+    if(range==="next3") return NEXT3_LABELS.includes(h.label);
+    if(range==="y2027") return h.label.endsWith("2027");
+    if(range==="y2028") return h.label.endsWith("2028");
+    return false;
+  });
+  const histLabelSet = new Set(histRows.map(h=>h.label));
   const fcstRows = forecast.filter(f=>{
+    if(histLabelSet.has(f.label)) return false;
     if(range==="all") return true;
     if(range==="ytd") return false;
     if(range==="next3") return NEXT3_LABELS.includes(f.label);
