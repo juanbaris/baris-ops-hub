@@ -1926,16 +1926,20 @@ function CashFlowTab({ actuals, actualOnly, scenario, invAdjust }: { actuals: Re
       const eop = bop + (cashMove[i] as number);
       cashEop[i] = eop; runEop = eop;
     } else {
-      // Real months: EOM is the actual cash; CFI reconciles as (Movement − CFO).
+      // Real months: EOM is actual cash; CFI = sum of components (same as forecast).
+      // Capital Contribution from BS delta (3100), Investing Interest from PnL (9000 Other Income),
+      // WC/FCT draws & interest from editable inputs.
       runEop = null;
       cashEop[i] = m.cash;
       cashBop[i] = prev?.cash ?? null;
       cashMove[i] = (m.cash != null && prev?.cash != null) ? ((m.cash as number) - (prev.cash as number)) : null;
-      cfi[i] = (cashMove[i] != null && cfoV != null) ? ((cashMove[i] as number) - cfoV) : null;
       const capNow = capitalK(i), capPrev = capitalK(i-1);
       capContrib[i] = (capNow != null && capPrev != null) ? (capNow - capPrev) : null;
       investIntA[i] = otherIncomeK(i);
-      wcDrawA[i] = null; fctDrawA[i] = null; wcIntA[i] = null; fctIntA[i] = null;
+      wcDrawA[i] = cfget('wcDraw', i); fctDrawA[i] = cfget('fctDraw', i);
+      wcIntA[i] = cfget('wcInt', i); fctIntA[i] = cfget('fctInt', i);
+      const netInt = (investIntA[i] ?? 0) - (wcIntA[i] ?? 0) - (fctIntA[i] ?? 0);
+      cfi[i] = (capContrib[i] ?? 0) + (wcDrawA[i] as number) + (fctDrawA[i] as number) + netInt;
     }
   }
 
