@@ -414,7 +414,8 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
 
     // Optionally create/update the lot in Lot Master (so a new lot becomes editable, or its expiry/cogs get set).
     const lotNo = payload.lot_number;
-    if (lotNo && !lotNo.startsWith("LOT-") && (form.expiry || form.cogs_per_case)) {
+    const lotMoc = payload.moc || (form as any).moc || null;
+    if (lotNo && !lotNo.startsWith("LOT-") && (form.expiry || form.cogs_per_case || lotMoc)) {
       try {
         const { data: existing } = await supabase.from("lot_master").select("id")
           .eq("lot_number", lotNo).eq("warehouse", form.warehouse).maybeSingle();
@@ -422,10 +423,12 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
           const patch: Record<string, any> = { updated_at: new Date().toISOString() };
           if (form.expiry) patch.expiry_date = form.expiry;
           if (form.cogs_per_case) { patch.cogs_per_case = Number(form.cogs_per_case); patch.cogs_status = "confirmed"; }
+          if (lotMoc) patch.moc = lotMoc;
           await supabase.from("lot_master").update(patch as any).eq("id", (existing as any).id);
         } else {
           await supabase.from("lot_master").insert({
             lot_number: lotNo, warehouse: form.warehouse, sku: form.sku,
+            moc: lotMoc,
             expiry_date: form.expiry || null, cases_initial: 0,
             cogs_per_case: form.cogs_per_case ? Number(form.cogs_per_case) : null,
             cogs_status: form.cogs_per_case ? "confirmed" : "missing",
