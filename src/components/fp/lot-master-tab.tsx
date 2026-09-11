@@ -16,6 +16,7 @@ type Lot = {
   sku: string;
   lineage_item_code: string | null;
   lot_number: string;
+  moc: string | null;
   expiry_date: string | null;
   cases: number;                // live on-hand
   cogs_per_case: number | null; // per pote
@@ -44,7 +45,7 @@ export function LotMasterTab() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [adding, setAdding] = useState(false);
-  const [draft, setDraft] = useState({ warehouse: "Lineage Newark", sku: "XD", lineage_item_code: "", lot_number: "", expiry_date: "", cases_initial: "", cogs_per_case: "", notes: "" });
+  const [draft, setDraft] = useState({ warehouse: "Lineage Newark", sku: "XD", lineage_item_code: "", lot_number: "", moc: "", expiry_date: "", cases_initial: "", cogs_per_case: "", notes: "" });
 
   async function load() {
     const [lm, mv] = await Promise.all([
@@ -76,7 +77,7 @@ export function LotMasterTab() {
       seen.add(k);
       return {
         id: r.id, warehouse: wh, sku: r.sku, lineage_item_code: r.lineage_item_code,
-        lot_number: lot, expiry_date: r.expiry_date,
+        lot_number: lot, expiry_date: r.expiry_date, moc: r.moc ?? null,
         cases: (Number(r.cases_initial) || 0) + (deltaByLotWh[k] ?? 0),
         cogs_per_case: r.cogs_per_case, cogs_status: r.cogs_status, notes: r.notes,
       };
@@ -90,7 +91,7 @@ export function LotMasterTab() {
       seen.add(k);
       out.push({
         id: null, warehouse: wh, sku: m.sku, lineage_item_code: null,
-        lot_number: lot, expiry_date: null, cases: deltaByLotWh[k] ?? 0,
+        lot_number: lot, expiry_date: null, moc: null, cases: deltaByLotWh[k] ?? 0,
         cogs_per_case: m.cogs_per_case, cogs_status: "estimated",
         notes: "From FP movement (not yet in Lot Master)",
       });
@@ -155,7 +156,7 @@ export function LotMasterTab() {
     if (l.id) return; // already a real row
     const { error } = await supabase.from("lot_master").insert({
       warehouse: l.warehouse, sku: l.sku, lineage_item_code: l.lineage_item_code,
-      lot_number: l.lot_number, expiry_date: l.expiry_date,
+      lot_number: l.lot_number, moc: l.moc ?? null, expiry_date: l.expiry_date,
       cases_initial: 0, // delta from movements already reflects effective on-hand
       cogs_per_case: l.cogs_per_case, cogs_status: l.cogs_per_case == null ? "missing" : "estimated",
       notes: l.notes,
@@ -176,20 +177,20 @@ export function LotMasterTab() {
     const cogs = draft.cogs_per_case ? Number(draft.cogs_per_case) : null;
     const { error } = await supabase.from("lot_master").insert({
       warehouse: draft.warehouse, sku: draft.sku, lineage_item_code: draft.lineage_item_code || null,
-      lot_number: draft.lot_number.trim(), expiry_date: draft.expiry_date || null,
+      lot_number: draft.lot_number.trim(), moc: draft.moc.trim() || null, expiry_date: draft.expiry_date || null,
       cases_initial: draft.cases_initial ? Number(draft.cases_initial) : 0,
       cogs_per_case: cogs, cogs_status: cogs == null ? "missing" : "confirmed", notes: draft.notes || null,
     } as any);
     if (error) { toast.error(error.message); return; }
     toast.success("Lot added"); setAdding(false);
-    setDraft({ warehouse: "Lineage Newark", sku: "XD", lineage_item_code: "", lot_number: "", expiry_date: "", cases_initial: "", cogs_per_case: "", notes: "" });
+    setDraft({ warehouse: "Lineage Newark", sku: "XD", lineage_item_code: "", lot_number: "", moc: "", expiry_date: "", cases_initial: "", cogs_per_case: "", notes: "" });
     load();
   }
 
   function exportExcel() {
     const headers = ["Warehouse","SKU","Item Code","Lot #","Expiry","Cases","Potes","COGS/pote","COGS/case","Inv. Value ($)","Status","Notes"];
     const rows = filtered.map(l => [
-      l.warehouse, l.sku, l.lineage_item_code ?? "", l.lot_number,
+      l.warehouse, l.sku, l.lineage_item_code ?? "", l.lot_number, l.moc ?? "",
       l.expiry_date ?? "",
       l.cases, l.cases * UNITS_PER_CASE,
       l.cogs_per_case ?? "",
@@ -220,6 +221,7 @@ export function LotMasterTab() {
           <th className={`${th} text-left`} onClick={() => toggleSort("warehouse")}>WH{arrow("warehouse")}</th>
           <th className={`${th} text-left`} onClick={() => toggleSort("sku")}>SKU{arrow("sku")}</th>
           <th className={`${th} text-left`} onClick={() => toggleSort("lot_number")}>Lot #{arrow("lot_number")}</th>
+          <th className={`${th} text-left`}>MOC</th>
           <th className={`${th} text-left`} onClick={() => toggleSort("expiry_date")}>Expiry{arrow("expiry_date")}</th>
           <th className={`${th} text-right`} onClick={() => toggleSort("cases")}>Cases{arrow("cases")}</th>
           <th className={`${th} text-right`} onClick={() => toggleSort("cogs_per_case")}>COGS/pote{arrow("cogs_per_case")}</th>
@@ -232,7 +234,7 @@ export function LotMasterTab() {
       </thead>
       <tbody>
         {data.length === 0 ? (
-          <tr><td colSpan={editable ? 11 : 10} className="p-6 text-center text-muted-foreground">No lots.</td></tr>
+          <tr><td colSpan={editable ? 12 : 11} className="p-6 text-center text-muted-foreground">No lots.</td></tr>
         ) : data.map((l) => {
           const perCase = l.cogs_per_case == null ? null : Number(l.cogs_per_case) * UNITS_PER_CASE;
           const value = perCase == null ? null : l.cases * perCase;
@@ -241,6 +243,11 @@ export function LotMasterTab() {
               <td className="px-3 py-1.5 text-xs">{l.warehouse}</td>
               <td className="px-3 py-1.5 font-semibold" style={{ color: BRAND }}>{l.sku}</td>
               <td className="px-3 py-1.5 font-mono text-xs" style={{ color: "#A3224A" }}>{l.lot_number}{l.id === null && <span className="ml-1 text-[9px] text-muted-foreground">(mov)</span>}</td>
+              <td className="px-3 py-1.5 font-mono text-xs" style={{ color: "#6D28D9" }}>
+                {editable && l.id ? (
+                  <input defaultValue={l.moc ?? ""} onBlur={(e) => { if (e.target.value !== (l.moc ?? "")) saveField(l.id, { moc: e.target.value || null }); }} className={`${inp} w-32 text-xs font-mono`} placeholder="—" />
+                ) : (l.moc ?? "—")}
+              </td>
               <td className="px-3 py-1.5 text-xs">
                 {editable && l.id ? (
                   <input type="date" defaultValue={l.expiry_date ?? ""} onBlur={(e) => { if (e.target.value !== (l.expiry_date ?? "")) saveField(l.id, { expiry_date: e.target.value || null }); }} className={`${inp} text-xs`} />
