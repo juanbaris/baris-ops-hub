@@ -375,7 +375,7 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
   const [form, setForm] = useState({
     movement_date: ymd(), type: "In" as MoveType, sku: "XD" as SKU,
     cases: "", warehouse: "Lineage Newark" as Warehouse,
-    lot_number: "", concept: "Production" as FPConcept,
+    lot_number: "", moc: "", concept: "Production" as FPConcept,
     cogs_per_case: "", expiry: "", po_number_ref: "", notes: "",
   });
   const [saving, setSaving] = useState(false);
@@ -400,6 +400,7 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
       cases: Number(form.cases),
       warehouse: form.warehouse,
       lot_number: form.lot_number || `LOT-${form.sku}-${form.movement_date}`,
+      moc: (form as any).moc || null,
       concept: form.concept,
       cogs_per_case: form.cogs_per_case ? Number(form.cogs_per_case) : null,
       po_number_ref: form.po_number_ref || null,
@@ -436,7 +437,7 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
 
     toast.success(editingFP ? "Movement updated" : `FP movement added: ${form.type} ${form.cases} cases ${form.sku}`);
     setEditingFP(null);
-    setForm(f => ({ ...f, cases: "", lot_number: "", cogs_per_case: "", expiry: "", po_number_ref: "", notes: "" }));
+    setForm(f => ({ ...f, cases: "", lot_number: "", moc: "", cogs_per_case: "", expiry: "", po_number_ref: "", notes: "" }));
     onAdded();
   }
 
@@ -450,6 +451,7 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
       cases: String(r.cases),
       warehouse: r.warehouse as Warehouse,
       lot_number: r.lot_number ?? "",
+      moc: (r as any).moc ?? "",
       concept: r.concept as FPConcept,
       cogs_per_case: rr.cogs_per_case != null ? String(rr.cogs_per_case) : "",
       expiry: "",
@@ -597,14 +599,15 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
               <th className="px-4 py-2.5 text-right">$ Value</th>
               <th className="px-4 py-2.5 text-left">Warehouse</th>
               <th className="px-4 py-2.5 text-left">Lot</th>
+              <th className="px-4 py-2.5 text-left">MOC</th>
               <th className="px-4 py-2.5 text-left">Concept</th>
               <th className="px-4 py-2.5 text-left">Notes</th>
               <th className="px-4 py-2.5 text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {loading ? <tr><td colSpan={10} className="p-8 text-center text-muted-foreground">Loading…</td></tr>
-              : filtered.length === 0 ? <tr><td colSpan={11} className="p-8 text-center text-muted-foreground">No movements match filters</td></tr>
+            {loading ? <tr><td colSpan={11} className="p-8 text-center text-muted-foreground">Loading…</td></tr>
+              : filtered.length === 0 ? <tr><td colSpan={12} className="p-8 text-center text-muted-foreground">No movements match filters</td></tr>
               : filtered.map(r => (
                 <tr key={r.id} className="border-t border-border/60 hover:bg-muted/20">
                   <td className="px-4 py-1.5 font-mono text-xs">{r.movement_date}</td>
@@ -632,6 +635,7 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
                   })()}
                   <td className="px-4 py-1.5 text-muted-foreground text-xs">{r.warehouse}</td>
                   <td className="px-4 py-1.5 font-mono text-xs" style={{color:"#A3224A"}}>{r.lot_number}</td>
+                  <td className="px-4 py-1.5 font-mono text-xs" style={{color:"#6D28D9"}}>{(r as any).moc ?? "—"}</td>
                   <td className="px-4 py-1.5 text-xs">{r.concept}</td>
                   <td className="px-4 py-1.5 text-xs text-muted-foreground truncate max-w-[200px]">{r.notes ?? "—"}</td>
                   <td className="px-4 py-1.5 text-right">
@@ -780,6 +784,7 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
       quantity: String(r.quantity),
       unit: r.unit ?? "lbs",
       lot_number: r.lot_number ?? "",
+      moc: (r as any).moc ?? "",
       concept: r.concept as IPConcept,
       warehouse: rr.warehouse ?? "Heinlein",
       total_price: rr.total_price != null ? String(rr.total_price) : "",
