@@ -24,7 +24,7 @@ type Lot = {
   notes: string | null;
 };
 
-type Mv = { movement_date: string; type: string; lot_number: string | null; cases: number; sku: string; warehouse: string; cogs_per_case: number | null };
+type Mv = { movement_date: string; type: string; lot_number: string | null; moc: string | null; cases: number; sku: string; warehouse: string; cogs_per_case: number | null };
 
 function StatusBadge({ s }: { s: string | null }) {
   const v = (s ?? "").toLowerCase();
@@ -50,7 +50,7 @@ export function LotMasterTab() {
   async function load() {
     const [lm, mv] = await Promise.all([
       supabase.from("lot_master").select("*"),
-      supabase.from("fp_movements").select("movement_date,type,lot_number,cases,sku,warehouse,cogs_per_case").gt("movement_date", LOT_BASELINE).limit(10000),
+      supabase.from("fp_movements").select("movement_date,type,lot_number,moc,cases,sku,warehouse,cogs_per_case").gt("movement_date", LOT_BASELINE).limit(10000),
     ]);
     if (lm.error) toast.error(lm.error.message);
     setMaster(lm.data ?? []);
@@ -91,7 +91,7 @@ export function LotMasterTab() {
       seen.add(k);
       out.push({
         id: null, warehouse: wh, sku: m.sku, lineage_item_code: null,
-        lot_number: lot, expiry_date: null, moc: null, cases: deltaByLotWh[k] ?? 0,
+        lot_number: lot, expiry_date: null, moc: (m as any).moc ?? null, cases: deltaByLotWh[k] ?? 0,
         cogs_per_case: m.cogs_per_case, cogs_status: "estimated",
         notes: "From FP movement (not yet in Lot Master)",
       });
