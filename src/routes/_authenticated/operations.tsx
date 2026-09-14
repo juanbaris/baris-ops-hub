@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { ExportButton } from "@/components/export-button";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/app-shell";
@@ -5418,6 +5419,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
 // ─── Main Operations Page ─────────────────────────────────────────────────────
 function OperationsPage() {
   const [tab, setTab] = useState<OpsTab>("stock");
+  const contentRef = useRef<HTMLDivElement>(null);
   const [fpMovements, setFpMovements] = useState<FPRow[]>([]);
   const [ipMovements, setIpMovements] = useState<IPRow[]>([]);
   const [orders, setOrders] = useState<any[]>([]);
@@ -5477,7 +5479,8 @@ function OperationsPage() {
         subtitle="Inventory, production, and procurement planning"
       />
 
-      <div className="flex gap-1 overflow-x-auto border-b border-border mb-6 pb-0">
+      <div className="flex items-end justify-between border-b border-border mb-6 gap-2">
+        <div className="flex gap-1 overflow-x-auto pb-0">
         {TABS.map(t => (
           <button
             key={t.id}
@@ -5493,8 +5496,26 @@ function OperationsPage() {
             {t.label}
           </button>
         ))}
+        </div>
+        <div className="pb-1">
+          <ExportButton
+            filename={`BARIS_${(TABS.find(t => t.id === tab)?.label ?? "Operations").replace(/[^\w]+/g, "_")}`}
+            targetRef={contentRef}
+            excelAllData={tab === "fp" ? (() => [{
+              name: "FP Movements (all)",
+              rows: [
+                ["Date", "Type", "SKU", "Cases", "Warehouse", "Lot", "MOC", "Concept", "Notes"],
+                ...fpMovements.map((r: any) => [
+                  r.movement_date, r.type, r.sku, Number(r.cases) || 0,
+                  r.warehouse, r.lot_number ?? "", (r as any).moc ?? "", r.concept, r.notes ?? "",
+                ]),
+              ],
+            }]) : undefined}
+          />
+        </div>
       </div>
 
+      <div ref={contentRef}>
       {tab === "stock"       && <FPStockTab movements={fpMovements} orders={orders} loading={loadingFP} baseline={baseline} lotMap={lotMap} />}
       {tab === "summary"     && <FPSummaryTab />}
       {tab === "lots"        && <LotMasterTab />}
@@ -5503,6 +5524,7 @@ function OperationsPage() {
       {tab === "ip"          && <IPInputTab movements={ipMovements} loading={loadingIP} onAdded={reload} />}
       {tab === "production"  && <ProductionTab fpMovements={fpMovements} ipMovements={ipMovements} onAdded={reload} />}
       {tab === "procurement" && <ProcurementTab movements={fpMovements} orders={orders} baseline={baseline} ipMovements={ipMovements} onAdded={reload} />}
+      </div>
     </div>
   );
 }
