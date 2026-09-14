@@ -388,7 +388,7 @@ function KPI({ icon, label, value, sub, subColor, onClick }: {
 }
 
 // ─── Dashboard Tab ────────────────────────────────────────────────────────────
-function DashboardTab({ period, refMonth, actuals, realMonths, actualOnly }: { period: Period; refMonth: number; actuals: Record<string,any>; realMonths: number; actualOnly: boolean }) {
+function DashboardTab({ period, refMonth, actuals, realMonths, actualOnly, paymentsPending, cfInputs }: { period: Period; refMonth: number; actuals: Record<string,any>; realMonths: number; actualOnly: boolean; paymentsPending: Record<number,number>; cfInputs: CfInputs }) {
   const { effectiveForecast } = useSalesForecast();
   const { julyGrossSales } = useJulyRealFromFulfillment();
   const assumptions = useFinanceAssumptions();
@@ -399,8 +399,8 @@ function DashboardTab({ period, refMonth, actuals, realMonths, actualOnly }: { p
 
   // Single source of truth: same series as P&L / Balance Sheet / Cash Flow (all in $K).
   const S = useMemo(
-    () => buildFinanceForecast(actuals, fcGrossByMonth, assumptions.get),
-    [actuals, assumptions.rows, effectiveForecast, julyGrossSales]
+    () => buildFinanceForecast(actuals, fcGrossByMonth, assumptions.get, {}, {}, {}, paymentsPending, cfInputs),
+    [actuals, assumptions.rows, effectiveForecast, julyGrossSales, paymentsPending, cfInputs]
   );
 
   // Month range: Actual = only real P&L months (Jan–Jun); Forecast = full year (Jan–Dec).
@@ -1362,17 +1362,6 @@ type CfInputs = {
   wcInt: Record<string, number>; fctInt: Record<string, number>; investInt: Record<string, number>;
 };
 const CF_FIELDS = ['capital','wcDraw','fctDraw','wcInt','fctInt','investInt'] as const;
-function loadCfInputs(): CfInputs {
-  const out: any = {};
-  for (const f of CF_FIELDS) {
-    try { const r = localStorage.getItem(`baris.finance.cf.${f}`); out[f] = r ? JSON.parse(r) : {}; }
-    catch { out[f] = {}; }
-  }
-  return out as CfInputs;
-}
-function saveCfInputs(inp: CfInputs) {
-  for (const f of CF_FIELDS) { try { localStorage.setItem(`baris.finance.cf.${f}`, JSON.stringify(inp[f] ?? {})); } catch {} }
-}
 const cfKey = (i: number) => `${yearOf(i)}-${monthOf(i) + 1}`;
 
 // Pure function: given a forecast context, compute this month's Net Income in $K.
@@ -1398,7 +1387,7 @@ type MonthFin = {
   isPnlReal: boolean; isBsReal: boolean; isForecast: boolean;
   netIncome: number|null;          // $K, from P&L (real) or modeled (forecast)
   ar: number|null; fg: number|null; rm: number|null; inventory: number|null;
-  cash: number|null; creditCards: number|null; accrued: number|null;
+  cash: number|null; creditCards: number|null; accrued: number|null; paymentsPending: number;
   loansSh: number; fixed: number; dueSh: number;
   capital: number; common: number; openEq: number; retEarn: number; netIncEq: number|null;
   wcLoan: number; fctLoan: number; // forecast loan liabilities (cumulative draws), 2027/2028
@@ -1428,6 +1417,8 @@ function buildFinanceForecast(
   arByMonth: Record<number, number> = {},   // $K AR from net-by-DC (2027/2028)
   discByMonth: Record<number, number> = {}, // $K total discounts (2027/2028)
   cogsByMonth: Record<number, number> = {}, // $K COGS from units×cogs.SKU (2027/2028)
+  paymentsPendingMap: Record<number, number> = {}, // $K editable per month
+  cfInputs?: CfInputs,                            // shared CF editable inputs
 ): MonthFin[] {
   const bsAt = (i: number) => actuals[PERIODS36[i]]?.bs_detail as Record<string,number> | undefined;
   const pnlAt = (i: number) => actuals[PERIODS36[i]]?.pnl_detail as Record<string,number> | undefined;
@@ -1439,7 +1430,7 @@ function buildFinanceForecast(
   const mixKU = (get('sales_mix_kehe', 50.5) + get('sales_mix_unfi', 27.1)) / 100;
   const mixRF = get('sales_mix_rainforest', 22.3) / 100;
   const cogsPerCaseK = get('cogs_per_unit', 22.27) / 1000;
-  const cf = loadCfInputs();
+  const cf = cfInputs ?? { capital:{}, wcDraw:{}, fctDraw:{}, wcInt:{}, fctInt:{}, investInt:{} };
   const cfv = (field: keyof CfInputs, i: number) => cf[field]?.[cfKey(i)] ?? 0;
 
   const latestBsIdx = (() => { let m=-1; for (let i=0;i<36;i++) if (bsAt(i)) m=i; return m; })();
@@ -1572,9 +1563,10 @@ function buildFinanceForecast(
       accrued = Number(bs!['accrued_liabilities'] ?? 0)/1000;
       cash = bankKeys.reduce((s,k)=>s+Number(bs![k] ?? 0)/1000,0);
       netIncEq = Number(bs!['net_income_equity'] ?? 0)/1000;
+      const pp = paymentsPendingMap[i] ?? 0;
       const curAssets = cash + ar! + inv! + fwd.loansSh;
       totAssets = curAssets + fwd.fixed + fwd.dueSh;
-      totLiab = cc + accrued;
+      totLiab = cc + accrued + pp;
       totEquity = totAssets - totLiab;
     } else if (isForecast) {
       accrued = accruedFwd;
@@ -1591,7 +1583,8 @@ function buildFinanceForecast(
       capitalTotal = fwd.capital + capCum;
       wcLoan = wcCum; fctLoan = fctCum;
       totEquity = capitalTotal + fwd.common + fwd.openEq + fwd.retEarn + netIncEq;
-      totLiab = cc + accrued + wcLoan + fctLoan;
+      const pp = paymentsPendingMap[i] ?? 0;
+      totLiab = cc + accrued + pp + wcLoan + fctLoan;
       const nonCash = ar! + inv! + fwd.loansSh + fwd.fixed + fwd.dueSh;
       if (cashDriven) {
         // Cash EOM = prior EOM + Cash from Operations + Cash from Investing/Financing.
@@ -1599,8 +1592,8 @@ function buildFinanceForecast(
         const prevCash = prevM?.cash ?? 0;
         const dAR = ar! - (prevM?.ar ?? ar!);
         const dInv = inv! - (prevM?.inventory ?? inv!);
-        const apPrev = (prevM?.creditCards ?? cc) + (prevM?.accrued ?? accrued);
-        const dAP = (cc + accrued) - apPrev;
+        const apPrev = (prevM?.creditCards ?? cc) + (prevM?.accrued ?? accrued) + (prevM?.paymentsPending ?? 0);
+        const dAP = (cc + accrued + pp) - apPrev;
         const cfo = (ni ?? 0) - dAR - dInv + dAP;                       // operating NI + ΔWC
         const netInt = cfv('investInt', i) - cfv('wcInt', i) - cfv('fctInt', i);
         const cfi = cfv('capital', i) + cfv('wcDraw', i) + cfv('fctDraw', i) + netInt;
@@ -1640,7 +1633,7 @@ function buildFinanceForecast(
     out.push({
       isPnlReal, isBsReal, isForecast,
       netIncome: ni, ar, fg, rm, inventory: inv,
-      cash, creditCards: cc, accrued,
+      cash, creditCards: cc, accrued, paymentsPending: paymentsPendingMap[i] ?? 0,
       loansSh: isBsReal||isForecast ? fwd.loansSh : 0,
       fixed: isBsReal ? (Number(bs!['equipment'] ?? 0)+Number(bs!['accumulated_depreciation'] ?? 0))/1000 : (isForecast ? fwd.fixed : 0),
       dueSh: isBsReal||isForecast ? fwd.dueSh : 0,
@@ -1852,7 +1845,7 @@ function AssumptionsModal({ assumptions, onClose }: { assumptions: ReturnType<ty
 
 
 // ─── Cash Flow Tab ────────────────────────────────────────────────────────────
-function CashFlowTab({ actuals, actualOnly, scenario }: { actuals: Record<string, any>; actualOnly: boolean; scenario: Scenario }) {
+function CashFlowTab({ actuals, actualOnly, scenario, paymentsPending, cfInputs, onCfInputsChange }: { actuals: Record<string, any>; actualOnly: boolean; scenario: Scenario; paymentsPending: Record<number,number>; cfInputs: CfInputs; onCfInputsChange: (inp: CfInputs) => void }) {
   const cashCanvas = useRef<HTMLCanvasElement>(null);
   const { julyGrossSales } = useJulyRealFromFulfillment();
   const scenarioForecast = useFinanceScenarioForecast(scenario); // "2026-8" -> $ (not $K)
@@ -1863,8 +1856,8 @@ function CashFlowTab({ actuals, actualOnly, scenario }: { actuals: Record<string
 
   const eng = useFinanceEngineInputs(scenario);
   const S = useMemo(
-    () => buildFinanceForecast(actuals, eng.fcGrossByMonth, assumptions.get, eng.arByMonth, eng.discByMonth, eng.cogsByMonth),
-    [actuals, assumptions.rows, eng]
+    () => buildFinanceForecast(actuals, eng.fcGrossByMonth, assumptions.get, eng.arByMonth, eng.discByMonth, eng.cogsByMonth, paymentsPending, cfInputs),
+    [actuals, assumptions.rows, eng, paymentsPending, cfInputs]
   );
 
   const isReal = (i: number) => S[i].isBsReal || S[i].isPnlReal;
@@ -1891,7 +1884,7 @@ function CashFlowTab({ actuals, actualOnly, scenario }: { actuals: Record<string
         wcIntA: (number|null)[] = [], fctIntA: (number|null)[] = [], investIntA: (number|null)[] = [],
         cashMove: (number|null)[] = [], cashBop: (number|null)[] = [], cashEop: (number|null)[] = [];
 
-  const cfIn = (cfEditMode && cfDraft) ? cfDraft : loadCfInputs();
+  const cfIn = (cfEditMode && cfDraft) ? cfDraft : cfInputs;
   const cfget = (field: keyof CfInputs, i: number) => cfIn[field]?.[cfKey(i)] ?? 0;
   let runEop: number|null = null; // chains Cash EOM across all forecast months (live during edit)
 
@@ -1902,7 +1895,7 @@ function CashFlowTab({ actuals, actualOnly, scenario }: { actuals: Record<string
     const hasW = m.ar != null && m.inventory != null && prev != null && prev.ar != null && prev.inventory != null;
     dAR[i]  = hasW ? -((m.ar as number) - (prev!.ar as number)) : null;
     dInv[i] = hasW ? -((m.inventory as number) - (prev!.inventory as number)) : null;
-    dAP[i]  = prev != null ? (((m.creditCards ?? 0) + (m.accrued ?? 0)) - ((prev.creditCards ?? 0) + (prev.accrued ?? 0))) : null;
+    dAP[i]  = prev != null ? (((m.creditCards ?? 0) + (m.accrued ?? 0) + (m.paymentsPending ?? 0)) - ((prev.creditCards ?? 0) + (prev.accrued ?? 0) + (prev.paymentsPending ?? 0))) : null;
     const wc = (dAR[i] ?? 0) + (dInv[i] ?? 0) + (dAP[i] ?? 0);
     const cfoV = (m.netIncome != null && prev != null) ? (m.netIncome + wc) : null; // Cash from Operations = NI + ΔWC
     cfo[i] = cfoV;
@@ -2002,13 +1995,13 @@ function CashFlowTab({ actuals, actualOnly, scenario }: { actuals: Record<string
         {(yearFilter === 2026 || yearFilter === 2027 || yearFilter === 2028 || yearFilter === 'all') && (
           cfEditMode ? (
             <span className="flex items-center gap-1">
-              <button onClick={() => { if (cfDraft) saveCfInputs(cfDraft); window.location.reload(); }}
+              <button onClick={() => { if (cfDraft) { onCfInputsChange(cfDraft); } setCfEditMode(false); setCfDraft(null); }}
                 className="rounded-full border border-emerald-300 bg-emerald-50 text-emerald-700 px-2 py-0.5 hover:bg-emerald-100">🔒 Congelar cambios</button>
               <button onClick={() => { setCfEditMode(false); setCfDraft(null); }}
                 className="rounded-full border border-border px-2 py-0.5 hover:bg-muted">Cancelar</button>
             </span>
           ) : (
-            <button onClick={() => { setCfEditMode(true); setCfDraft(loadCfInputs()); }}
+            <button onClick={() => { setCfEditMode(true); setCfDraft({...cfInputs}); }}
               className="rounded-full border border-[#A3224A] text-[#A3224A] px-2 py-0.5 hover:bg-[#FFF5F7]">✏️ Editar cashflow{yearFilter === 'all' ? '' : ` ${yearFilter}`}</button>
           )
         )}
@@ -2057,7 +2050,7 @@ function CashFlowTab({ actuals, actualOnly, scenario }: { actuals: Record<string
                             onChange={e => {
                               const nv = parseFloat(e.target.value) || 0;
                               setCfDraft(prev => {
-                                const base = prev ?? loadCfInputs();
+                                const base = prev ?? {...cfInputs};
                                 return { ...base, [row.editable!]: { ...base[row.editable!], [k]: nv } };
                               });
                             }}
@@ -2140,7 +2133,8 @@ const BS_ROWS: BSNode[] = [
   {id:"t-cc",label:"Total Credit Cards",kind:"total",indent:0,forecastFn:()=>0},
   {id:"g-other-liab",label:"Other Current Liabilities",kind:"group",indent:0},
     {id:"accrued",parentId:"g-other-liab",label:"2010 Accrued Liabilities",kind:"item",indent:1,actualKey:"accrued_liabilities",forecastFn:()=>10.34},
-  {id:"t-other-liab",label:"Total Other Current Liabilities",kind:"total",indent:0,forecastFn:()=>10.34},
+    {id:"payments_pending",parentId:"g-other-liab",label:"Payments Pending",kind:"item",indent:1,forecastFn:()=>0},
+  {id:"t-other-liab",label:"Total Other Current Liabilities",kind:"total",indent:0},
   {id:"g-loans",label:"Loans",kind:"group",indent:0},
     {id:"wc_loan",parentId:"g-loans",label:"WC Loan",kind:"item",indent:1,forecastFn:()=>0},
     {id:"fct_loan",parentId:"g-loans",label:"Factoring Loan",kind:"item",indent:1,forecastFn:()=>0},
@@ -2164,7 +2158,7 @@ const BS_ROWS: BSNode[] = [
   {id:"t-liab-equity",label:"TOTAL LIABILITIES AND EQUITY",kind:"total",indent:0,forecastFn:(m,i)=>m.total_assets[i]},
 ];
 
-function BalanceTab({ realMonths, actuals, actualOnly, scenario }: { realMonths: number; actuals: Record<string,any>; actualOnly: boolean; scenario: Scenario }) {
+function BalanceTab({ realMonths, actuals, actualOnly, scenario, paymentsPending, onPaymentsPendingChange, cfInputs }: { realMonths: number; actuals: Record<string,any>; actualOnly: boolean; scenario: Scenario; paymentsPending: Record<number,number>; onPaymentsPendingChange: React.Dispatch<React.SetStateAction<Record<number,number>>>; cfInputs: CfInputs }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(
     new Set(["g-bank","g-ar","g-inv","g-fixed","g-cc","g-other-liab","g-capital"])
   );
@@ -2188,8 +2182,8 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario }: { realMonths:
   // 2027/2028 sourced from the Sales breakdown (gross/discounts/COGS/AR).
   const eng = useFinanceEngineInputs(scenario);
   const S = useMemo(
-    () => buildFinanceForecast(actuals, eng.fcGrossByMonth, assumptions.get, eng.arByMonth, eng.discByMonth, eng.cogsByMonth),
-    [actuals, assumptions.rows, eng]
+    () => buildFinanceForecast(actuals, eng.fcGrossByMonth, assumptions.get, eng.arByMonth, eng.discByMonth, eng.cogsByMonth, paymentsPending, cfInputs),
+    [actuals, assumptions.rows, eng, paymentsPending, cfInputs]
   );
   // Adjustments are now baked into S by buildFinanceForecast — no separate adj() needed.
   const forecastAR = (idx: number) => S[idx].ar ?? 0;
@@ -2281,7 +2275,7 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario }: { realMonths:
       if (row.id === "t-inv")  return real ? getValue(BS_ROWS.find(r=>r.id==="g-inv")!, idx)  : forecastInventory(idx);
       if (row.id === "t-fixed") return real ? getValue(BS_ROWS.find(r=>r.id==="g-fixed")!, idx) : fwdFixedK;
       if (row.id === "t-cc") return real ? getValue(BS_ROWS.find(r=>r.id==="g-cc")!, idx) : forecastCC(idx);
-      if (row.id === "t-other-liab") return accruedK;
+      if (row.id === "t-other-liab") return accruedK + (S[idx].paymentsPending ?? 0);
       if (row.id === "t-loans") return real ? 0 : forecastWcLoan(idx) + forecastFctLoan(idx);
       if (row.id === "t-capital") return real ? getValue(BS_ROWS.find(r=>r.id==="g-capital")!, idx) : forecastCapital(idx);
       if (row.id === "t-curr-assets") {
@@ -2309,6 +2303,8 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario }: { realMonths:
 
     // ── Items ──
     if (isBlank) return null;
+    // Payments Pending: always from the editable map (both real & forecast)
+    if (row.id === "payments_pending") return S[idx].paymentsPending ?? 0;
     if (real && row.actualKey && real[row.actualKey] != null) {
       return Number(real[row.actualKey]) / 1000;
     }
@@ -2413,6 +2409,16 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario }: { realMonths:
                   </td>
                   {vals.map((v, k) => {
                     const i = visIdx[k];
+                    // Editable Payments Pending cell
+                    if (row.id === "payments_pending") {
+                      return (
+                        <td key={i} className="text-right px-1 py-1">
+                          <input type="number" step={1} value={paymentsPending[i] ?? 0}
+                            onChange={e => onPaymentsPendingChange(prev => ({ ...prev, [i]: Number(e.target.value) }))}
+                            className="w-14 rounded border border-blue-300 px-1 py-0.5 text-[10px] text-right font-mono bg-white focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                        </td>
+                      );
+                    }
                     return (
                     <td key={i} className="text-right px-2 py-1.5 font-mono tabular-nums"
                       style={{color: isRealMonth(i) ? "#1C2340" : "#9CA3AF", fontWeight: isRealMonth(i) ? 700 : 400}}>
@@ -2640,6 +2646,46 @@ function FinancePage() {
   const [scenario, setScenario] = useState<"Forecast"|"Actual">("Actual");
   const [projScenario, setProjScenario] = useState<Scenario>("Normal");
 
+  // ── Shared editable inputs (Supabase: finance_shared_inputs) ──
+  const [cfInputs, setCfInputs] = useState<CfInputs>({ capital:{}, wcDraw:{}, fctDraw:{}, wcInt:{}, fctInt:{}, investInt:{} });
+  const [paymentsPending, setPaymentsPending] = useState<Record<number, number>>({});
+
+  // Load shared inputs from Supabase on mount
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.from("finance_shared_inputs").select("key, data");
+      if (!data) return;
+      const cf: any = { capital:{}, wcDraw:{}, fctDraw:{}, wcInt:{}, fctInt:{}, investInt:{} };
+      for (const row of data) {
+        if (row.key === "paymentsPending") { setPaymentsPending(row.data ?? {}); }
+        else if (row.key.startsWith("cf.")) {
+          const field = row.key.replace("cf.", "") as keyof CfInputs;
+          if (CF_FIELDS.includes(field as any)) cf[field] = row.data ?? {};
+        }
+      }
+      setCfInputs(cf);
+    })();
+  }, []);
+
+  // Save helpers: upsert single key to Supabase
+  const saveSharedInput = async (key: string, data: any) => {
+    await supabase.from("finance_shared_inputs").upsert({ key, data, updated_at: new Date().toISOString() }, { onConflict: "key" });
+  };
+
+  // When CF inputs change (from CashFlowTab save)
+  const handleCfInputsChange = (inp: CfInputs) => {
+    setCfInputs(inp);
+    for (const f of CF_FIELDS) { saveSharedInput(`cf.${f}`, inp[f] ?? {}); }
+  };
+
+  // When Payments Pending changes
+  const handlePaymentsPendingChange: React.Dispatch<React.SetStateAction<Record<number,number>>> = (action) => {
+    setPaymentsPending(prev => {
+      const next = typeof action === 'function' ? action(prev) : action;
+      saveSharedInput("paymentsPending", next);
+      return next;
+    });
+  };
 
   // ── Actuals from Supabase ──
   const [actuals, setActuals] = useState<Record<string, any>>({});
@@ -2956,7 +3002,7 @@ function FinancePage() {
         </div>
       )}
 
-      {tab === "dashboard" && <DashboardTab period={period} refMonth={refMonth} actuals={actuals} realMonths={realMonths} actualOnly={actualOnly} />}
+      {tab === "dashboard" && <DashboardTab period={period} refMonth={refMonth} actuals={actuals} realMonths={realMonths} actualOnly={actualOnly} paymentsPending={paymentsPending} cfInputs={cfInputs} />}
       {tab === "pnl"       && <PNLTab realMonths={realMonths} actuals={actuals} actualOnly={actualOnly} />}
 
       {/* ── PDF Upload Comparison: current app data vs incoming PDF, line by line ── */}
@@ -3121,8 +3167,8 @@ function FinancePage() {
           </div>
         );
       })()}
-      {tab === "cashflow"  && <CashFlowTab actuals={actuals} actualOnly={actualOnly} scenario={projScenario} />}
-      {tab === "balance"   && <BalanceTab realMonths={realMonths} actuals={actuals} actualOnly={actualOnly} scenario={projScenario} />}
+      {tab === "cashflow"  && <CashFlowTab actuals={actuals} actualOnly={actualOnly} scenario={projScenario} paymentsPending={paymentsPending} cfInputs={cfInputs} onCfInputsChange={handleCfInputsChange} />}
+      {tab === "balance"   && <BalanceTab realMonths={realMonths} actuals={actuals} actualOnly={actualOnly} scenario={projScenario} paymentsPending={paymentsPending} onPaymentsPendingChange={handlePaymentsPendingChange} cfInputs={cfInputs} />}
       {tab === "runway"    && <RunwayTab />}
       {tab === "ebitda"    && <EBITDATab actuals={actuals} />}
     </div>
