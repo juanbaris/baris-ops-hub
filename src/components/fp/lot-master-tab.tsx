@@ -111,6 +111,7 @@ export function LotMasterTab() {
 
   const filtered = useMemo(() => {
     let r = lots.filter((l) =>
+      l.cases !== 0 &&
       (filterSku === "all" || l.sku === filterSku) &&
       (filterWh === "all" || l.warehouse === filterWh));
     const val = (l: Lot) => (l.cases) * (Number(l.cogs_per_case) || 0) * UNITS_PER_CASE;
