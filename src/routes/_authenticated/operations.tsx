@@ -1059,10 +1059,8 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
               <th className="px-3 py-2.5 text-left">Lot</th>
               <th className="px-3 py-2.5 text-left">MOC</th>
               <th className="px-3 py-2.5 text-left">Warehouse</th>
-              <th className="px-3 py-2.5 text-right">Total ($)</th>
-              <th className="px-3 py-2.5 text-right">$/unit</th>
-              <th className="px-3 py-2.5 text-right font-bold" style={{"color":"#DC2626"}}>Total $</th>
               <th className="px-3 py-2.5 text-right">COGS/unit</th>
+              <th className="px-3 py-2.5 text-right font-bold" style={{"color":"#DC2626"}}>Total $</th>
               <th className="px-3 py-2.5 text-left">Comment</th>
               <th className="px-3 py-2.5 text-center">Received</th>
               <th className="px-3 py-2.5 text-center">Paid</th>
@@ -1071,9 +1069,9 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
           </thead>
           <tbody>
             {loading
-              ? <tr><td colSpan={17} className="p-8 text-center text-muted-foreground">Loading…</td></tr>
+              ? <tr><td colSpan={15} className="p-8 text-center text-muted-foreground">Loading…</td></tr>
               : filtered.length === 0
-              ? <tr><td colSpan={17} className="p-8 text-center text-muted-foreground">No movements match filters</td></tr>
+              ? <tr><td colSpan={15} className="p-8 text-center text-muted-foreground">No movements match filters</td></tr>
               : filtered.map(r => {
                 const rr = r as any;
                 const recv = dateIndicator(rr.estimated_receive_date, rr.received ?? false, rr.actual_receive_date);
@@ -1094,17 +1092,11 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
                     <td className="px-3 py-1.5 font-mono text-muted-foreground">{r.lot_number ?? "—"}</td>
                     <td className="px-3 py-1.5 font-mono text-xs" style={{color:"#6D28D9"}}>{rr.moc ?? "—"}</td>
                     <td className="px-3 py-1.5 text-muted-foreground">{rr.warehouse ?? "—"}</td>
-                    <td className="px-3 py-1.5 text-right font-mono">
-                      {rr.total_price ? `$${Number(rr.total_price).toLocaleString()}` : "—"}
-                    </td>
-                    <td className="px-3 py-1.5 text-right font-mono" style={{color:"#7C3AED"}}>
-                      {(()=>{const q=Number(r.quantity)||0;const t=Number(rr.total_price||0)+Number(rr.shipping_price||0)+Number(rr.other_costs||0);return q>0&&t>0?`$${(t/q).toFixed(2)}`:"—";})()}
-                    </td>
-                    <td className="px-3 py-1.5 text-right font-mono font-bold" style={{color:"#DC2626"}}>
-                      {(()=>{const t=Number(rr.total_price||0)+Number(rr.shipping_price||0)+Number(rr.other_costs||0);return t>0?`$${Math.round(t).toLocaleString()}`:"—";})()}
-                    </td>
                     <td className="px-3 py-1.5 text-right font-mono font-semibold text-emerald-700">
                       {rr.cogs_per_unit ? `$${Number(rr.cogs_per_unit).toFixed(2)}` : "—"}
+                    </td>
+                    <td className="px-3 py-1.5 text-right font-mono font-bold" style={{color:"#DC2626"}}>
+                      {(()=>{const q=Number(r.quantity)||0;const c=Number(rr.cogs_per_unit||0);return q>0&&c>0?`$${Math.round(q*c).toLocaleString()}`:"—";})()}
                     </td>
                     <td className="px-3 py-1.5 text-xs text-muted-foreground truncate max-w-[150px]" title={r.notes ?? ""}>{r.notes ?? "—"}</td>
                     <td className={`px-3 py-1.5 text-center ${recv.bg}`}>
