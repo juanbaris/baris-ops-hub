@@ -2160,12 +2160,14 @@ const BS_ROWS: BSNode[] = [
 
 function BalanceTab({ realMonths, actuals, actualOnly, scenario, paymentsPending, onPaymentsPendingChange, cfInputs }: { realMonths: number; actuals: Record<string,any>; actualOnly: boolean; scenario: Scenario; paymentsPending: Record<number,number>; onPaymentsPendingChange: React.Dispatch<React.SetStateAction<Record<number,number>>>; cfInputs: CfInputs }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(
-    new Set(["g-bank","g-ar","g-inv","g-fixed","g-cc","g-other-liab","g-capital"])
+    new Set(["g-bank","g-ar","g-inv","g-fixed","g-cc","g-capital"])
   );
   const { julyGrossSales } = useJulyRealFromFulfillment();
   const scenarioForecast = useFinanceScenarioForecast(scenario);
   const assumptions = useFinanceAssumptions();
   const [yearFilter, setYearFilter] = useState<'all'|2026|2027|2028>('all');
+  const [ppEditMode, setPpEditMode] = useState(false);
+  const [ppDraft, setPpDraft] = useState<Record<number,number>|null>(null);
 
   // bs_detail per period (real, wherever Accountfully sent a balance sheet snapshot)
   const bsByPeriod = useMemo(() => {
@@ -2358,6 +2360,17 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario, paymentsPending
             </button>
           ))}
         </div>
+        {ppEditMode ? (
+          <span className="flex items-center gap-1">
+            <button onClick={() => { if (ppDraft) onPaymentsPendingChange(ppDraft); setPpEditMode(false); setPpDraft(null); }}
+              className="rounded-full border border-emerald-300 bg-emerald-50 text-emerald-700 px-2 py-0.5 hover:bg-emerald-100">🔒 Congelar Payments Pending</button>
+            <button onClick={() => { setPpEditMode(false); setPpDraft(null); }}
+              className="rounded-full border border-border px-2 py-0.5 hover:bg-muted">Cancelar</button>
+          </span>
+        ) : (
+          <button onClick={() => { setPpEditMode(true); setPpDraft({...paymentsPending}); }}
+            className="rounded-full border border-blue-400 text-blue-600 px-2 py-0.5 hover:bg-blue-50">✏️ Editar Payments Pending</button>
+        )}
         <span className="flex items-center gap-1">
           <span className="h-2 w-2 rounded-full bg-emerald-500 inline-block"/>
           <strong className="text-foreground">Bold</strong> = Accountfully real snapshot
@@ -2409,13 +2422,23 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario, paymentsPending
                   </td>
                   {vals.map((v, k) => {
                     const i = visIdx[k];
-                    // Editable Payments Pending cell
+                    // Payments Pending: editable only in edit mode
                     if (row.id === "payments_pending") {
+                      if (ppEditMode) {
+                        const cur = ppDraft?.[i] ?? 0;
+                        return (
+                          <td key={i} className="text-right px-1 py-1">
+                            <input type="number" step={1} value={cur === 0 ? "" : cur}
+                              onChange={e => setPpDraft(prev => ({ ...(prev ?? {}), [i]: Number(e.target.value) || 0 }))}
+                              className="w-14 rounded border border-blue-300 bg-blue-50 px-1 py-0.5 text-[10px] text-right font-mono focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                          </td>
+                        );
+                      }
+                      const ppv = paymentsPending[i] ?? 0;
                       return (
-                        <td key={i} className="text-right px-1 py-1">
-                          <input type="number" step={1} value={paymentsPending[i] ?? 0}
-                            onChange={e => onPaymentsPendingChange(prev => ({ ...prev, [i]: Number(e.target.value) }))}
-                            className="w-14 rounded border border-blue-300 px-1 py-0.5 text-[10px] text-right font-mono bg-white focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                        <td key={i} className="text-right px-2 py-1.5 font-mono tabular-nums"
+                          style={{color: ppv ? "#2563eb" : "#9CA3AF"}}>
+                          {ppv === 0 ? "—" : `$${ppv}`}
                         </td>
                       );
                     }
