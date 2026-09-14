@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { ExportButton } from "@/components/export-button";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useInvoicedActuals } from "@/hooks/use-invoiced-actuals";
 import { supabase } from "@/integrations/supabase/client";
@@ -2664,6 +2665,7 @@ function EBITDATab({ actuals }: { actuals: Record<string, any> }) {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 function FinancePage() {
   const [tab, setTab] = useState<FinTab>("dashboard");
+  const contentRef = useRef<HTMLDivElement>(null);
   const [period, setPeriod] = useState<Period>("fy");
   const [refMonth, setRefMonth] = useState(6); // Jul
   const [scenario, setScenario] = useState<"Forecast"|"Actual">("Actual");
@@ -2956,7 +2958,7 @@ function FinancePage() {
       )}
 
       {/* Sub-tabs */}
-      <div className="flex gap-1 border-b border-border overflow-x-auto">
+      <div className="flex gap-1 border-b border-border overflow-x-auto items-center">
         {tabs.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)}
             className={`px-4 py-2 text-sm font-semibold border-b-2 whitespace-nowrap transition-colors ${tab === t.id ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
@@ -2964,7 +2966,15 @@ function FinancePage() {
             {t.label}
           </button>
         ))}
+        <div className="ml-auto self-center pl-2">
+          <ExportButton
+            filename={`BARIS_Finance_${(tabs.find(t => t.id === tab)?.label ?? "Finance").replace(/[^\w]+/g, "_")}${(tab === "pnl" || tab === "cashflow" || tab === "balance") ? (scenario === "Actual" ? "_Actual" : "_Forecast") : ""}`}
+            targetRef={contentRef}
+          />
+        </div>
       </div>
+
+      <div ref={contentRef}>
 
       {/* Period filter — shown on dashboard and pnl */}
       {(tab === "dashboard" || tab === "pnl") && (
@@ -3194,6 +3204,7 @@ function FinancePage() {
       {tab === "balance"   && <BalanceTab realMonths={realMonths} actuals={actuals} actualOnly={actualOnly} scenario={projScenario} paymentsPending={paymentsPending} onPaymentsPendingChange={handlePaymentsPendingChange} cfInputs={cfInputs} />}
       {tab === "runway"    && <RunwayTab />}
       {tab === "ebitda"    && <EBITDATab actuals={actuals} />}
+      </div>
     </div>
   );
 }
