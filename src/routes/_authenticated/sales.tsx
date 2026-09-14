@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { ExportButton } from "@/components/export-button";
 import { Fragment, useEffect, useRef, useState, useMemo, type ReactNode } from "react";
 import { useInvoicedActuals, type MonthActual } from "@/hooks/use-invoiced-actuals";
 import { useInvoicedBreakdown } from "@/hooks/use-invoiced-breakdown";
@@ -1771,6 +1772,7 @@ function AssumptionsPanel({assumptions,onChange}:{assumptions:Record<string,numb
 
 function SalesPage() {
   const [tab,setTab] = useState<SalesTab>("real");
+  const contentRef = useRef<HTMLDivElement>(null);
   const [scenario,setScenario] = useState<"Pessimistic"|"Normal"|"Optimistic">("Normal");
   const [reals,setReals] = useState<Record<string,number>>({});
   const {byLabel, openByLabel, casesByLabel, loading:loadingActuals} = useInvoicedActuals();
@@ -2041,7 +2043,14 @@ function SalesPage() {
             {t.label}
           </button>
         ))}
+        <div className="ml-auto self-center pl-2">
+          <ExportButton
+            filename={`BARIS_Sales_${([...TABS_OPERATIONAL, ...TABS_REFERENCE].find(t=>t.id===tab)?.label ?? "Sales").replace(/[^\w]+/g, "_")}`}
+            targetRef={contentRef}
+          />
+        </div>
       </div>
+      <div ref={contentRef} className="space-y-5">
       {tab==="real"          && <RealMonthlyTab actuals={byLabel} loading={loadingActuals}/>}
       {tab==="resumen"       && <SummaryTab forecast={dbMergedForecast} scenario={scenario} reals={mergedReals} history={history} openByLabel={openByLabel} committedCount={committedCount}/>}
       {tab==="detalle"       && <DetalleTab forecast={dbMergedForecast} reals={mergedReals} history={history} committedCount={committedCount} onRealUpdate={(l,v)=>setReals(r=>({...r,[l]:v}))} scenario={scenario} scenarioPct={scenarioPct} onScenarioPctChange={setScenarioPct}/>}
@@ -2054,6 +2063,7 @@ function SalesPage() {
       {tab==="accounts"      && <AccountsTab accounts={dbAccounts} promoRows={dbPromo} assumptions={assumptions} onAssumptionChange={changeAssumption} loading={dbLoading} onUpdated={refreshAccount} onInserted={addAccounts} onDeleted={removeAccounts}/>}
       {tab==="promocal"      && <PromoCalendarTab rows={dbPromo} accounts={dbAccounts} byAccountMonth={byAccountMonth} loading={dbLoading} onUpdated={refreshPromoRow} onInserted={addPromoRows} onDeleted={removePromoRows}/>}
       {tab==="breakdown"     && <SalesBreakdownTab rows={displayPromo} rawRows={dbPromo} accounts={dbAccounts} assumptions={assumptions} actualBySku={actualBySku} actualByDist={actualByDist} onPromoUpdated={refreshPromoRow} deductionActuals={deductionActuals} onDeductionSaved={saveDeductionLocal} loading={dbLoading}/>}
+      </div>
     </div>
   );
 }
