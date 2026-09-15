@@ -49,9 +49,12 @@ function sortWarehouses(list: string[]): string[] {
 }
 
 const UNITS_PER_CASE = 8;
-// Accumulated inventory anchors to the Lot Master snapshot as of this date;
-// only FP movements AFTER it move the current-month (and later) closing balance.
-const LOT_BASELINE = "2026-08-14";
+// Accumulated inventory anchors to the Lot Master snapshot as of this date
+// (the Lot Master is the real physical count as of 2026-09-15). Everything dated
+// on/before it is already inside the snapshot; only FP movements dated AFTER it
+// move the current-month (and later) closing balance. So the current month always
+// equals FP Stock by construction.
+const LOT_BASELINE = "2026-09-15";
 const monthLabel = (m: string) => m.slice(2).replace("-", "/");
 
 export function FPSummaryTab() {
@@ -152,7 +155,7 @@ export function FPSummaryTab() {
   //   always equals Lot Master today; month-end shows how the month closed.
   const { monthList, whList, accCases, accValue } = useMemo(() => {
     const mList = [...new Set(movements.map((m) => m.movement_date.slice(0, 7)))].sort();
-    const CUR = LOT_BASELINE.slice(0, 7); // baseline month, e.g. "2026-08"
+    const CUR = LOT_BASELINE.slice(0, 7); // baseline month, e.g. "2026-09"
     if (!mList.includes(CUR)) { mList.push(CUR); mList.sort(); }
 
     const whSet = new Set<string>(ALWAYS_SHOW_WAREHOUSES);
@@ -461,7 +464,7 @@ function AccumulatedInventory({
       <div className="px-5 py-3 border-b border-border bg-muted/30 flex items-center justify-between">
         <div>
           <p className="text-sm font-bold" style={{ color: BRAND }}>Accumulated inventory — by warehouse</p>
-          <p className="text-xs text-muted-foreground">End-of-month closing balance from all FP movements</p>
+          <p className="text-xs text-muted-foreground">Prior months from FP movements · current month anchored to the Lot Master snapshot (2026-09-15)</p>
         </div>
         <div className="flex gap-1 rounded-xl bg-muted p-1">
           {(["cases", "value"] as const).map((m) => (
