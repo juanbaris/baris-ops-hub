@@ -1748,6 +1748,38 @@ const prodBatchOf = (notes: string | null): string | null => { const m = (notes 
 
 type LotInfo = { lot: string; qty: number; cost: number | null; firstDate: string | null };
 
+function LotPicker({ value, lots, onChange, placeholder }: {
+  value: string; lots: LotInfo[]; onChange: (lot: string) => void; placeholder?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const sel = lots.find(l => l.lot === value);
+  const label = value
+    ? `${value}${sel ? ` · $${sel.cost != null ? sel.cost.toFixed(4) : "?"}` : ""}`
+    : (placeholder ?? "— elegí lote —");
+  return (
+    <div className="relative">
+      <button type="button" onClick={() => setOpen(o => !o)}
+        className={`${PROD_INP} min-w-[200px] text-left flex items-center justify-between gap-2`}>
+        <span className={value ? "font-mono text-xs" : "text-muted-foreground"}>{label}</span>
+        <span className="text-muted-foreground text-[10px]">▾</span>
+      </button>
+      {open && (
+        <div className="mt-1 rounded-lg border border-border bg-card shadow-lg max-h-56 overflow-y-auto">
+          {lots.length === 0 && <div className="px-3 py-2 text-xs text-muted-foreground">Sin lotes con stock</div>}
+          {value && <button type="button" onClick={() => { onChange(""); setOpen(false); }} className="w-full text-left px-3 py-1.5 text-[11px] hover:bg-muted text-muted-foreground border-b border-border/40">— limpiar —</button>}
+          {lots.map((v, i) => (
+            <button type="button" key={v.lot} onClick={() => { onChange(v.lot); setOpen(false); }}
+              className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-muted flex justify-between gap-3 ${v.lot === value ? "bg-muted/60 font-semibold" : ""}`}>
+              <span className="font-mono">{i === 0 ? "① " : `${i + 1} `}{v.lot}</span>
+              <span className="text-muted-foreground font-mono">{v.qty.toLocaleString()} · ${v.cost != null ? v.cost.toFixed(4) : "?"}{v.firstDate ? ` · ${v.firstDate}` : ""}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MatLineEditor({ line, teorico, onChange, lotsFor, autoCost }: {
   line: MatLine; teorico: number; onChange: (l: MatLine) => void;
   lotsFor: (m: string) => LotInfo[]; autoCost: (m: string, lot: string) => number | null;
@@ -1762,7 +1794,6 @@ function MatLineEditor({ line, teorico, onChange, lotsFor, autoCost }: {
     : line.lotMode === "manual" ? (Number(line.manualCost) || 0)
     : (sumQty > 0 ? value / sumQty : 0);
   const set = (patch: Partial<MatLine>) => onChange({ ...line, ...patch });
-  const lotOpt = (v: LotInfo) => `${v.lot} · ${v.qty.toLocaleString()} · $${v.cost != null ? v.cost.toFixed(4) : "?"}${v.firstDate ? ` · ${v.firstDate}` : ""}`;
   return (
     <tr className="border-t border-border/40 align-top">
       <td className="py-1 pr-2 font-semibold" style={{ color: "#1C2340" }}>
@@ -1777,21 +1808,16 @@ function MatLineEditor({ line, teorico, onChange, lotsFor, autoCost }: {
       </td>
       <td className="py-1 px-1">
         {line.lotMode === "single" && (
-          <select className={`${PROD_INP} min-w-[190px]`} value={line.singleLot} onChange={e => set({ singleLot: e.target.value })}>
-            <option value="">— elegí lote —</option>
-            {lots.map(v => <option key={v.lot} value={v.lot}>{lotOpt(v)}</option>)}
-          </select>
+          <LotPicker value={line.singleLot} lots={lots} onChange={lot => set({ singleLot: lot })} />
         )}
         {line.lotMode === "mix" && (
           <div className="space-y-1">
             {line.mixRows.map((r, i) => (
-              <div key={i} className="flex gap-1 items-center">
-                <select className={`${PROD_INP} min-w-[160px]`} value={r.lot} onChange={e => { const m = [...line.mixRows]; m[i] = { ...m[i], lot: e.target.value }; set({ mixRows: m }); }}>
-                  <option value="">— lote —</option>
-                  {lots.map(v => <option key={v.lot} value={v.lot}>{lotOpt(v)}</option>)}
-                </select>
+              <div key={i} className="flex gap-1 items-start">
+                <LotPicker value={r.lot} lots={lots} placeholder="— lote —"
+                  onChange={lot => { const m = [...line.mixRows]; m[i] = { ...m[i], lot }; set({ mixRows: m }); }} />
                 <input type="number" className={`${PROD_INP} w-20 text-right font-mono`} value={r.qty} onChange={e => { const m = [...line.mixRows]; m[i] = { ...m[i], qty: e.target.value }; set({ mixRows: m }); }} placeholder="qty" />
-                <button onClick={() => { const m = line.mixRows.filter((_, j) => j !== i); set({ mixRows: m.length ? m : [{ lot: "", qty: "" }] }); }} className="text-muted-foreground hover:text-red-600 text-xs">✕</button>
+                <button onClick={() => { const m = line.mixRows.filter((_, j) => j !== i); set({ mixRows: m.length ? m : [{ lot: "", qty: "" }] }); }} className="text-muted-foreground hover:text-red-600 text-xs mt-1.5">✕</button>
               </div>
             ))}
             <button onClick={() => set({ mixRows: [...line.mixRows, { lot: "", qty: "" }] })} className="text-[10px] text-muted-foreground hover:text-foreground">+ lote</button>
@@ -1842,6 +1868,7 @@ function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, potes, toll
   const [cases, setCases] = useState("");
   const [warehouse, setWarehouse] = useState<Warehouse>("Heinlein");
   const [mocs, setMocs] = useState<{ moc: string; cases: string }[]>([{ moc: "", cases: "" }]);
+  const [tollingFee, setTollingFee] = useState(String(tolling));
   const [lines, setLines] = useState<MatLine[]>([]);
   const [saving, setSaving] = useState(false);
   const appliedRef = useRef<string | null>(null);
@@ -1864,8 +1891,9 @@ function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, potes, toll
   }, [initial]);
 
   const nCases = Number(cases) || 0;
+  const toll = Number(tollingFee) || 0;
   const mpTotal = useMemo(() => lines.reduce((s, l) => s + allocsValue(lineAllocs(l, autoCost)), 0), [lines, autoCost]);
-  const cogsPerCase = nCases > 0 ? mpTotal / nCases + tolling * potes : 0;
+  const cogsPerCase = nCases > 0 ? mpTotal / nCases + toll * potes : 0;
   const cogsPerPote = potes > 0 ? cogsPerCase / potes : 0;
 
   async function save() {
@@ -1920,7 +1948,7 @@ function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, potes, toll
   return (
     <div className="rounded-2xl border border-border bg-card shadow-sm p-5 space-y-4">
       <p className="text-sm font-bold" style={{ color: "#1C2340" }}>Nueva producción · por SKU</p>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Fecha</label>
           <input type="date" className={`${PROD_INP} mt-1 w-full`} value={runDate} onChange={e => setRunDate(e.target.value)} /></div>
         <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">SKU</label>
@@ -1933,6 +1961,8 @@ function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, potes, toll
           <select className={`${PROD_INP} mt-1 w-full`} value={warehouse} onChange={e => setWarehouse(e.target.value as Warehouse)}>
             {WAREHOUSES.map(w => <option key={w} value={w}>{w}</option>)}
           </select></div>
+        <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Tolling ($/pote)</label>
+          <input type="number" step="0.01" className={`${PROD_INP} mt-1 w-full font-mono`} value={tollingFee} onChange={e => setTollingFee(e.target.value)} /></div>
       </div>
 
       <div>
@@ -1961,7 +1991,7 @@ function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, potes, toll
                   lotsFor={lotsFor} autoCost={autoCost} />
               ))}
               <tr className="border-t-2 border-border font-semibold bg-muted/10">
-                <td className="py-1.5" colSpan={6} style={{ color: "#1C2340" }}>MP total + tolling (${tolling.toFixed(2)}/pote × {potes})</td>
+                <td className="py-1.5" colSpan={6} style={{ color: "#1C2340" }}>MP total + tolling (${toll.toFixed(2)}/pote × {potes})</td>
                 <td className="py-1.5 px-2 text-right font-mono text-emerald-700">${cogsPerPote.toFixed(4)}/pote</td>
                 <td></td>
               </tr>
@@ -1994,6 +2024,7 @@ function GlobalForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, potes, tol
   const [moc, setMoc] = useState("");
   const [skuCases, setSkuCases] = useState<Record<string, string>>({});
   const [lineMap, setLineMap] = useState<Record<string, MatLine>>({});
+  const [tollingFee, setTollingFee] = useState(String(tolling));
   const [saving, setSaving] = useState(false);
   const appliedRef = useRef<string | null>(null);
 
@@ -2036,11 +2067,11 @@ function GlobalForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, potes, tol
         const teoSku = (Number(bomQty[sk]?.[m]) || 0) * cs;
         absorbed += teoSku * wavg * factor;
       }
-      const cogsPerCase = cs > 0 ? absorbed / cs + tolling * potes : 0;
+      const cogsPerCase = cs > 0 ? absorbed / cs + (Number(tollingFee) || 0) * potes : 0;
       out[sk] = { absorbed, cases: cs, cogsPerCase, cogsPerPote: potes > 0 ? cogsPerCase / potes : 0 };
     }
     return out;
-  }, [skuCasesKey, lineMap, bomQty, autoCost]);
+  }, [skuCasesKey, lineMap, bomQty, autoCost, tollingFee]);
 
   const grandMP = Object.values(perSku).reduce((s, x) => s + x.absorbed, 0);
 
@@ -2094,7 +2125,7 @@ function GlobalForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, potes, tol
   return (
     <div className="rounded-2xl border border-border bg-card shadow-sm p-5 space-y-4">
       <p className="text-sm font-bold" style={{ color: "#1C2340" }}>Nueva producción · global (absorción)</p>
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Fecha</label>
           <input type="date" className={`${PROD_INP} mt-1 w-full`} value={runDate} onChange={e => setRunDate(e.target.value)} /></div>
         <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Warehouse</label>
@@ -2103,6 +2134,8 @@ function GlobalForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, potes, tol
           </select></div>
         <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">MOC</label>
           <input className={`${PROD_INP} mt-1 w-full`} value={moc} onChange={e => setMoc(e.target.value)} placeholder="nombre MOC" /></div>
+        <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Tolling ($/pote)</label>
+          <input type="number" step="0.01" className={`${PROD_INP} mt-1 w-full font-mono`} value={tollingFee} onChange={e => setTollingFee(e.target.value)} /></div>
       </div>
 
       <div>
