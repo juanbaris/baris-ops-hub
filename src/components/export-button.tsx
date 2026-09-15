@@ -3,8 +3,10 @@
 //        inside `targetRef` (one sheet per table, "Actions"/empty columns dropped).
 // PDF:   captures `targetRef` with html2canvas-pro (Tailwind v4 oklch-safe) → jsPDF,
 //        auto-paginating tall views across A4 pages.
-// Both deps (html2canvas-pro, jspdf) are dynamically imported so they don't weigh the bundle.
-import { useEffect, useRef, useState, type RefObject } from "react";
+// The dropdown menu is rendered in a portal with fixed positioning so it is never
+// clipped by the tab bar's `overflow-x-auto` container.
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import { downloadExcel, type Sheet, type SheetCell } from "@/lib/excel-report";
 
 type ExcelSource = Sheet[] | (() => Sheet[]);
@@ -17,7 +19,6 @@ export function ExportButton({
   excelAllLabel = "Excel — Todo (sin filtro)",
   excelLabel,
   className,
-  align = "right",
 }: {
   filename: string;
   targetRef?: RefObject<HTMLElement | null>;
@@ -26,32 +27,52 @@ export function ExportButton({
   excelAllLabel?: string;
   excelLabel?: string;
   className?: string;
-  align?: "right" | "left";
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
-  const boxRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const MENU_W = 224; // w-56
+
+  // Position the menu under the trigger, right-aligned, in viewport coords.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const r = triggerRef.current?.getBoundingClientRect();
+    if (!r) return;
+    const left = Math.max(8, Math.min(r.right - MENU_W, window.innerWidth - MENU_W - 8));
+    setPos({ top: r.bottom + 4, left });
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => {
-      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (triggerRef.current?.contains(t)) return;
+      if (menuRef.current?.contains(t)) return;
+      setOpen(false);
     };
+    const onScrollResize = () => setOpen(false);
     document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
+    window.addEventListener("scroll", onScrollResize, true);
+    window.addEventListener("resize", onScrollResize);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      window.removeEventListener("scroll", onScrollResize, true);
+      window.removeEventListener("resize", onScrollResize);
+    };
   }, [open]);
 
   const resolve = (s?: ExcelSource): Sheet[] | undefined =>
     typeof s === "function" ? s() : s;
 
-  // ── Find a human-readable name for a scraped table ──
   function nameForTable(tbl: HTMLTableElement, idx: number, used: Set<string>): string {
     let base =
       tbl.getAttribute("data-export-name") ||
       tbl.querySelector("caption")?.textContent?.trim() ||
       "";
     if (!base) {
-      // walk backwards/up looking for a nearby heading
       let node: Element | null = tbl;
       let hops = 0;
       outer: while (node && hops < 6) {
@@ -83,7 +104,6 @@ export function ExportButton({
     const used = new Set<string>();
     const sheets: Sheet[] = [];
     tables.forEach((tbl, ti) => {
-      // Columns to drop: header cells labelled "Actions" or empty.
       const headRows = tbl.querySelectorAll("thead tr");
       const headRow = (headRows[headRows.length - 1] as HTMLElement) ||
         (tbl.querySelector("tr") as HTMLElement | null);
@@ -102,7 +122,6 @@ export function ExportButton({
         cells.forEach((c, i) => {
           if (drop.has(i)) return;
           const raw = (c.innerText ?? c.textContent ?? "").replace(/\s+/g, " ").trim();
-          // numeric detection: strip $ , % and spaces
           const cleaned = raw.replace(/[$,\s]/g, "");
           const asNum = Number(cleaned);
           if (raw !== "" && cleaned !== "" && !cleaned.endsWith("%") && isFinite(asNum) && /^-?\d/.test(cleaned)) {
@@ -120,6 +139,7 @@ export function ExportButton({
 
   async function doExcel(all: boolean) {
     setBusy(all ? "all" : "excel");
+    setOpen(false);
     try {
       let sheets = resolve(all ? excelAllData : excelData);
       if (!sheets || !sheets.length) sheets = scrapeSheets();
@@ -133,15 +153,14 @@ export function ExportButton({
       alert("Error generando Excel: " + (e?.message ?? e));
     } finally {
       setBusy(null);
-      setOpen(false);
     }
   }
 
   async function doPdf() {
     const root = targetRef?.current;
+    setOpen(false);
     if (!root) {
       alert("No hay contenido para capturar.");
-      setOpen(false);
       return;
     }
     setBusy("pdf");
@@ -164,12 +183,11 @@ export function ExportButton({
       const pdf = new JsPDF({ orientation: landscape ? "l" : "p", unit: "pt", format: "a4" });
       const pw = pdf.internal.pageSize.getWidth();
       const ph = pdf.internal.pageSize.getHeight();
-      const fullH = (canvas.height * pw) / canvas.width; // height if scaled to page width
+      const fullH = (canvas.height * pw) / canvas.width;
 
       if (fullH <= ph) {
         pdf.addImage(canvas.toDataURL("image/png"), "PNG", 0, 0, pw, fullH);
       } else {
-        // slice the canvas vertically into page-height chunks
         const pageHeightPx = Math.floor((ph * canvas.width) / pw);
         let rendered = 0;
         let page = 0;
@@ -194,13 +212,49 @@ export function ExportButton({
       alert("Error generando PDF: " + (e?.message ?? e));
     } finally {
       setBusy(null);
-      setOpen(false);
     }
   }
 
+  const menu =
+    open && !busy && pos
+      ? createPortal(
+          <div
+            ref={menuRef}
+            style={{ position: "fixed", top: pos.top, left: pos.left, width: MENU_W, zIndex: 9999 }}
+            className="overflow-hidden rounded-lg border border-border bg-card py-1 text-xs shadow-xl"
+          >
+            <button
+              onClick={() => doExcel(false)}
+              className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted"
+            >
+              <span>📊</span>
+              {excelLabel ?? (excelAllData ? "Excel — Filtrado" : "Excel")}
+            </button>
+            {excelAllData && (
+              <button
+                onClick={() => doExcel(true)}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted"
+              >
+                <span>📊</span>
+                {excelAllLabel}
+              </button>
+            )}
+            <button
+              onClick={doPdf}
+              className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted"
+            >
+              <span>🖼️</span>
+              PDF — Captura
+            </button>
+          </div>,
+          document.body
+        )
+      : null;
+
   return (
-    <div ref={boxRef} className={`relative inline-block flex-shrink-0 ${className ?? ""}`}>
+    <div className={`inline-block flex-shrink-0 ${className ?? ""}`}>
       <button
+        ref={triggerRef}
         onClick={() => setOpen((o) => !o)}
         disabled={!!busy}
         className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold text-white transition-opacity disabled:opacity-60"
@@ -208,35 +262,7 @@ export function ExportButton({
       >
         {busy ? "Generando…" : "⬇ EXPORT"}
       </button>
-      {open && !busy && (
-        <div
-          className={`absolute ${align === "right" ? "right-0" : "left-0"} z-50 mt-1 w-56 overflow-hidden rounded-lg border border-border bg-card py-1 text-xs shadow-lg`}
-        >
-          <button
-            onClick={() => doExcel(false)}
-            className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted"
-          >
-            <span>📊</span>
-            {excelLabel ?? (excelAllData ? "Excel — Filtrado" : "Excel")}
-          </button>
-          {excelAllData && (
-            <button
-              onClick={() => doExcel(true)}
-              className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted"
-            >
-              <span>📊</span>
-              {excelAllLabel}
-            </button>
-          )}
-          <button
-            onClick={doPdf}
-            className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted"
-          >
-            <span>🖼️</span>
-            PDF — Captura
-          </button>
-        </div>
-      )}
+      {menu}
     </div>
   );
 }
