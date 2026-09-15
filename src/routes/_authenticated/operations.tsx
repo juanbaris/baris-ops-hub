@@ -1714,40 +1714,10 @@ function IPHistoryTable({ movements }: { movements: IPRow[] }) {
 }
 // ─── Production Tab ───────────────────────────────────────────────────────────
 
-// ─── Production Tab (v2 · por SKU / global · BOM desde ops_bom) ────────────────
-type LotAlloc = { lot: string; qty: number; cost: number };
-type MatLine = {
-  material: string; unit: string; bomPerCase: number;
-  realQty: string;
-  lotMode: "single" | "mix" | "manual";
-  singleLot: string;
-  mixRows: { lot: string; qty: string }[];
-  manualLot: string; manualCost: string;
-  comment: string;
-};
-const PROD_INP = "rounded-lg border border-border bg-background px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30";
-const PACK_RE = /(cup|lid|sealer|case)/i;
-
-function blankLine(material: string, unit: string, bomPerCase: number): MatLine {
-  return { material, unit, bomPerCase, realQty: "", lotMode: "single",
-    singleLot: "", mixRows: [{ lot: "", qty: "" }], manualLot: "MIX/manual", manualCost: "", comment: "" };
-}
-function lineAllocs(l: MatLine, autoCost: (m: string, lot: string) => number | null): LotAlloc[] {
-  const real = Number(l.realQty) || 0;
-  if (l.lotMode === "single")
-    return l.singleLot ? [{ lot: l.singleLot, qty: real, cost: autoCost(l.material, l.singleLot) ?? 0 }] : [];
-  if (l.lotMode === "mix")
-    return l.mixRows.filter(r => r.lot && Number(r.qty) > 0)
-      .map(r => ({ lot: r.lot, qty: Number(r.qty), cost: autoCost(l.material, r.lot) ?? 0 }));
-  return real > 0 ? [{ lot: l.manualLot || "MIX/manual", qty: real, cost: Number(l.manualCost) || 0 }] : [];
-}
-const allocsValue = (a: LotAlloc[]) => a.reduce((s, x) => s + x.qty * x.cost, 0);
-const allocsQty = (a: LotAlloc[]) => a.reduce((s, x) => s + x.qty, 0);
+// ─── Production Tab (v3 · por SKU / global · BOM ops_bom · lotes reales + costo editable) ─
 const prodBatchId = () => "b" + Date.now().toString(36);
 const prodBatchOf = (notes: string | null): string | null => { const m = (notes || "").match(/#(b[a-z0-9]+)/i); return m ? m[1] : null; };
-// BOM/Procurement material name (ops_bom) → I&P inventory name (ip_movements / I&P Summary).
-// Only differing names listed; identical names resolve by exact match. Lots stay dynamic from ip_movements.
-// Long-term fix = unify names in the DB; this bridges the two naming systems meanwhile.
+// BOM/Procurement material name (ops_bom) → I&P inventory name (ip_movements). Only differing names.
 const IP_ALIAS: Record<string, string> = {
   "IQF Raspberries": "IQF Rasp",
   "Choc Extra Dark (Revere 70%)": "Choc Ex Dark",
@@ -1770,21 +1740,50 @@ const IP_ALIAS: Record<string, string> = {
   "Lid - White & Dark": "Lid W&D",
   "Lid - Matcha & White": "Lid Matcha",
 };
+const PROD_INP = "rounded-lg border border-border bg-background px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30";
+const PACK_RE = /(cup|lid|sealer|case)/i;
 
+type LotAlloc = { lot: string; qty: number; cost: number };
+type MixRow = { lot: string; qty: string; cost: string };
+type MatLine = {
+  material: string; unit: string; bomPerCase: number;
+  realQty: string;
+  lotMode: "single" | "mix";
+  singleLot: string; singleCost: string;
+  mixRows: MixRow[];
+  comment: string;
+};
 type LotInfo = { lot: string; qty: number; cost: number | null; firstDate: string | null };
+
+function blankLine(material: string, unit: string, bomPerCase: number): MatLine {
+  return { material, unit, bomPerCase, realQty: "", lotMode: "single",
+    singleLot: "", singleCost: "", mixRows: [{ lot: "", qty: "", cost: "" }], comment: "" };
+}
+function lineAllocs(l: MatLine, autoCost: (m: string, lot: string) => number | null): LotAlloc[] {
+  if (l.lotMode === "single") {
+    if (!l.singleLot) return [];
+    const qty = Number(l.realQty) || 0;
+    const cost = l.singleCost !== "" ? Number(l.singleCost) : (autoCost(l.material, l.singleLot) ?? 0);
+    return [{ lot: l.singleLot, qty, cost }];
+  }
+  return l.mixRows.filter(r => r.lot && Number(r.qty) > 0).map(r => ({
+    lot: r.lot, qty: Number(r.qty),
+    cost: r.cost !== "" ? Number(r.cost) : (autoCost(l.material, r.lot) ?? 0),
+  }));
+}
+const allocsValue = (a: LotAlloc[]) => a.reduce((s, x) => s + x.qty * x.cost, 0);
+const allocsQty = (a: LotAlloc[]) => a.reduce((s, x) => s + x.qty, 0);
 
 function LotPicker({ value, lots, onChange, placeholder }: {
   value: string; lots: LotInfo[]; onChange: (lot: string) => void; placeholder?: string;
 }) {
   const [open, setOpen] = useState(false);
   const sel = lots.find(l => l.lot === value);
-  const label = value
-    ? `${value}${sel ? ` · $${sel.cost != null ? sel.cost.toFixed(4) : "?"}` : ""}`
-    : (placeholder ?? "— elegí lote —");
+  const label = value ? `${value}${sel && sel.cost != null ? ` · $${sel.cost.toFixed(4)}` : ""}` : (placeholder ?? "— elegí lote —");
   return (
     <div className="relative">
       <button type="button" onClick={() => setOpen(o => !o)}
-        className={`${PROD_INP} min-w-[200px] text-left flex items-center justify-between gap-2`}>
+        className={`${PROD_INP} min-w-[190px] text-left flex items-center justify-between gap-2`}>
         <span className={value ? "font-mono text-xs" : "text-muted-foreground"}>{label}</span>
         <span className="text-muted-foreground text-[10px]">▾</span>
       </button>
@@ -1795,8 +1794,8 @@ function LotPicker({ value, lots, onChange, placeholder }: {
           {lots.map((v, i) => (
             <button type="button" key={v.lot} onClick={() => { onChange(v.lot); setOpen(false); }}
               className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-muted flex justify-between gap-3 ${v.lot === value ? "bg-muted/60 font-semibold" : ""}`}>
-              <span className="font-mono">{i === 0 ? "① " : `${i + 1} `}{v.lot}</span>
-              <span className="text-muted-foreground font-mono">{v.qty.toLocaleString()} · ${v.cost != null ? v.cost.toFixed(4) : "?"}{v.firstDate ? ` · ${v.firstDate}` : ""}</span>
+              <span className="font-mono">{i + 1}. {v.lot}</span>
+              <span className="text-muted-foreground font-mono">{v.qty.toLocaleString()} · {v.cost != null ? `$${v.cost.toFixed(4)}` : "s/cogs"}{v.firstDate ? ` · ${v.firstDate}` : ""}</span>
             </button>
           ))}
         </div>
@@ -1805,93 +1804,101 @@ function LotPicker({ value, lots, onChange, placeholder }: {
   );
 }
 
-function MatLineEditor({ line, teorico, onChange, lotsFor, autoCost }: {
-  line: MatLine; teorico: number; onChange: (l: MatLine) => void;
-  lotsFor: (m: string) => LotInfo[]; autoCost: (m: string, lot: string) => number | null;
-}) {
-  const lots = lotsFor(line.material);
-  const allocs = lineAllocs(line, autoCost);
-  const value = allocsValue(allocs);
-  const real = Number(line.realQty) || 0;
-  const sumQty = allocsQty(allocs);
-  const displayUnit =
-    line.lotMode === "single" ? (line.singleLot ? (autoCost(line.material, line.singleLot) ?? 0) : 0)
-    : line.lotMode === "manual" ? (Number(line.manualCost) || 0)
-    : (sumQty > 0 ? value / sumQty : 0);
-  const set = (patch: Partial<MatLine>) => onChange({ ...line, ...patch });
-  return (
-    <tr className="border-t border-border/40 align-top">
-      <td className="py-1 pr-2 font-semibold" style={{ color: "#1C2340" }}>
-        {line.material}<div className="text-[10px] text-muted-foreground font-normal">{line.unit}</div>
-      </td>
-      <td className="py-1 px-2 text-right font-mono text-xs text-muted-foreground">{teorico > 0 ? teorico.toFixed(1) : "—"}</td>
-      <td className="py-1 px-1"><input type="number" className={`${PROD_INP} w-24 text-right font-mono`} value={line.realQty} onChange={e => set({ realQty: e.target.value })} placeholder="0" /></td>
-      <td className="py-1 px-1">
-        <select className={`${PROD_INP} w-24`} value={line.lotMode} onChange={e => set({ lotMode: e.target.value as any })}>
-          <option value="single">Un lote</option><option value="mix">Mix</option><option value="manual">Manual</option>
-        </select>
-      </td>
-      <td className="py-1 px-1">
-        {line.lotMode === "single" && (
-          <LotPicker value={line.singleLot} lots={lots} onChange={lot => set({ singleLot: lot })} />
-        )}
-        {line.lotMode === "mix" && (
-          <div className="space-y-1">
-            {line.mixRows.map((r, i) => (
-              <div key={i} className="flex gap-1 items-start">
-                <LotPicker value={r.lot} lots={lots} placeholder="— lote —"
-                  onChange={lot => { const m = [...line.mixRows]; m[i] = { ...m[i], lot }; set({ mixRows: m }); }} />
-                <input type="number" className={`${PROD_INP} w-20 text-right font-mono`} value={r.qty} onChange={e => { const m = [...line.mixRows]; m[i] = { ...m[i], qty: e.target.value }; set({ mixRows: m }); }} placeholder="qty" />
-                <button onClick={() => { const m = line.mixRows.filter((_, j) => j !== i); set({ mixRows: m.length ? m : [{ lot: "", qty: "" }] }); }} className="text-muted-foreground hover:text-red-600 text-xs mt-1.5">✕</button>
-              </div>
-            ))}
-            <button onClick={() => set({ mixRows: [...line.mixRows, { lot: "", qty: "" }] })} className="text-[10px] text-muted-foreground hover:text-foreground">+ lote</button>
-            {real > 0 && Math.abs(sumQty - real) > 0.5 && <div className="text-[10px] text-orange-600">Σ lotes {sumQty.toLocaleString()} ≠ real {real.toLocaleString()}</div>}
-          </div>
-        )}
-        {line.lotMode === "manual" && (
-          <div className="flex gap-1">
-            <input className={`${PROD_INP} w-28`} value={line.manualLot} onChange={e => set({ manualLot: e.target.value })} placeholder="lote" />
-            <input type="number" step="0.0001" className={`${PROD_INP} w-24 text-right font-mono`} value={line.manualCost} onChange={e => set({ manualCost: e.target.value })} placeholder="$/unit" />
-          </div>
-        )}
-      </td>
-      <td className="py-1 px-2 text-right font-mono text-xs text-muted-foreground">{displayUnit > 0 ? `$${displayUnit.toFixed(4)}` : "—"}</td>
-      <td className="py-1 px-2 text-right font-mono font-semibold" style={{ color: "#A3224A" }}>{value > 0 ? `$${value.toFixed(2)}` : "—"}</td>
-      <td className="py-1 px-1"><input className={`${PROD_INP} w-28`} value={line.comment} onChange={e => set({ comment: e.target.value })} placeholder="—" /></td>
-    </tr>
-  );
-}
-
 function MatLineHead() {
   return (
     <thead>
       <tr className="text-[10px] uppercase tracking-wide text-muted-foreground border-b border-border/60">
         <th className="pb-1.5 text-left">Material</th>
-        <th className="pb-1.5 px-2 text-right">Teórico</th>
+        <th className="pb-1.5 px-1 text-right">Teórico</th>
+        <th className="pb-1.5 px-1 text-right">Teó. c/scrap</th>
         <th className="pb-1.5 px-1 text-left">Real consumido</th>
+        <th className="pb-1.5 px-1 text-right">Scrap real</th>
         <th className="pb-1.5 px-1 text-left">Lote</th>
         <th className="pb-1.5 px-1 text-left">Asignación</th>
-        <th className="pb-1.5 px-2 text-right">$/unit</th>
-        <th className="pb-1.5 px-2 text-right">Valor</th>
-        <th className="pb-1.5 px-1 text-left">Comentario</th>
+        <th className="pb-1.5 px-1 text-right">$/unit</th>
+        <th className="pb-1.5 px-1 text-right">Valor</th>
+        <th className="pb-1.5 px-1 text-right">$/pote</th>
+        <th className="pb-1.5 px-1 text-left">Coment.</th>
       </tr>
     </thead>
   );
 }
 
-// ── Modo A · Producción por SKU (directo) ──
-function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, invName, potes, tolling, onAdded, initial, editBatch, onCancelEdit }: {
+function MatLineEditor({ line, teorico, teoricoScrap, potesTotal, onChange, lotsFor, autoCost }: {
+  line: MatLine; teorico: number; teoricoScrap: number; potesTotal: number;
+  onChange: (l: MatLine) => void; lotsFor: (m: string) => LotInfo[]; autoCost: (m: string, lot: string) => number | null;
+}) {
+  const lots = lotsFor(line.material);
+  const allocs = lineAllocs(line, autoCost);
+  const value = allocsValue(allocs);
+  const sumQty = allocsQty(allocs);
+  const real = Number(line.realQty) || 0;
+  const scrap = real - teorico;
+  const scrapPct = teorico > 0 ? (scrap / teorico) * 100 : 0;
+  const unitCost = line.lotMode === "single" ? (allocs[0]?.cost ?? 0) : (sumQty > 0 ? value / sumQty : 0);
+  const perPote = potesTotal > 0 ? value / potesTotal : 0;
+  const set = (patch: Partial<MatLine>) => onChange({ ...line, ...patch });
+  const pickSingle = (lot: string) => { const c = autoCost(line.material, lot); set({ singleLot: lot, singleCost: c != null ? String(c) : "" }); };
+  const pickMix = (i: number, lot: string) => { const c = autoCost(line.material, lot); const m = [...line.mixRows]; m[i] = { ...m[i], lot, cost: c != null ? String(c) : "" }; set({ mixRows: m }); };
+  const costMissing = line.singleLot !== "" && line.lotMode === "single" && line.singleCost === "";
+  return (
+    <tr className="border-t border-border/40 align-top">
+      <td className="py-1 pr-2 font-semibold" style={{ color: "#1C2340" }}>{line.material}<div className="text-[10px] text-muted-foreground font-normal">{line.unit}</div></td>
+      <td className="py-1 px-1 text-right font-mono text-xs text-muted-foreground">{teorico > 0 ? teorico.toFixed(1) : "—"}</td>
+      <td className="py-1 px-1 text-right font-mono text-xs text-muted-foreground">{teoricoScrap > 0 ? teoricoScrap.toFixed(1) : "—"}</td>
+      <td className="py-1 px-1"><input type="number" className={`${PROD_INP} w-24 text-right font-mono`} value={line.realQty} onChange={e => set({ realQty: e.target.value })} placeholder="0" /></td>
+      <td className="py-1 px-1 text-right font-mono text-[11px]">
+        {real > 0 && teorico > 0
+          ? <span className={scrap > 0 ? "text-orange-600" : "text-emerald-600"}>{scrap > 0 ? "+" : ""}{scrap.toFixed(0)}<div className="text-[10px]">{scrap > 0 ? "+" : ""}{scrapPct.toFixed(1)}%</div></span>
+          : <span className="text-muted-foreground">—</span>}
+      </td>
+      <td className="py-1 px-1">
+        <select className={`${PROD_INP} w-24`} value={line.lotMode} onChange={e => set({ lotMode: e.target.value as any })}>
+          <option value="single">Un lote</option><option value="mix">Mix</option>
+        </select>
+      </td>
+      <td className="py-1 px-1">
+        {line.lotMode === "single" && <LotPicker value={line.singleLot} lots={lots} onChange={pickSingle} />}
+        {line.lotMode === "mix" && (
+          <div className="space-y-1">
+            {line.mixRows.map((r, i) => (
+              <div key={i} className="flex gap-1 items-start">
+                <LotPicker value={r.lot} lots={lots} placeholder="— lote —" onChange={lot => pickMix(i, lot)} />
+                <input type="number" className={`${PROD_INP} w-16 text-right font-mono`} value={r.qty} onChange={e => { const m = [...line.mixRows]; m[i] = { ...m[i], qty: e.target.value }; set({ mixRows: m }); }} placeholder="qty" />
+                <input type="number" step="0.0001" className={`${PROD_INP} w-20 text-right font-mono ${r.lot && r.cost === "" ? "border-red-400" : ""}`} value={r.cost} onChange={e => { const m = [...line.mixRows]; m[i] = { ...m[i], cost: e.target.value }; set({ mixRows: m }); }} placeholder="$/u" />
+                <button onClick={() => { const m = line.mixRows.filter((_, j) => j !== i); set({ mixRows: m.length ? m : [{ lot: "", qty: "", cost: "" }] }); }} className="text-muted-foreground hover:text-red-600 text-xs mt-1.5">✕</button>
+              </div>
+            ))}
+            <button onClick={() => set({ mixRows: [...line.mixRows, { lot: "", qty: "", cost: "" }] })} className="text-[10px] text-muted-foreground hover:text-foreground">+ lote</button>
+            {real > 0 && Math.abs(sumQty - real) > 0.5 && <div className="text-[10px] text-orange-600">Σ lotes {sumQty.toLocaleString()} ≠ real {real.toLocaleString()}</div>}
+          </div>
+        )}
+      </td>
+      <td className="py-1 px-1 text-right">
+        {line.lotMode === "single"
+          ? <input type="number" step="0.0001" disabled={!line.singleLot} className={`${PROD_INP} w-20 text-right font-mono ${costMissing ? "border-red-400" : ""}`} value={line.singleCost} onChange={e => set({ singleCost: e.target.value })} placeholder="$/u" />
+          : <span className="font-mono text-xs text-muted-foreground">{unitCost > 0 ? `$${unitCost.toFixed(4)}` : "—"}</span>}
+      </td>
+      <td className="py-1 px-1 text-right font-mono font-semibold" style={{ color: "#A3224A" }}>{value > 0 ? `$${value.toFixed(2)}` : "—"}</td>
+      <td className="py-1 px-1 text-right font-mono text-xs text-emerald-700">{perPote > 0 ? `$${perPote.toFixed(4)}` : "—"}</td>
+      <td className="py-1 px-1"><input className={`${PROD_INP} w-24`} value={line.comment} onChange={e => set({ comment: e.target.value })} placeholder="—" /></td>
+    </tr>
+  );
+}
+
+// ── Modo A · Producción por SKU ──
+function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, invName, factorFor, potes, tolling, onAdded, initial, editBatch, onCancelEdit }: {
   bomQty: Record<string, Record<string, number>>;
   matsForSku: (sku: string) => string[];
   lotsFor: (m: string) => LotInfo[]; autoCost: (m: string, lot: string) => number | null;
-  unitFor: (m: string) => string; invName: (m: string) => string; potes: number; tolling: number; onAdded: () => void;
+  unitFor: (m: string) => string; invName: (m: string) => string; factorFor: (m: string) => number;
+  potes: number; tolling: number; onAdded: () => void;
   initial?: any; editBatch?: string | null; onCancelEdit?: () => void;
 }) {
   const [runDate, setRunDate] = useState(ymd());
   const [sku, setSku] = useState<SKU>("XD");
   const [cases, setCases] = useState("");
-  const [warehouse, setWarehouse] = useState<Warehouse>("Heinlein");
+  const [warehouse, setWarehouse] = useState<Warehouse>("Lineage Linden");
   const [mocs, setMocs] = useState<{ moc: string; cases: string }[]>([{ moc: "", cases: "" }]);
   const [tollingFee, setTollingFee] = useState(String(tolling));
   const [lines, setLines] = useState<MatLine[]>([]);
@@ -1902,8 +1909,7 @@ function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, invName, po
   useEffect(() => {
     if (skipRebuild.current) { skipRebuild.current = false; return; }
     if (editBatch) return;
-    const mats = matsForSku(sku);
-    setLines(mats.map(m => blankLine(m, unitFor(m), Number(bomQty[sku]?.[m]) || 0)));
+    setLines(matsForSku(sku).map(m => blankLine(m, unitFor(m), Number(bomQty[sku]?.[m]) || 0)));
   }, [sku, bomQty, editBatch]);
 
   useEffect(() => {
@@ -1917,6 +1923,7 @@ function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, invName, po
 
   const nCases = Number(cases) || 0;
   const toll = Number(tollingFee) || 0;
+  const potesTotal = nCases * potes;
   const mpTotal = useMemo(() => lines.reduce((s, l) => s + allocsValue(lineAllocs(l, autoCost)), 0), [lines, autoCost]);
   const cogsPerCase = nCases > 0 ? mpTotal / nCases + toll * potes : 0;
   const cogsPerPote = potes > 0 ? cogsPerCase / potes : 0;
@@ -1934,20 +1941,17 @@ function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, invName, po
     const batch = prodBatchId();
     const facility: Facility = (FACILITIES as string[]).includes(warehouse) ? (warehouse as Facility) : "Heinlein";
     const mocRows = mocs.filter(m => Number(m.cases) > 0);
-    const batches = mocRows.length
-      ? mocRows.map(m => ({ moc: m.moc.trim(), cases: Number(m.cases) }))
-      : [{ moc: "", cases: nCases }];
+    const batches = mocRows.length ? mocRows.map(m => ({ moc: m.moc.trim(), cases: Number(m.cases) })) : [{ moc: "", cases: nCases }];
     for (const b of batches) {
-      const fpLot = b.moc || `PROD-${sku}-${runDate}`;
       const { error: runErr } = await supabase.from("production_runs").insert({
         run_date: runDate, facility, sku, cases_produced: b.cases,
-        cogs_per_case: cogsPerCase, lot_number: fpLot,
+        cogs_per_case: cogsPerCase, lot_number: b.moc || null,
         notes: `${b.moc ? `MOC ${b.moc} · ` : ""}#${batch}`,
       });
       if (runErr) { toast.error(runErr.message); setSaving(false); return; }
       const { error: fpErr } = await supabase.from("fp_movements").insert({
         movement_date: runDate, type: "In", sku, cases: b.cases, warehouse,
-        lot_number: fpLot, moc: b.moc || null, concept: "Production",
+        lot_number: null, moc: b.moc || null, concept: "Production",
         cogs_per_case: cogsPerCase, notes: `Producción · ${sku} · ${b.cases} cases · #${batch}`,
       } as any);
       if (fpErr) { toast.error(fpErr.message); setSaving(false); return; }
@@ -2011,13 +2015,12 @@ function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, invName, po
             <MatLineHead />
             <tbody>
               {lines.map((l, i) => (
-                <MatLineEditor key={l.material} line={l} teorico={l.bomPerCase * nCases}
-                  onChange={nl => setLines(prev => prev.map((x, j) => j === i ? nl : x))}
-                  lotsFor={lotsFor} autoCost={autoCost} />
+                <MatLineEditor key={l.material} line={l} teorico={l.bomPerCase * nCases} teoricoScrap={l.bomPerCase * nCases * factorFor(l.material)} potesTotal={potesTotal}
+                  onChange={nl => setLines(prev => prev.map((x, j) => j === i ? nl : x))} lotsFor={lotsFor} autoCost={autoCost} />
               ))}
               <tr className="border-t-2 border-border font-semibold bg-muted/10">
-                <td className="py-1.5" colSpan={6} style={{ color: "#1C2340" }}>MP total + tolling (${toll.toFixed(2)}/pote × {potes})</td>
-                <td className="py-1.5 px-2 text-right font-mono text-emerald-700">${cogsPerPote.toFixed(4)}/pote</td>
+                <td className="py-1.5" colSpan={9} style={{ color: "#1C2340" }}>MP total + tolling (${toll.toFixed(2)}/pote × {potes})</td>
+                <td className="py-1.5 px-1 text-right font-mono text-emerald-700">${cogsPerPote.toFixed(4)}/pote</td>
                 <td></td>
               </tr>
             </tbody>
@@ -2037,19 +2040,20 @@ function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, invName, po
 }
 
 // ── Modo B · Producción global (absorción) ──
-function GlobalForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, invName, potes, tolling, onAdded, initial, editBatch, onCancelEdit }: {
+function GlobalForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, invName, factorFor, potes, tolling, onAdded, initial, editBatch, onCancelEdit }: {
   bomQty: Record<string, Record<string, number>>;
   matsForSku: (sku: string) => string[];
   lotsFor: (m: string) => LotInfo[]; autoCost: (m: string, lot: string) => number | null;
-  unitFor: (m: string) => string; invName: (m: string) => string; potes: number; tolling: number; onAdded: () => void;
+  unitFor: (m: string) => string; invName: (m: string) => string; factorFor: (m: string) => number;
+  potes: number; tolling: number; onAdded: () => void;
   initial?: any; editBatch?: string | null; onCancelEdit?: () => void;
 }) {
   const [runDate, setRunDate] = useState(ymd());
-  const [warehouse, setWarehouse] = useState<Warehouse>("Heinlein");
+  const [warehouse, setWarehouse] = useState<Warehouse>("Lineage Linden");
   const [moc, setMoc] = useState("");
+  const [tollingFee, setTollingFee] = useState(String(tolling));
   const [skuCases, setSkuCases] = useState<Record<string, string>>({});
   const [lineMap, setLineMap] = useState<Record<string, MatLine>>({});
-  const [tollingFee, setTollingFee] = useState(String(tolling));
   const [saving, setSaving] = useState(false);
   const appliedRef = useRef<string | null>(null);
 
@@ -2063,41 +2067,30 @@ function GlobalForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, invName, p
 
   const activeSkus = SKUS.filter(s => (Number(skuCases[s]) || 0) > 0);
   const skuCasesKey = activeSkus.map(s => `${s}:${skuCases[s]}`).join(",");
-  const matsUnion = useMemo(() => {
-    const set = new Set<string>();
-    activeSkus.forEach(s => matsForSku(s).forEach(m => set.add(m)));
-    return [...set];
-  }, [skuCasesKey, bomQty]);
-
+  const matsUnion = useMemo(() => { const set = new Set<string>(); activeSkus.forEach(s => matsForSku(s).forEach(m => set.add(m))); return [...set]; }, [skuCasesKey, bomQty]);
   const getLine = (m: string) => lineMap[m] ?? blankLine(m, unitFor(m), 0);
   const setLine = (m: string, nl: MatLine) => setLineMap(prev => ({ ...prev, [m]: nl }));
-
-  // teórico total por material (Σ sku bom×cases) y por sku
   const teoTotal = (m: string) => activeSkus.reduce((s, sk) => s + (Number(bomQty[sk]?.[m]) || 0) * (Number(skuCases[sk]) || 0), 0);
+  const potesTotalAll = activeSkus.reduce((s, sk) => s + (Number(skuCases[sk]) || 0) * potes, 0);
+  const toll = Number(tollingFee) || 0;
 
-  // absorción → cogs por sku
   const perSku = useMemo(() => {
     const out: Record<string, { absorbed: number; cases: number; cogsPerCase: number; cogsPerPote: number }> = {};
     for (const sk of activeSkus) {
       const cs = Number(skuCases[sk]) || 0;
       let absorbed = 0;
       for (const m of matsForSku(sk)) {
-        const line = getLine(m);
-        const allocs = lineAllocs(line, autoCost);
-        const realQ = allocsQty(allocs);
-        const val = allocsValue(allocs);
+        const allocs = lineAllocs(getLine(m), autoCost);
+        const realQ = allocsQty(allocs); const val = allocsValue(allocs);
         const wavg = realQ > 0 ? val / realQ : 0;
-        const tt = teoTotal(m);
-        const factor = tt > 0 ? realQ / tt : 0;
-        const teoSku = (Number(bomQty[sk]?.[m]) || 0) * cs;
-        absorbed += teoSku * wavg * factor;
+        const tt = teoTotal(m); const factor = tt > 0 ? realQ / tt : 0;
+        absorbed += (Number(bomQty[sk]?.[m]) || 0) * cs * wavg * factor;
       }
-      const cogsPerCase = cs > 0 ? absorbed / cs + (Number(tollingFee) || 0) * potes : 0;
+      const cogsPerCase = cs > 0 ? absorbed / cs + toll * potes : 0;
       out[sk] = { absorbed, cases: cs, cogsPerCase, cogsPerPote: potes > 0 ? cogsPerCase / potes : 0 };
     }
     return out;
   }, [skuCasesKey, lineMap, bomQty, autoCost, tollingFee]);
-
   const grandMP = Object.values(perSku).reduce((s, x) => s + x.absorbed, 0);
 
   async function save() {
@@ -2112,24 +2105,21 @@ function GlobalForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, invName, p
     }
     const batch = prodBatchId();
     const facility: Facility = (FACILITIES as string[]).includes(warehouse) ? (warehouse as Facility) : "Heinlein";
-    // FP IN + production_runs por SKU
     for (const sk of activeSkus) {
       const info = perSku[sk];
-      const fpLot = `PROD-${sk}-${runDate}`;
       const { error: runErr } = await supabase.from("production_runs").insert({
         run_date: runDate, facility, sku: sk, cases_produced: info.cases,
-        cogs_per_case: info.cogsPerCase, lot_number: fpLot,
+        cogs_per_case: info.cogsPerCase, lot_number: moc || null,
         notes: `Global${moc ? ` · MOC ${moc}` : ""} · #${batch}`,
       });
       if (runErr) { toast.error(runErr.message); setSaving(false); return; }
       const { error: fpErr } = await supabase.from("fp_movements").insert({
         movement_date: runDate, type: "In", sku: sk, cases: info.cases, warehouse,
-        lot_number: fpLot, moc: moc || null, concept: "Production",
+        lot_number: null, moc: moc || null, concept: "Production",
         cogs_per_case: info.cogsPerCase, notes: `Producción global · ${sk} · ${info.cases} cases · #${batch}`,
       } as any);
       if (fpErr) { toast.error(fpErr.message); setSaving(false); return; }
     }
-    // IP OUT por material/lote (pooled, una vez)
     const ipRows: any[] = [];
     for (const l of usedLines) for (const a of lineAllocs(l, autoCost)) {
       if (a.qty <= 0) continue;
@@ -2181,7 +2171,7 @@ function GlobalForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, invName, p
             <MatLineHead />
             <tbody>
               {matsUnion.map(m => (
-                <MatLineEditor key={m} line={getLine(m)} teorico={teoTotal(m)}
+                <MatLineEditor key={m} line={getLine(m)} teorico={teoTotal(m)} teoricoScrap={teoTotal(m) * factorFor(m)} potesTotal={potesTotalAll}
                   onChange={nl => setLine(m, nl)} lotsFor={lotsFor} autoCost={autoCost} />
               ))}
             </tbody>
@@ -2198,19 +2188,17 @@ function GlobalForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, invName, p
               <th className="text-right pb-1 px-2">MP absorbido</th><th className="text-right pb-1 px-2">COGS/pote</th><th className="text-right pb-1 px-2">COGS total</th>
             </tr></thead>
             <tbody>
-              {activeSkus.map(s => {
-                const i = perSku[s];
-                return (<tr key={s} className="border-t border-border/40">
+              {activeSkus.map(s => { const i = perSku[s]; return (
+                <tr key={s} className="border-t border-border/40">
                   <td className="py-1 font-semibold" style={{ color: "#1C2340" }}>{s}</td>
                   <td className="py-1 px-2 text-right font-mono">{i.cases.toLocaleString()}</td>
                   <td className="py-1 px-2 text-right font-mono">${Math.round(i.absorbed).toLocaleString()}</td>
                   <td className="py-1 px-2 text-right font-mono" style={{ color: "#A3224A" }}>${i.cogsPerPote.toFixed(4)}</td>
                   <td className="py-1 px-2 text-right font-mono text-emerald-700">${Math.round(i.cogsPerCase * i.cases).toLocaleString()}</td>
-                </tr>);
-              })}
+                </tr>); })}
               <tr className="border-t-2 border-border font-semibold">
-                <td className="py-1.5" style={{ color: "#1C2340" }}>Total MP</td>
-                <td></td><td className="py-1.5 px-2 text-right font-mono">${Math.round(grandMP).toLocaleString()}</td><td></td><td></td>
+                <td className="py-1.5" style={{ color: "#1C2340" }}>Total MP</td><td></td>
+                <td className="py-1.5 px-2 text-right font-mono">${Math.round(grandMP).toLocaleString()}</td><td></td><td></td>
               </tr>
             </tbody>
           </table>
@@ -2257,7 +2245,7 @@ function ProductionHistory({ onEdit, reloadSignal }: { onEdit: (r: any) => void;
         <thead><tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
           <th className="px-4 py-2.5 text-left">Fecha</th><th className="px-4 py-2.5 text-left">Facility</th><th className="px-4 py-2.5 text-left">SKU</th>
           <th className="px-4 py-2.5 text-right">Cases</th><th className="px-4 py-2.5 text-right">COGS/pote</th><th className="px-4 py-2.5 text-right">Total COGS</th>
-          <th className="px-4 py-2.5 text-left">Lot</th><th className="px-4 py-2.5 text-left">Notas</th><th className="px-4 py-2.5 text-right">Acción</th>
+          <th className="px-4 py-2.5 text-left">MOC</th><th className="px-4 py-2.5 text-left">Notas</th><th className="px-4 py-2.5 text-right">Acción</th>
         </tr></thead>
         <tbody>
           {loading ? <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">Cargando…</td></tr>
@@ -2270,7 +2258,7 @@ function ProductionHistory({ onEdit, reloadSignal }: { onEdit: (r: any) => void;
                 <td className="px-4 py-1.5 text-right font-mono font-semibold">{Number(r.cases_produced).toLocaleString()}</td>
                 <td className="px-4 py-1.5 text-right font-mono text-muted-foreground">${(Number(r.cogs_per_case) / 8).toFixed(4)}</td>
                 <td className="px-4 py-1.5 text-right font-mono text-emerald-600">${Math.round(Number(r.cases_produced) * Number(r.cogs_per_case)).toLocaleString()}</td>
-                <td className="px-4 py-1.5 font-mono text-xs" style={{ color: "#A3224A" }}>{r.lot_number}</td>
+                <td className="px-4 py-1.5 font-mono text-xs" style={{ color: "#A3224A" }}>{r.lot_number ?? "—"}</td>
                 <td className="px-4 py-1.5 text-xs text-muted-foreground">{r.notes ?? "—"}</td>
                 <td className="px-4 py-1.5 text-right">
                   {confirmId === r.id ? (
@@ -2304,16 +2292,32 @@ function ProductionTab({ fpMovements, ipMovements, onAdded }: {
       try {
         const { data } = await (supabase.from("ops_bom" as any) as any).select("*");
         if (data && (data as any[]).length) {
-          const b: Record<string, Record<string, number>> = {};
-          for (const r of data as any[]) { b[r.sku] = b[r.sku] || {}; b[r.sku][r.material] = Number(r.qty_per_case) || 0; }
+          const b: Record<string, Record<string, number>> = JSON.parse(JSON.stringify(BOM_QTY));
+          for (const row of data as any[]) { const sk = NEW_SKU_NAME_TO_CODE[row.sku] ?? row.sku; if (!b[sk]) b[sk] = {}; b[sk][row.material] = Number(row.qty_per_case) || 0; }
           setBomQty(b);
         }
       } catch { /* fallback BOM_QTY */ }
     })();
   }, []);
 
+  const [matScrap, setMatScrap] = useState<Record<string, number>>({});
+  const [matOverfill, setMatOverfill] = useState<Record<string, number>>({});
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await (supabase.from("ops_raw_materials" as any) as any).select("material,scrap_pct,overfill_pct");
+        if (data) { const sc: Record<string, number> = {}, ov: Record<string, number> = {}; for (const r of data as any[]) { sc[r.material] = Number(r.scrap_pct) || 0; ov[r.material] = Number(r.overfill_pct) || 0; } setMatScrap(sc); setMatOverfill(ov); }
+      } catch { /* fallback defaults */ }
+    })();
+  }, []);
+  const factorFor = (material: string): number => {
+    const s = (matScrap[material] ?? DEFAULT_SCRAP[material] ?? 0) / 100;
+    const o = (matOverfill[material] ?? DEFAULT_OVERFILL[material] ?? 0) / 100;
+    return (s < 1 ? 1 / (1 - s) : 1) * (1 + o);
+  };
+
   const ipStock = useMemo(() => {
-    const map = new Map<string, LotInfo & { unit: string }>();
+    const map = new Map<string, LotInfo & { unit: string; material: string }>();
     for (const r of ipMovements) {
       const rr = r as any;
       const lot = r.lot_number ?? "—";
@@ -2330,7 +2334,6 @@ function ProductionTab({ fpMovements, ipMovements, onAdded }: {
 
   const ipMaterials = useMemo(() => new Set([...ipStock.values()].map(v => (v as any).material as string)), [ipStock]);
   const invName = (material: string): string => (ipMaterials.has(material) ? material : (IP_ALIAS[material] ?? material));
-
   const lotsFor = (material: string): LotInfo[] => {
     const inv = invName(material);
     return [...ipStock.entries()].filter(([, v]) => (v as any).material === inv && v.qty > 0)
@@ -2338,13 +2341,8 @@ function ProductionTab({ fpMovements, ipMovements, onAdded }: {
       .sort((a, b) => (a.firstDate ?? "0000-00-00").localeCompare(b.firstDate ?? "0000-00-00") || a.lot.localeCompare(b.lot));
   };
   const autoCost = (material: string, lot: string): number | null => ipStock.get(`${invName(material)}|${lot}`)?.cost ?? null;
-  const unitFor = (material: string): string => {
-    const inv = invName(material);
-    for (const v of ipStock.values()) if ((v as any).material === inv) return v.unit;
-    return PACK_RE.test(material) ? "Piece" : "lbs";
-  };
-  const matsForSku = (sku: string): string[] =>
-    Object.entries(bomQty[sku] ?? {}).filter(([, q]) => Number(q) > 0).map(([m]) => m);
+  const unitFor = (material: string): string => { const inv = invName(material); for (const v of ipStock.values()) if ((v as any).material === inv) return v.unit; return PACK_RE.test(material) ? "Piece" : "lbs"; };
+  const matsForSku = (sku: string): string[] => Object.entries(bomQty[sku] ?? {}).filter(([, q]) => Number(q) > 0).map(([m]) => m);
 
   const potes = UNITS_PER_CASE;
   const tolling = DEFAULT_PROD_COSTS.tolling_per_unit;
@@ -2360,7 +2358,7 @@ function ProductionTab({ fpMovements, ipMovements, onAdded }: {
     const skus = [...new Set(fps.map(f => f.sku))];
     const isGlobal = skus.length > 1 || fps.some(f => (f.notes || "").toLowerCase().includes("global"));
     const runDate = fps[0].movement_date;
-    const warehouse = (fps[0] as any).warehouse ?? "Heinlein";
+    const warehouse = (fps[0] as any).warehouse ?? "Lineage Linden";
     const byMat = new Map<string, { lot: string; qty: number; cost: number }[]>();
     for (const r of ips) {
       const rr = r as any;
@@ -2374,21 +2372,15 @@ function ProductionTab({ fpMovements, ipMovements, onAdded }: {
       const unit = (ips.find(r => r.material === inv) as any)?.unit ?? (PACK_RE.test(material) ? "Piece" : "lbs");
       const base = blankLine(material, unit, bomPerCase);
       if (!allocs.length) return base;
-      if (allocs.length === 1 && allocs[0].lot === "MIX/manual")
-        return { ...base, lotMode: "manual", manualLot: allocs[0].lot, manualCost: String(allocs[0].cost), realQty: String(allocs[0].qty) };
-      if (allocs.length === 1)
-        return { ...base, lotMode: "single", singleLot: allocs[0].lot, realQty: String(allocs[0].qty) };
-      return { ...base, lotMode: "mix", mixRows: allocs.map(a => ({ lot: a.lot, qty: String(a.qty) })), realQty: String(allocs.reduce((s, a) => s + a.qty, 0)) };
+      if (allocs.length === 1) return { ...base, lotMode: "single", singleLot: allocs[0].lot, singleCost: String(allocs[0].cost), realQty: String(allocs[0].qty) };
+      return { ...base, lotMode: "mix", mixRows: allocs.map(a => ({ lot: a.lot, qty: String(a.qty), cost: String(a.cost) })), realQty: String(allocs.reduce((s, a) => s + a.qty, 0)) };
     };
     if (isGlobal) {
       const skuCases: Record<string, string> = {};
       for (const f of fps) skuCases[f.sku] = String(f.cases);
       const lineMap: Record<string, MatLine> = {};
       const usedInv = new Set<string>();
-      for (const sk of Object.keys(skuCases)) for (const m of matsForSku(sk)) {
-        const inv = invName(m);
-        if (byMat.has(inv) && !(m in lineMap)) { lineMap[m] = matLine(m, 0); usedInv.add(inv); }
-      }
+      for (const sk of Object.keys(skuCases)) for (const m of matsForSku(sk)) { const inv = invName(m); if (byMat.has(inv) && !(m in lineMap)) { lineMap[m] = matLine(m, 0); usedInv.add(inv); } }
       for (const invM of byMat.keys()) if (!usedInv.has(invM)) lineMap[invM] = matLine(invM, 0);
       return { mode: "B", batch, runDate, warehouse, moc: (fps[0] as any).moc ?? "", skuCases, lineMap };
     }
@@ -2420,14 +2412,15 @@ function ProductionTab({ fpMovements, ipMovements, onAdded }: {
         ))}
       </div>
 
-      {activeForm === "A" && <BySkuForm bomQty={bomQty} matsForSku={matsForSku} lotsFor={lotsFor} autoCost={autoCost} unitFor={unitFor} invName={invName} potes={potes} tolling={tolling} onAdded={afterSave} initial={edit?.mode === "A" ? edit : undefined} editBatch={edit?.mode === "A" ? edit.batch : null} onCancelEdit={() => setEdit(null)} />}
-      {activeForm === "B" && <GlobalForm bomQty={bomQty} matsForSku={matsForSku} lotsFor={lotsFor} autoCost={autoCost} unitFor={unitFor} invName={invName} potes={potes} tolling={tolling} onAdded={afterSave} initial={edit?.mode === "B" ? edit : undefined} editBatch={edit?.mode === "B" ? edit.batch : null} onCancelEdit={() => setEdit(null)} />}
+      {activeForm === "A" && <BySkuForm bomQty={bomQty} matsForSku={matsForSku} lotsFor={lotsFor} autoCost={autoCost} unitFor={unitFor} invName={invName} factorFor={factorFor} potes={potes} tolling={tolling} onAdded={afterSave} initial={edit?.mode === "A" ? edit : undefined} editBatch={edit?.mode === "A" ? edit.batch : null} onCancelEdit={() => setEdit(null)} />}
+      {activeForm === "B" && <GlobalForm bomQty={bomQty} matsForSku={matsForSku} lotsFor={lotsFor} autoCost={autoCost} unitFor={unitFor} invName={invName} factorFor={factorFor} potes={potes} tolling={tolling} onAdded={afterSave} initial={edit?.mode === "B" ? edit : undefined} editBatch={edit?.mode === "B" ? edit.batch : null} onCancelEdit={() => setEdit(null)} />}
       {activeForm === "transfer" && <FPTransferForm fpMovements={fpMovements} onAdded={onAdded} />}
 
       <ProductionHistory onEdit={startEdit} reloadSignal={bump} />
     </div>
   );
 }
+
 
 // ─── COGS Simulator Tab ───────────────────────────────────────────────────────
 const BOM_DATA: Record<string, { lbs_per_case: number; ingredients: Record<string, number> }> = {
