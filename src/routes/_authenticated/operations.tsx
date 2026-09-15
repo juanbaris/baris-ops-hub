@@ -1745,6 +1745,31 @@ const allocsValue = (a: LotAlloc[]) => a.reduce((s, x) => s + x.qty * x.cost, 0)
 const allocsQty = (a: LotAlloc[]) => a.reduce((s, x) => s + x.qty, 0);
 const prodBatchId = () => "b" + Date.now().toString(36);
 const prodBatchOf = (notes: string | null): string | null => { const m = (notes || "").match(/#(b[a-z0-9]+)/i); return m ? m[1] : null; };
+// BOM/Procurement material name (ops_bom) → I&P inventory name (ip_movements / I&P Summary).
+// Only differing names listed; identical names resolve by exact match. Lots stay dynamic from ip_movements.
+// Long-term fix = unify names in the DB; this bridges the two naming systems meanwhile.
+const IP_ALIAS: Record<string, string> = {
+  "IQF Raspberries": "IQF Rasp",
+  "Choc Extra Dark (Revere 70%)": "Choc Ex Dark",
+  "Choc Dark (Duluth)": "Choc Dark",
+  "Choc Milk (Valcour)": "Choc Milk",
+  "Choc White (Corinthian)": "Choc White",
+  "Matcha Powder": "Matcha",
+  "Sealers (Momar)": "Sealers",
+  "Master Cases (8u)": "Cases",
+  "Cup - Extra Dark": "Cup ED",
+  "Cup - Pistachio & White": "Cup P&W",
+  "Cup - Hazelnut & Milk": "Cup H&M",
+  "Cup - White & Milk": "Cup W&M",
+  "Cup - White & Dark": "Cup W&D",
+  "Cup - Matcha & White": "Cup Matcha",
+  "Lid - Extra Dark": "Lid ED",
+  "Lid - Pistachio & White": "Lid P&W",
+  "Lid - Hazelnut & Milk": "Lid H&M",
+  "Lid - White & Milk": "Lid W&M",
+  "Lid - White & Dark": "Lid W&D",
+  "Lid - Matcha & White": "Lid Matcha",
+};
 
 type LotInfo = { lot: string; qty: number; cost: number | null; firstDate: string | null };
 
@@ -1856,11 +1881,11 @@ function MatLineHead() {
 }
 
 // ── Modo A · Producción por SKU (directo) ──
-function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, potes, tolling, onAdded, initial, editBatch, onCancelEdit }: {
+function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, invName, potes, tolling, onAdded, initial, editBatch, onCancelEdit }: {
   bomQty: Record<string, Record<string, number>>;
   matsForSku: (sku: string) => string[];
   lotsFor: (m: string) => LotInfo[]; autoCost: (m: string, lot: string) => number | null;
-  unitFor: (m: string) => string; potes: number; tolling: number; onAdded: () => void;
+  unitFor: (m: string) => string; invName: (m: string) => string; potes: number; tolling: number; onAdded: () => void;
   initial?: any; editBatch?: string | null; onCancelEdit?: () => void;
 }) {
   const [runDate, setRunDate] = useState(ymd());
@@ -1931,7 +1956,7 @@ function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, potes, toll
     for (const l of active) for (const a of lineAllocs(l, autoCost)) {
       if (a.qty <= 0) continue;
       ipRows.push({
-        movement_date: runDate, type: "Out", material: l.material,
+        movement_date: runDate, type: "Out", material: invName(l.material),
         quantity: Math.round(a.qty * 100) / 100, unit: l.unit, warehouse,
         lot_number: a.lot, concept: "Consumption", cogs_per_unit: a.cost,
         notes: `Consumo · ${sku} · ${nCases} cases${l.comment ? ` · ${l.comment}` : ""} · #${batch}`,
@@ -2012,11 +2037,11 @@ function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, potes, toll
 }
 
 // ── Modo B · Producción global (absorción) ──
-function GlobalForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, potes, tolling, onAdded, initial, editBatch, onCancelEdit }: {
+function GlobalForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, invName, potes, tolling, onAdded, initial, editBatch, onCancelEdit }: {
   bomQty: Record<string, Record<string, number>>;
   matsForSku: (sku: string) => string[];
   lotsFor: (m: string) => LotInfo[]; autoCost: (m: string, lot: string) => number | null;
-  unitFor: (m: string) => string; potes: number; tolling: number; onAdded: () => void;
+  unitFor: (m: string) => string; invName: (m: string) => string; potes: number; tolling: number; onAdded: () => void;
   initial?: any; editBatch?: string | null; onCancelEdit?: () => void;
 }) {
   const [runDate, setRunDate] = useState(ymd());
@@ -2109,7 +2134,7 @@ function GlobalForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, potes, tol
     for (const l of usedLines) for (const a of lineAllocs(l, autoCost)) {
       if (a.qty <= 0) continue;
       ipRows.push({
-        movement_date: runDate, type: "Out", material: l.material,
+        movement_date: runDate, type: "Out", material: invName(l.material),
         quantity: Math.round(a.qty * 100) / 100, unit: l.unit, warehouse,
         lot_number: a.lot, concept: "Consumption", cogs_per_unit: a.cost,
         notes: `Consumo global${l.comment ? ` · ${l.comment}` : ""} · #${batch}`,
@@ -2303,13 +2328,19 @@ function ProductionTab({ fpMovements, ipMovements, onAdded }: {
     return map;
   }, [ipMovements]);
 
-  const lotsFor = (material: string): LotInfo[] =>
-    [...ipStock.entries()].filter(([, v]) => (v as any).material === material && v.qty > 0)
+  const ipMaterials = useMemo(() => new Set([...ipStock.values()].map(v => (v as any).material as string)), [ipStock]);
+  const invName = (material: string): string => (ipMaterials.has(material) ? material : (IP_ALIAS[material] ?? material));
+
+  const lotsFor = (material: string): LotInfo[] => {
+    const inv = invName(material);
+    return [...ipStock.entries()].filter(([, v]) => (v as any).material === inv && v.qty > 0)
       .map(([, v]) => ({ lot: v.lot, qty: v.qty, cost: v.cost, firstDate: (v as any).firstDate ?? null }))
       .sort((a, b) => (a.firstDate ?? "0000-00-00").localeCompare(b.firstDate ?? "0000-00-00") || a.lot.localeCompare(b.lot));
-  const autoCost = (material: string, lot: string): number | null => ipStock.get(`${material}|${lot}`)?.cost ?? null;
+  };
+  const autoCost = (material: string, lot: string): number | null => ipStock.get(`${invName(material)}|${lot}`)?.cost ?? null;
   const unitFor = (material: string): string => {
-    for (const v of ipStock.values()) if ((v as any).material === material) return v.unit;
+    const inv = invName(material);
+    for (const v of ipStock.values()) if ((v as any).material === inv) return v.unit;
     return PACK_RE.test(material) ? "Piece" : "lbs";
   };
   const matsForSku = (sku: string): string[] =>
@@ -2338,8 +2369,9 @@ function ProductionTab({ fpMovements, ipMovements, onAdded }: {
       byMat.set(r.material, arr);
     }
     const matLine = (material: string, bomPerCase: number): MatLine => {
-      const allocs = byMat.get(material) ?? [];
-      const unit = (ips.find(r => r.material === material) as any)?.unit ?? (PACK_RE.test(material) ? "Piece" : "lbs");
+      const inv = invName(material);
+      const allocs = byMat.get(inv) ?? [];
+      const unit = (ips.find(r => r.material === inv) as any)?.unit ?? (PACK_RE.test(material) ? "Piece" : "lbs");
       const base = blankLine(material, unit, bomPerCase);
       if (!allocs.length) return base;
       if (allocs.length === 1 && allocs[0].lot === "MIX/manual")
@@ -2352,7 +2384,12 @@ function ProductionTab({ fpMovements, ipMovements, onAdded }: {
       const skuCases: Record<string, string> = {};
       for (const f of fps) skuCases[f.sku] = String(f.cases);
       const lineMap: Record<string, MatLine> = {};
-      for (const m of byMat.keys()) lineMap[m] = matLine(m, 0);
+      const usedInv = new Set<string>();
+      for (const sk of Object.keys(skuCases)) for (const m of matsForSku(sk)) {
+        const inv = invName(m);
+        if (byMat.has(inv) && !(m in lineMap)) { lineMap[m] = matLine(m, 0); usedInv.add(inv); }
+      }
+      for (const invM of byMat.keys()) if (!usedInv.has(invM)) lineMap[invM] = matLine(invM, 0);
       return { mode: "B", batch, runDate, warehouse, moc: (fps[0] as any).moc ?? "", skuCases, lineMap };
     }
     const sku = skus[0];
@@ -2360,7 +2397,8 @@ function ProductionTab({ fpMovements, ipMovements, onAdded }: {
     const totalCases = fps.reduce((s, f) => s + (Number(f.cases) || 0), 0);
     const mats = matsForSku(sku);
     const lines = mats.map(m => matLine(m, Number(bomQty[sku]?.[m]) || 0));
-    for (const m of byMat.keys()) if (!mats.includes(m)) lines.push(matLine(m, 0));
+    const coveredInv = new Set(mats.map(m => invName(m)));
+    for (const invM of byMat.keys()) if (!coveredInv.has(invM)) lines.push(matLine(invM, 0));
     return { mode: "A", batch, runDate, warehouse, sku, cases: String(totalCases), mocs: mocs.length ? mocs : [{ moc: "", cases: "" }], lines };
   }
 
@@ -2382,8 +2420,8 @@ function ProductionTab({ fpMovements, ipMovements, onAdded }: {
         ))}
       </div>
 
-      {activeForm === "A" && <BySkuForm bomQty={bomQty} matsForSku={matsForSku} lotsFor={lotsFor} autoCost={autoCost} unitFor={unitFor} potes={potes} tolling={tolling} onAdded={afterSave} initial={edit?.mode === "A" ? edit : undefined} editBatch={edit?.mode === "A" ? edit.batch : null} onCancelEdit={() => setEdit(null)} />}
-      {activeForm === "B" && <GlobalForm bomQty={bomQty} matsForSku={matsForSku} lotsFor={lotsFor} autoCost={autoCost} unitFor={unitFor} potes={potes} tolling={tolling} onAdded={afterSave} initial={edit?.mode === "B" ? edit : undefined} editBatch={edit?.mode === "B" ? edit.batch : null} onCancelEdit={() => setEdit(null)} />}
+      {activeForm === "A" && <BySkuForm bomQty={bomQty} matsForSku={matsForSku} lotsFor={lotsFor} autoCost={autoCost} unitFor={unitFor} invName={invName} potes={potes} tolling={tolling} onAdded={afterSave} initial={edit?.mode === "A" ? edit : undefined} editBatch={edit?.mode === "A" ? edit.batch : null} onCancelEdit={() => setEdit(null)} />}
+      {activeForm === "B" && <GlobalForm bomQty={bomQty} matsForSku={matsForSku} lotsFor={lotsFor} autoCost={autoCost} unitFor={unitFor} invName={invName} potes={potes} tolling={tolling} onAdded={afterSave} initial={edit?.mode === "B" ? edit : undefined} editBatch={edit?.mode === "B" ? edit.batch : null} onCancelEdit={() => setEdit(null)} />}
       {activeForm === "transfer" && <FPTransferForm fpMovements={fpMovements} onAdded={onAdded} />}
 
       <ProductionHistory onEdit={startEdit} reloadSignal={bump} />
