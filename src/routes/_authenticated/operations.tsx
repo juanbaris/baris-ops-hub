@@ -1215,10 +1215,12 @@ export function IPSummaryTab({ movements }: { movements: IPRow[] }) {
     ? inventory
     : inventory.filter(m => m.material === filterMaterial);
 
-  const totalValue = shown.reduce((s, m) => {
-    const avgCogs = m.inQty > 0 ? m.inValue / m.inQty : 0;
-    return s + m.netQty * avgCogs;
-  }, 0);
+  // Value at LOT cost (specific-lot) — consistent with the monthly history view
+  // and with how consumption (Out) is costed. Each lot at its own cogs; lots
+  // without a known cogs contribute 0 (shown as "—"), same as the per-lot rows.
+  const lotValue = (m: { lots: Map<string, { qty: number; cogs: number | null; unit: string }> }) =>
+    [...m.lots.values()].reduce((s, l) => s + (l.qty > 0 && l.cogs != null ? l.qty * l.cogs : 0), 0);
+  const totalValue = shown.reduce((s, m) => s + lotValue(m), 0);
 
   const totalIn  = movements.filter(r => r.type === "In").length;
   const totalOut = movements.filter(r => r.type === "Out").length;
@@ -1390,7 +1392,7 @@ export function IPSummaryTab({ movements }: { movements: IPRow[] }) {
       <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
         <div className="px-5 py-3 border-b border-border bg-muted/30">
           <p className="text-sm font-bold" style={{ color:"#1C2340" }}>I&P Inventory — current stock by material & lot</p>
-          <p className="text-xs text-muted-foreground">Net balance from all movements · COGS = weighted average of In movements</p>
+          <p className="text-xs text-muted-foreground">Net balance from all movements · COGS = lot cost (specific-lot)</p>
         </div>
         <table className="w-full text-xs min-w-max">
           <thead>
@@ -1407,8 +1409,8 @@ export function IPSummaryTab({ movements }: { movements: IPRow[] }) {
             {shown.length === 0 ? (
               <tr><td colSpan={6} className="p-8 text-center text-muted-foreground">No stock data yet</td></tr>
             ) : shown.map(m => {
-              const avgCogs = m.inQty > 0 ? m.inValue / m.inQty : 0;
-              const value   = m.netQty * avgCogs;
+              const value   = lotValue(m);                         // sum of lots at their lot cost
+              const effCogs = m.netQty > 0 ? value / m.netQty : 0; // effective $/unit (lot-weighted)
               const lots    = [...m.lots.entries()].filter(([, v]) => v.qty > 0);
               return (
                 <React.Fragment key={m.material}>
@@ -1420,7 +1422,7 @@ export function IPSummaryTab({ movements }: { movements: IPRow[] }) {
                     <td className="px-4 py-2 text-right font-mono">{m.netQty.toLocaleString()}</td>
                     <td className="px-4 py-2 text-muted-foreground">{m.unit}</td>
                     <td className="px-4 py-2 text-right font-mono">
-                      {avgCogs > 0 ? `$${avgCogs.toFixed(4)}` : "—"}
+                      {effCogs > 0 ? `$${effCogs.toFixed(4)}` : "—"}
                     </td>
                     <td className="px-4 py-2 text-right font-mono font-bold" style={{ color:"#A3224A" }}>
                       {value > 0 ? `$${Math.round(value).toLocaleString()}` : "—"}
