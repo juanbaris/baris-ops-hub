@@ -210,7 +210,14 @@ export function FPSummaryTab() {
         const signed = mv.type === "In" ? Number(mv.cases) : -Number(mv.cases);
         const key = `${mv.sku}|${mv.warehouse}`;
         curC[key] = (curC[key] ?? 0) + signed;
-        const { cogs: pote } = resolveCogs(mv, lotMap);
+        // Value at the LOT's COGS (lot_master = source of truth for cost), falling back
+        // to the movement's own cogs only when the lot has none. This mirrors FPStockTab
+        // exactly (existing lot -> lot COGS; brand-new lot -> movement COGS), so the
+        // anchored current-month $ equals FP Stock even when movement COGS are stale.
+        const lotCogs = resolveCogs({ cogs_per_case: null, lot_number: mv.lot_number }, lotMap).cogs;
+        const pote = lotCogs != null
+          ? lotCogs
+          : (mv.cogs_per_case != null && mv.cogs_per_case !== "" ? Number(mv.cogs_per_case) : null);
         if (pote != null) curV[key] = (curV[key] ?? 0) + signed * pote * 8;
       }
       take(mo, curC, curV);
