@@ -1463,94 +1463,6 @@ export function IPSummaryTab({ movements }: { movements: IPRow[] }) {
 }
 // ─── BOM constants (from COGS Simulator · Source: Super BOM Consolidado) ─────
 const UNITS_PER_CASE = 8;
-const LBS_PER_UNIT = 0.344;
-const SCRAP: Record<string, number> = { rasp: 0.10, choc: 0.08, other: 0 };
-
-type BomLine = {
-  material: string;
-  unit: "lbs" | "Piece" | "cases";
-  pct?: number;
-  perCase?: number;
-  scrapGroup: "rasp" | "choc" | "other";
-};
-const BOM: Record<string, BomLine[]> = {
-  XD: [
-    { material: "IQF Rasp",      unit: "lbs",  pct: 0.45, scrapGroup: "rasp" },
-    { material: "Choc Ex Dark",  unit: "lbs",  pct: 0.55, scrapGroup: "choc" },
-    { material: "Cocoa Butter",  unit: "lbs",  pct: 0.00, scrapGroup: "other" },
-    { material: "Soy Lecithin",  unit: "lbs",  pct: 0.00, scrapGroup: "other" },
-    { material: "Cup ED",        unit: "Piece", perCase: UNITS_PER_CASE, scrapGroup: "other" },
-    { material: "Lid ED",        unit: "Piece", perCase: UNITS_PER_CASE, scrapGroup: "other" },
-    { material: "Sealers",       unit: "Piece", perCase: 1, scrapGroup: "other" },
-    { material: "Cases",         unit: "Piece", perCase: 1, scrapGroup: "other" },
-  ],
-  PW: [
-    { material: "IQF Rasp",        unit: "lbs",  pct: 0.33, scrapGroup: "rasp" },
-    { material: "Corinthian White", unit: "lbs",  pct: 0.571, scrapGroup: "choc" },
-    { material: "Pistachio Paste",  unit: "lbs",  pct: 0.08, scrapGroup: "other" },
-    { material: "Cocoa Butter",     unit: "lbs",  pct: 0.017, scrapGroup: "other" },
-    { material: "Sea Salt",         unit: "lbs",  pct: 0.001, scrapGroup: "other" },
-    { material: "Spirulina",        unit: "lbs",  pct: 0.001, scrapGroup: "other" },
-    { material: "Soy Lecithin",     unit: "lbs",  pct: 0.001, scrapGroup: "other" },
-    { material: "Cup P&W",          unit: "Piece", perCase: UNITS_PER_CASE, scrapGroup: "other" },
-    { material: "Lid P&W",          unit: "Piece", perCase: UNITS_PER_CASE, scrapGroup: "other" },
-    { material: "Sealers",          unit: "Piece", perCase: 1, scrapGroup: "other" },
-    { material: "Cases",            unit: "Piece", perCase: 1, scrapGroup: "other" },
-  ],
-  HM: [
-    { material: "IQF Rasp",         unit: "lbs",  pct: 0.33, scrapGroup: "rasp" },
-    { material: "Corinthian White",  unit: "lbs",  pct: 0.229, scrapGroup: "choc" },
-    { material: "Valcour Milk",      unit: "lbs",  pct: 0.33, scrapGroup: "choc" },
-    { material: "Hazelnut Butter",   unit: "lbs",  pct: 0.10, scrapGroup: "other" },
-    { material: "Cocoa Butter",      unit: "lbs",  pct: 0.009, scrapGroup: "other" },
-    { material: "Sea Salt",          unit: "lbs",  pct: 0.001, scrapGroup: "other" },
-    { material: "Soy Lecithin",      unit: "lbs",  pct: 0.001, scrapGroup: "other" },
-    { material: "Cup H&M",           unit: "Piece", perCase: UNITS_PER_CASE, scrapGroup: "other" },
-    { material: "Lid H&M",           unit: "Piece", perCase: UNITS_PER_CASE, scrapGroup: "other" },
-    { material: "Sealers",           unit: "Piece", perCase: 1, scrapGroup: "other" },
-    { material: "Cases",             unit: "Piece", perCase: 1, scrapGroup: "other" },
-  ],
-  WM: [
-    { material: "IQF Rasp",         unit: "lbs",  pct: 0.30, scrapGroup: "rasp" },
-    { material: "Corinthian White",  unit: "lbs",  pct: 0.388, scrapGroup: "choc" },
-    { material: "Valcour Milk",      unit: "lbs",  pct: 0.30, scrapGroup: "choc" },
-    { material: "Cocoa Butter",      unit: "lbs",  pct: 0.012, scrapGroup: "other" },
-    { material: "Soy Lecithin",      unit: "lbs",  pct: 0.001, scrapGroup: "other" },
-    { material: "Cup W&M",           unit: "Piece", perCase: UNITS_PER_CASE, scrapGroup: "other" },
-    { material: "Lid W&M",           unit: "Piece", perCase: UNITS_PER_CASE, scrapGroup: "other" },
-    { material: "Sealers",           unit: "Piece", perCase: 1, scrapGroup: "other" },
-    { material: "Cases",             unit: "Piece", perCase: 1, scrapGroup: "other" },
-  ],
-  WD: [
-    { material: "IQF Rasp",         unit: "lbs",  pct: 0.30, scrapGroup: "rasp" },
-    { material: "RASG Dark 72%",     unit: "lbs",  pct: 0.30, scrapGroup: "choc" },
-    { material: "Corinthian White",  unit: "lbs",  pct: 0.388, scrapGroup: "choc" },
-    { material: "Cocoa Butter",      unit: "lbs",  pct: 0.012, scrapGroup: "other" },
-    { material: "Soy Lecithin",      unit: "lbs",  pct: 0.001, scrapGroup: "other" },
-    { material: "Cup W&D",           unit: "Piece", perCase: UNITS_PER_CASE, scrapGroup: "other" },
-    { material: "Lid W&D",           unit: "Piece", perCase: UNITS_PER_CASE, scrapGroup: "other" },
-    { material: "Sealers",           unit: "Piece", perCase: 1, scrapGroup: "other" },
-    { material: "Cases",             unit: "Piece", perCase: 1, scrapGroup: "other" },
-  ],
-  Matcha: [
-    { material: "IQF Rasp",         unit: "lbs",  pct: 0.45, scrapGroup: "rasp" },
-    { material: "Corinthian White",  unit: "lbs",  pct: 0.529, scrapGroup: "choc" },
-    { material: "Matcha",            unit: "lbs",  pct: 0.009, scrapGroup: "other" },
-    { material: "Cocoa Butter",      unit: "lbs",  pct: 0.01, scrapGroup: "other" },
-    { material: "Sea Salt",          unit: "lbs",  pct: 0.001, scrapGroup: "other" },
-    { material: "Soy Lecithin",      unit: "lbs",  pct: 0.001, scrapGroup: "other" },
-    { material: "Cup Matcha",        unit: "Piece", perCase: UNITS_PER_CASE, scrapGroup: "other" },
-    { material: "Lid Matcha",        unit: "Piece", perCase: UNITS_PER_CASE, scrapGroup: "other" },
-    { material: "Sealers",           unit: "Piece", perCase: 1, scrapGroup: "other" },
-    { material: "Cases",             unit: "Piece", perCase: 1, scrapGroup: "other" },
-  ],
-};
-
-function calcBomQty(line: BomLine, cases: number): number {
-  if (line.perCase !== undefined) return line.perCase * cases;
-  const baseQty = (line.pct ?? 0) * cases * UNITS_PER_CASE * LBS_PER_UNIT;
-  return baseQty / (1 - SCRAP[line.scrapGroup]);
-}
 // ─── FP Transfer Form ─────────────────────────────────────────────────────────
 function FPTransferForm({ fpMovements, onAdded }: { fpMovements: FPRow[]; onAdded: () => void }) {
   const [form, setForm] = useState({
@@ -1801,441 +1713,533 @@ function IPHistoryTable({ movements }: { movements: IPRow[] }) {
   );
 }
 // ─── Production Tab ───────────────────────────────────────────────────────────
+
+// ─── Production Tab (v2 · por SKU / global · BOM desde ops_bom) ────────────────
+type LotAlloc = { lot: string; qty: number; cost: number };
+type MatLine = {
+  material: string; unit: string; bomPerCase: number;
+  realQty: string;
+  lotMode: "single" | "mix" | "manual";
+  singleLot: string;
+  mixRows: { lot: string; qty: string }[];
+  manualLot: string; manualCost: string;
+  comment: string;
+};
+const PROD_INP = "rounded-lg border border-border bg-background px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30";
+const PACK_RE = /(cup|lid|sealer|case)/i;
+
+function blankLine(material: string, unit: string, bomPerCase: number): MatLine {
+  return { material, unit, bomPerCase, realQty: "", lotMode: "single",
+    singleLot: "", mixRows: [{ lot: "", qty: "" }], manualLot: "MIX/manual", manualCost: "", comment: "" };
+}
+function lineAllocs(l: MatLine, autoCost: (m: string, lot: string) => number | null): LotAlloc[] {
+  const real = Number(l.realQty) || 0;
+  if (l.lotMode === "single")
+    return l.singleLot ? [{ lot: l.singleLot, qty: real, cost: autoCost(l.material, l.singleLot) ?? 0 }] : [];
+  if (l.lotMode === "mix")
+    return l.mixRows.filter(r => r.lot && Number(r.qty) > 0)
+      .map(r => ({ lot: r.lot, qty: Number(r.qty), cost: autoCost(l.material, r.lot) ?? 0 }));
+  return real > 0 ? [{ lot: l.manualLot || "MIX/manual", qty: real, cost: Number(l.manualCost) || 0 }] : [];
+}
+const allocsValue = (a: LotAlloc[]) => a.reduce((s, x) => s + x.qty * x.cost, 0);
+const allocsQty = (a: LotAlloc[]) => a.reduce((s, x) => s + x.qty, 0);
+const prodBatchId = () => "b" + Date.now().toString(36);
+
+type LotInfo = { lot: string; qty: number; cost: number | null };
+
+function MatLineEditor({ line, teorico, onChange, lotsFor, autoCost }: {
+  line: MatLine; teorico: number; onChange: (l: MatLine) => void;
+  lotsFor: (m: string) => LotInfo[]; autoCost: (m: string, lot: string) => number | null;
+}) {
+  const lots = lotsFor(line.material);
+  const allocs = lineAllocs(line, autoCost);
+  const value = allocsValue(allocs);
+  const real = Number(line.realQty) || 0;
+  const sumQty = allocsQty(allocs);
+  const wavg = sumQty > 0 ? value / sumQty : 0;
+  const set = (patch: Partial<MatLine>) => onChange({ ...line, ...patch });
+  const lotOpt = (v: LotInfo) => `${v.lot} · ${v.qty.toLocaleString()} · $${v.cost != null ? v.cost.toFixed(4) : "?"}`;
+  return (
+    <tr className="border-t border-border/40 align-top">
+      <td className="py-1 pr-2 font-semibold" style={{ color: "#1C2340" }}>
+        {line.material}<div className="text-[10px] text-muted-foreground font-normal">{line.unit}</div>
+      </td>
+      <td className="py-1 px-2 text-right font-mono text-xs text-muted-foreground">{teorico > 0 ? teorico.toFixed(1) : "—"}</td>
+      <td className="py-1 px-1"><input type="number" className={`${PROD_INP} w-24 text-right font-mono`} value={line.realQty} onChange={e => set({ realQty: e.target.value })} placeholder="0" /></td>
+      <td className="py-1 px-1">
+        <select className={`${PROD_INP} w-24`} value={line.lotMode} onChange={e => set({ lotMode: e.target.value as any })}>
+          <option value="single">Un lote</option><option value="mix">Mix</option><option value="manual">Manual</option>
+        </select>
+      </td>
+      <td className="py-1 px-1">
+        {line.lotMode === "single" && (
+          <select className={`${PROD_INP} min-w-[190px]`} value={line.singleLot} onChange={e => set({ singleLot: e.target.value })}>
+            <option value="">— elegí lote —</option>
+            {lots.map(v => <option key={v.lot} value={v.lot}>{lotOpt(v)}</option>)}
+          </select>
+        )}
+        {line.lotMode === "mix" && (
+          <div className="space-y-1">
+            {line.mixRows.map((r, i) => (
+              <div key={i} className="flex gap-1 items-center">
+                <select className={`${PROD_INP} min-w-[160px]`} value={r.lot} onChange={e => { const m = [...line.mixRows]; m[i] = { ...m[i], lot: e.target.value }; set({ mixRows: m }); }}>
+                  <option value="">— lote —</option>
+                  {lots.map(v => <option key={v.lot} value={v.lot}>{lotOpt(v)}</option>)}
+                </select>
+                <input type="number" className={`${PROD_INP} w-20 text-right font-mono`} value={r.qty} onChange={e => { const m = [...line.mixRows]; m[i] = { ...m[i], qty: e.target.value }; set({ mixRows: m }); }} placeholder="qty" />
+                <button onClick={() => { const m = line.mixRows.filter((_, j) => j !== i); set({ mixRows: m.length ? m : [{ lot: "", qty: "" }] }); }} className="text-muted-foreground hover:text-red-600 text-xs">✕</button>
+              </div>
+            ))}
+            <button onClick={() => set({ mixRows: [...line.mixRows, { lot: "", qty: "" }] })} className="text-[10px] text-muted-foreground hover:text-foreground">+ lote</button>
+            {real > 0 && Math.abs(sumQty - real) > 0.5 && <div className="text-[10px] text-orange-600">Σ lotes {sumQty.toLocaleString()} ≠ real {real.toLocaleString()}</div>}
+          </div>
+        )}
+        {line.lotMode === "manual" && (
+          <div className="flex gap-1">
+            <input className={`${PROD_INP} w-28`} value={line.manualLot} onChange={e => set({ manualLot: e.target.value })} placeholder="lote" />
+            <input type="number" step="0.0001" className={`${PROD_INP} w-24 text-right font-mono`} value={line.manualCost} onChange={e => set({ manualCost: e.target.value })} placeholder="$/unit" />
+          </div>
+        )}
+      </td>
+      <td className="py-1 px-2 text-right font-mono text-xs text-muted-foreground">{wavg > 0 ? `$${wavg.toFixed(4)}` : "—"}</td>
+      <td className="py-1 px-2 text-right font-mono font-semibold" style={{ color: "#A3224A" }}>{value > 0 ? `$${value.toFixed(2)}` : "—"}</td>
+      <td className="py-1 px-1"><input className={`${PROD_INP} w-28`} value={line.comment} onChange={e => set({ comment: e.target.value })} placeholder="—" /></td>
+    </tr>
+  );
+}
+
+function MatLineHead() {
+  return (
+    <thead>
+      <tr className="text-[10px] uppercase tracking-wide text-muted-foreground border-b border-border/60">
+        <th className="pb-1.5 text-left">Material</th>
+        <th className="pb-1.5 px-2 text-right">Teórico</th>
+        <th className="pb-1.5 px-1 text-left">Real consumido</th>
+        <th className="pb-1.5 px-1 text-left">Lote</th>
+        <th className="pb-1.5 px-1 text-left">Asignación</th>
+        <th className="pb-1.5 px-2 text-right">$/unit</th>
+        <th className="pb-1.5 px-2 text-right">Valor</th>
+        <th className="pb-1.5 px-1 text-left">Comentario</th>
+      </tr>
+    </thead>
+  );
+}
+
+// ── Modo A · Producción por SKU (directo) ──
+function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, potes, tolling, onAdded }: {
+  bomQty: Record<string, Record<string, number>>;
+  matsForSku: (sku: string) => string[];
+  lotsFor: (m: string) => LotInfo[]; autoCost: (m: string, lot: string) => number | null;
+  unitFor: (m: string) => string; potes: number; tolling: number; onAdded: () => void;
+}) {
+  const [runDate, setRunDate] = useState(ymd());
+  const [sku, setSku] = useState<SKU>("XD");
+  const [cases, setCases] = useState("");
+  const [warehouse, setWarehouse] = useState<Warehouse>("Heinlein");
+  const [moc, setMoc] = useState("");
+  const [lines, setLines] = useState<MatLine[]>([]);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    const mats = matsForSku(sku);
+    setLines(mats.map(m => blankLine(m, unitFor(m), Number(bomQty[sku]?.[m]) || 0)));
+  }, [sku, bomQty]);
+
+  const nCases = Number(cases) || 0;
+  const mpTotal = useMemo(() => lines.reduce((s, l) => s + allocsValue(lineAllocs(l, autoCost)), 0), [lines, autoCost]);
+  const cogsPerCase = nCases > 0 ? mpTotal / nCases + tolling * potes : 0;
+  const cogsPerPote = potes > 0 ? cogsPerCase / potes : 0;
+
+  async function save() {
+    if (nCases <= 0) { toast.error("Cargá cases producidas"); return; }
+    const active = lines.filter(l => lineAllocs(l, autoCost).length > 0);
+    if (!active.length) { toast.error("Cargá al menos un material consumido"); return; }
+    setSaving(true);
+    const batch = prodBatchId();
+    const facility: Facility = (FACILITIES as string[]).includes(warehouse) ? (warehouse as Facility) : "Heinlein";
+    const fpLot = moc || `PROD-${sku}-${runDate}`;
+    const runNote = `${moc ? `MOC ${moc} · ` : ""}#${batch}`;
+    const { error: runErr } = await supabase.from("production_runs").insert({
+      run_date: runDate, facility, sku, cases_produced: nCases,
+      cogs_per_case: cogsPerCase, lot_number: fpLot, notes: runNote,
+    });
+    if (runErr) { toast.error(runErr.message); setSaving(false); return; }
+    const { error: fpErr } = await supabase.from("fp_movements").insert({
+      movement_date: runDate, type: "In", sku, cases: nCases, warehouse,
+      lot_number: fpLot, moc: moc || null, concept: "Production",
+      cogs_per_case: cogsPerCase, notes: `Producción · ${sku} · ${nCases} cases · #${batch}`,
+    } as any);
+    if (fpErr) { toast.error(fpErr.message); setSaving(false); return; }
+    const ipRows: any[] = [];
+    for (const l of active) for (const a of lineAllocs(l, autoCost)) {
+      if (a.qty <= 0) continue;
+      ipRows.push({
+        movement_date: runDate, type: "Out", material: l.material,
+        quantity: Math.round(a.qty * 100) / 100, unit: l.unit, warehouse,
+        lot_number: a.lot, concept: "Consumption", cogs_per_unit: a.cost,
+        notes: `Consumo · ${sku} · ${nCases} cases${l.comment ? ` · ${l.comment}` : ""} · #${batch}`,
+      });
+    }
+    if (ipRows.length) { const { error } = await supabase.from("ip_movements").insert(ipRows); if (error) { toast.error(error.message); setSaving(false); return; } }
+    toast.success(`Producción guardada · ${nCases} cases ${sku} · ${ipRows.length} IP OUT · $${cogsPerPote.toFixed(4)}/pote`);
+    setCases(""); setMoc(""); setSaving(false);
+    setLines(matsForSku(sku).map(m => blankLine(m, unitFor(m), Number(bomQty[sku]?.[m]) || 0)));
+    onAdded();
+  }
+
+  return (
+    <div className="rounded-2xl border border-border bg-card shadow-sm p-5 space-y-4">
+      <p className="text-sm font-bold" style={{ color: "#1C2340" }}>Nueva producción · por SKU</p>
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Fecha</label>
+          <input type="date" className={`${PROD_INP} mt-1 w-full`} value={runDate} onChange={e => setRunDate(e.target.value)} /></div>
+        <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">SKU</label>
+          <select className={`${PROD_INP} mt-1 w-full`} value={sku} onChange={e => setSku(e.target.value as SKU)}>
+            {SKUS.map(s => <option key={s} value={s}>{s} ({SKU_ITEMS[s]})</option>)}
+          </select></div>
+        <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Cases producidas *</label>
+          <input type="number" className={`${PROD_INP} mt-1 w-full font-mono`} value={cases} onChange={e => setCases(e.target.value)} /></div>
+        <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Warehouse</label>
+          <select className={`${PROD_INP} mt-1 w-full`} value={warehouse} onChange={e => setWarehouse(e.target.value as Warehouse)}>
+            {WAREHOUSES.map(w => <option key={w} value={w}>{w}</option>)}
+          </select></div>
+        <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">MOC</label>
+          <input className={`${PROD_INP} mt-1 w-full`} value={moc} onChange={e => setMoc(e.target.value)} placeholder="nombre MOC" /></div>
+      </div>
+
+      {nCases > 0 && (
+        <div className="rounded-xl border border-border bg-muted/20 p-3 overflow-x-auto">
+          <table className="w-full text-xs">
+            <MatLineHead />
+            <tbody>
+              {lines.map((l, i) => (
+                <MatLineEditor key={l.material} line={l} teorico={l.bomPerCase * nCases}
+                  onChange={nl => setLines(prev => prev.map((x, j) => j === i ? nl : x))}
+                  lotsFor={lotsFor} autoCost={autoCost} />
+              ))}
+              <tr className="border-t-2 border-border font-semibold bg-muted/10">
+                <td className="py-1.5" colSpan={6} style={{ color: "#1C2340" }}>MP total + tolling (${tolling.toFixed(2)}/pote × {potes})</td>
+                <td className="py-1.5 px-2 text-right font-mono text-emerald-700">${cogsPerPote.toFixed(4)}/pote</td>
+                <td></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="flex items-center gap-3">
+        <button onClick={save} disabled={saving} className="rounded-lg px-5 py-2 text-sm font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "#A3224A" }}>
+          {saving ? "Guardando…" : `+ Guardar · ${nCases || "?"} cases ${sku} · $${cogsPerPote > 0 ? cogsPerPote.toFixed(4) : "?"}/pote`}
+        </button>
+        <span className="text-xs text-muted-foreground">↳ Crea 1 FP IN + N IP OUT (Consumption)</span>
+      </div>
+    </div>
+  );
+}
+
+// ── Modo B · Producción global (absorción) ──
+function GlobalForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, potes, tolling, onAdded }: {
+  bomQty: Record<string, Record<string, number>>;
+  matsForSku: (sku: string) => string[];
+  lotsFor: (m: string) => LotInfo[]; autoCost: (m: string, lot: string) => number | null;
+  unitFor: (m: string) => string; potes: number; tolling: number; onAdded: () => void;
+}) {
+  const [runDate, setRunDate] = useState(ymd());
+  const [warehouse, setWarehouse] = useState<Warehouse>("Heinlein");
+  const [moc, setMoc] = useState("");
+  const [skuCases, setSkuCases] = useState<Record<string, string>>({});
+  const [lineMap, setLineMap] = useState<Record<string, MatLine>>({});
+  const [saving, setSaving] = useState(false);
+
+  const activeSkus = SKUS.filter(s => (Number(skuCases[s]) || 0) > 0);
+  const skuCasesKey = activeSkus.map(s => `${s}:${skuCases[s]}`).join(",");
+  const matsUnion = useMemo(() => {
+    const set = new Set<string>();
+    activeSkus.forEach(s => matsForSku(s).forEach(m => set.add(m)));
+    return [...set];
+  }, [skuCasesKey, bomQty]);
+
+  const getLine = (m: string) => lineMap[m] ?? blankLine(m, unitFor(m), 0);
+  const setLine = (m: string, nl: MatLine) => setLineMap(prev => ({ ...prev, [m]: nl }));
+
+  // teórico total por material (Σ sku bom×cases) y por sku
+  const teoTotal = (m: string) => activeSkus.reduce((s, sk) => s + (Number(bomQty[sk]?.[m]) || 0) * (Number(skuCases[sk]) || 0), 0);
+
+  // absorción → cogs por sku
+  const perSku = useMemo(() => {
+    const out: Record<string, { absorbed: number; cases: number; cogsPerCase: number; cogsPerPote: number }> = {};
+    for (const sk of activeSkus) {
+      const cs = Number(skuCases[sk]) || 0;
+      let absorbed = 0;
+      for (const m of matsForSku(sk)) {
+        const line = getLine(m);
+        const allocs = lineAllocs(line, autoCost);
+        const realQ = allocsQty(allocs);
+        const val = allocsValue(allocs);
+        const wavg = realQ > 0 ? val / realQ : 0;
+        const tt = teoTotal(m);
+        const factor = tt > 0 ? realQ / tt : 0;
+        const teoSku = (Number(bomQty[sk]?.[m]) || 0) * cs;
+        absorbed += teoSku * wavg * factor;
+      }
+      const cogsPerCase = cs > 0 ? absorbed / cs + tolling * potes : 0;
+      out[sk] = { absorbed, cases: cs, cogsPerCase, cogsPerPote: potes > 0 ? cogsPerCase / potes : 0 };
+    }
+    return out;
+  }, [skuCasesKey, lineMap, bomQty, autoCost]);
+
+  const grandMP = Object.values(perSku).reduce((s, x) => s + x.absorbed, 0);
+
+  async function save() {
+    if (!activeSkus.length) { toast.error("Cargá cases en al menos un SKU"); return; }
+    const usedLines = matsUnion.map(getLine).filter(l => lineAllocs(l, autoCost).length > 0);
+    if (!usedLines.length) { toast.error("Cargá al menos un material consumido"); return; }
+    setSaving(true);
+    const batch = prodBatchId();
+    const facility: Facility = (FACILITIES as string[]).includes(warehouse) ? (warehouse as Facility) : "Heinlein";
+    // FP IN + production_runs por SKU
+    for (const sk of activeSkus) {
+      const info = perSku[sk];
+      const fpLot = `PROD-${sk}-${runDate}`;
+      const { error: runErr } = await supabase.from("production_runs").insert({
+        run_date: runDate, facility, sku: sk, cases_produced: info.cases,
+        cogs_per_case: info.cogsPerCase, lot_number: fpLot,
+        notes: `Global${moc ? ` · MOC ${moc}` : ""} · #${batch}`,
+      });
+      if (runErr) { toast.error(runErr.message); setSaving(false); return; }
+      const { error: fpErr } = await supabase.from("fp_movements").insert({
+        movement_date: runDate, type: "In", sku: sk, cases: info.cases, warehouse,
+        lot_number: fpLot, moc: moc || null, concept: "Production",
+        cogs_per_case: info.cogsPerCase, notes: `Producción global · ${sk} · ${info.cases} cases · #${batch}`,
+      } as any);
+      if (fpErr) { toast.error(fpErr.message); setSaving(false); return; }
+    }
+    // IP OUT por material/lote (pooled, una vez)
+    const ipRows: any[] = [];
+    for (const l of usedLines) for (const a of lineAllocs(l, autoCost)) {
+      if (a.qty <= 0) continue;
+      ipRows.push({
+        movement_date: runDate, type: "Out", material: l.material,
+        quantity: Math.round(a.qty * 100) / 100, unit: l.unit, warehouse,
+        lot_number: a.lot, concept: "Consumption", cogs_per_unit: a.cost,
+        notes: `Consumo global${l.comment ? ` · ${l.comment}` : ""} · #${batch}`,
+      });
+    }
+    if (ipRows.length) { const { error } = await supabase.from("ip_movements").insert(ipRows); if (error) { toast.error(error.message); setSaving(false); return; } }
+    toast.success(`Producción global · ${activeSkus.length} SKU · ${ipRows.length} IP OUT`);
+    setSkuCases({}); setLineMap({}); setMoc(""); setSaving(false);
+    onAdded();
+  }
+
+  return (
+    <div className="rounded-2xl border border-border bg-card shadow-sm p-5 space-y-4">
+      <p className="text-sm font-bold" style={{ color: "#1C2340" }}>Nueva producción · global (absorción)</p>
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Fecha</label>
+          <input type="date" className={`${PROD_INP} mt-1 w-full`} value={runDate} onChange={e => setRunDate(e.target.value)} /></div>
+        <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Warehouse</label>
+          <select className={`${PROD_INP} mt-1 w-full`} value={warehouse} onChange={e => setWarehouse(e.target.value as Warehouse)}>
+            {WAREHOUSES.map(w => <option key={w} value={w}>{w}</option>)}
+          </select></div>
+        <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">MOC</label>
+          <input className={`${PROD_INP} mt-1 w-full`} value={moc} onChange={e => setMoc(e.target.value)} placeholder="nombre MOC" /></div>
+      </div>
+
+      <div>
+        <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Cases por SKU</p>
+        <div className="flex flex-wrap gap-2">
+          {SKUS.map(s => (
+            <div key={s} className="flex items-center gap-1">
+              <span className="text-xs font-semibold w-10" style={{ color: "#1C2340" }}>{s}</span>
+              <input type="number" className={`${PROD_INP} w-24 text-right font-mono`} value={skuCases[s] ?? ""} onChange={e => setSkuCases(p => ({ ...p, [s]: e.target.value }))} placeholder="0" />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {matsUnion.length > 0 && (
+        <div className="rounded-xl border border-border bg-muted/20 p-3 overflow-x-auto">
+          <table className="w-full text-xs">
+            <MatLineHead />
+            <tbody>
+              {matsUnion.map(m => (
+                <MatLineEditor key={m} line={getLine(m)} teorico={teoTotal(m)}
+                  onChange={nl => setLine(m, nl)} lotsFor={lotsFor} autoCost={autoCost} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {activeSkus.length > 0 && (
+        <div className="rounded-xl border border-border bg-muted/10 p-3 overflow-x-auto">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2">COGS por SKU (absorción)</p>
+          <table className="w-full text-xs">
+            <thead><tr className="text-[10px] uppercase tracking-wide text-muted-foreground border-b border-border/60">
+              <th className="text-left pb-1">SKU</th><th className="text-right pb-1 px-2">Cases</th>
+              <th className="text-right pb-1 px-2">MP absorbido</th><th className="text-right pb-1 px-2">COGS/pote</th><th className="text-right pb-1 px-2">COGS total</th>
+            </tr></thead>
+            <tbody>
+              {activeSkus.map(s => {
+                const i = perSku[s];
+                return (<tr key={s} className="border-t border-border/40">
+                  <td className="py-1 font-semibold" style={{ color: "#1C2340" }}>{s}</td>
+                  <td className="py-1 px-2 text-right font-mono">{i.cases.toLocaleString()}</td>
+                  <td className="py-1 px-2 text-right font-mono">${Math.round(i.absorbed).toLocaleString()}</td>
+                  <td className="py-1 px-2 text-right font-mono" style={{ color: "#A3224A" }}>${i.cogsPerPote.toFixed(4)}</td>
+                  <td className="py-1 px-2 text-right font-mono text-emerald-700">${Math.round(i.cogsPerCase * i.cases).toLocaleString()}</td>
+                </tr>);
+              })}
+              <tr className="border-t-2 border-border font-semibold">
+                <td className="py-1.5" style={{ color: "#1C2340" }}>Total MP</td>
+                <td></td><td className="py-1.5 px-2 text-right font-mono">${Math.round(grandMP).toLocaleString()}</td><td></td><td></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="flex items-center gap-3">
+        <button onClick={save} disabled={saving} className="rounded-lg px-5 py-2 text-sm font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "#A3224A" }}>
+          {saving ? "Guardando…" : `+ Guardar global · ${activeSkus.length} SKU`}
+        </button>
+        <span className="text-xs text-muted-foreground">↳ Crea N FP IN (1 por SKU) + IP OUT por material</span>
+      </div>
+    </div>
+  );
+}
+
+// ── Historial ──
+function ProductionHistory() {
+  const [runs, setRuns] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  useEffect(() => { load(); }, []);
+  async function load() {
+    const { data } = await supabase.from("production_runs").select("*").order("run_date", { ascending: false });
+    setRuns(data ?? []); setLoading(false);
+  }
+  function batchOf(notes: string | null): string | null {
+    const m = (notes || "").match(/#(b[a-z0-9]+)/i); return m ? m[1] : null;
+  }
+  async function removeRun(r: any) {
+    const batch = batchOf(r.notes);
+    if (batch) {
+      await supabase.from("fp_movements").delete().ilike("notes", `%#${batch}%`);
+      await supabase.from("ip_movements").delete().ilike("notes", `%#${batch}%`);
+      await supabase.from("production_runs").delete().ilike("notes", `%#${batch}%`);
+    } else {
+      await supabase.from("fp_movements").delete().eq("lot_number", r.lot_number).eq("sku", r.sku).eq("movement_date", r.run_date).eq("type", "In");
+      await supabase.from("production_runs").delete().eq("id", r.id);
+    }
+    setConfirmId(null); toast.success("Producción eliminada · FP + IP linkeados removidos"); load();
+  }
+  return (
+    <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+      <div className="px-5 py-3 border-b border-border bg-muted/30"><p className="text-sm font-semibold" style={{ color: "#1C2340" }}>Historial de producción</p></div>
+      <table className="w-full text-sm">
+        <thead><tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
+          <th className="px-4 py-2.5 text-left">Fecha</th><th className="px-4 py-2.5 text-left">Facility</th><th className="px-4 py-2.5 text-left">SKU</th>
+          <th className="px-4 py-2.5 text-right">Cases</th><th className="px-4 py-2.5 text-right">COGS/pote</th><th className="px-4 py-2.5 text-right">Total COGS</th>
+          <th className="px-4 py-2.5 text-left">Lot</th><th className="px-4 py-2.5 text-left">Notas</th><th className="px-4 py-2.5 text-right">Acción</th>
+        </tr></thead>
+        <tbody>
+          {loading ? <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">Cargando…</td></tr>
+            : runs.length === 0 ? <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">Sin producciones aún</td></tr>
+            : runs.map(r => (
+              <tr key={r.id} className="border-t border-border/60 hover:bg-muted/20">
+                <td className="px-4 py-1.5 font-mono text-xs">{r.run_date}</td>
+                <td className="px-4 py-1.5 text-xs">{r.facility}</td>
+                <td className="px-4 py-1.5 font-semibold" style={{ color: "#1C2340" }}>{r.sku}</td>
+                <td className="px-4 py-1.5 text-right font-mono font-semibold">{Number(r.cases_produced).toLocaleString()}</td>
+                <td className="px-4 py-1.5 text-right font-mono text-muted-foreground">${(Number(r.cogs_per_case) / 8).toFixed(4)}</td>
+                <td className="px-4 py-1.5 text-right font-mono text-emerald-600">${Math.round(Number(r.cases_produced) * Number(r.cogs_per_case)).toLocaleString()}</td>
+                <td className="px-4 py-1.5 font-mono text-xs" style={{ color: "#A3224A" }}>{r.lot_number}</td>
+                <td className="px-4 py-1.5 text-xs text-muted-foreground">{r.notes ?? "—"}</td>
+                <td className="px-4 py-1.5 text-right">
+                  {confirmId === r.id ? (
+                    <span className="flex items-center justify-end gap-1.5 text-xs">¿Borrar?
+                      <button onClick={() => removeRun(r)} className="rounded bg-red-600 px-2 py-0.5 text-[10px] font-semibold text-white">Sí</button>
+                      <button onClick={() => setConfirmId(null)} className="rounded border border-border px-2 py-0.5 text-[10px]">No</button>
+                    </span>
+                  ) : <button onClick={() => setConfirmId(r.id)} className="text-muted-foreground hover:text-red-600">🗑</button>}
+                </td>
+              </tr>
+            ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function ProductionTab({ fpMovements, ipMovements, onAdded }: {
   fpMovements: FPRow[]; ipMovements: IPRow[]; onAdded: () => void;
 }) {
-  const [activeForm, setActiveForm] = useState<"production"|"transfer">("production");
-  const [runs, setRuns] = useState<any[]>([]);
-  const [loadingRuns, setLoadingRuns] = useState(true);
-  const [form, setForm] = useState({
-    run_date: ymd(), facility: "Heinlein" as Facility, sku: "XD" as SKU,
-    cases_produced: "", lot_number: "", notes: "",
-    override_cogs: "",
-  });
-  const [saving, setSaving] = useState(false);
-  const [editingRun, setEditingRun] = useState<any | null>(null);
-  const [confirmId, setConfirmId] = useState<string | null>(null);
-  const [parsingReport, setParsingReport] = useState(false);
+  const [activeForm, setActiveForm] = useState<"A" | "B" | "transfer">("A");
 
-  async function parseProductionReport(file: File) {
-    setParsingReport(true);
-    try {
-      const base64 = await new Promise<string>((res, rej) => {
-        const r = new FileReader();
-        r.onload = () => res((r.result as string).split(',')[1]);
-        r.onerror = rej;
-        r.readAsDataURL(file);
-      });
-      const mediaType = file.name.endsWith('.pdf') ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-      const resp = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-6",
-          max_tokens: 1000,
-          messages: [{
-            role: "user",
-            content: [
-              { type: "document", source: { type: "base64", media_type: mediaType, data: base64 } },
-              { type: "text", text: `Extract production run data from this Heinlein production report. Return ONLY JSON (no markdown):
-{
-  "run_date": "YYYY-MM-DD",
-  "sku": "XD|PW|HM|WM|WD|Matcha",
-  "cases_produced": <number>,
-  "lot_number": "<lot code>",
-  "cogs_per_case": <number or null if not available>,
-  "notes": "<any relevant notes or null>"
-}` }
-            ]
-          }]
-        })
-      });
-      const data = await resp.json();
-      const text = data.content?.find((c: any) => c.type === 'text')?.text ?? '';
-      const parsed = JSON.parse(text.replace(/\`\`\`json|\`\`\`/g, '').trim());
-      setForm(f => ({
-        ...f,
-        run_date: parsed.run_date || f.run_date,
-        sku: (parsed.sku || f.sku) as SKU,
-        cases_produced: parsed.cases_produced ? String(parsed.cases_produced) : f.cases_produced,
-        lot_number: parsed.lot_number || f.lot_number,
-        override_cogs: parsed.cogs_per_case ? String(parsed.cogs_per_case) : f.override_cogs,
-        notes: parsed.notes || f.notes,
-      }));
-      toast.success("Report parsed — review fields and save");
-    } catch (e: any) {
-      toast.error("Could not parse report: " + e.message);
-    } finally {
-      setParsingReport(false);
-    }
-  }
-
-  useEffect(() => { loadRuns(); }, []);
-
-  async function loadRuns() {
-    const { data } = await supabase.from("production_runs").select("*").order("run_date", { ascending: false });
-    setRuns(data ?? []);
-    setLoadingRuns(false);
-  }
-
-  function set(k: string, v: string) { setForm(f => ({ ...f, [k]: v })); }
-
-  const cases = Number(form.cases_produced) || 0;
-  const bom = BOM[form.sku] ?? [];
+  const [bomQty, setBomQty] = useState<Record<string, Record<string, number>>>(BOM_QTY);
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await (supabase.from("ops_bom" as any) as any).select("*");
+        if (data && (data as any[]).length) {
+          const b: Record<string, Record<string, number>> = {};
+          for (const r of data as any[]) { b[r.sku] = b[r.sku] || {}; b[r.sku][r.material] = Number(r.qty_per_case) || 0; }
+          setBomQty(b);
+        }
+      } catch { /* fallback BOM_QTY */ }
+    })();
+  }, []);
 
   const ipStock = useMemo(() => {
-    const map = new Map<string, { material: string; lot: string; qty: number; cogs: number | null; unit: string }>();
+    const map = new Map<string, LotInfo & { unit: string }>();
     for (const r of ipMovements) {
       const rr = r as any;
-      const key = `${r.material}|${r.lot_number ?? "—"}`;
-      const cur = map.get(key) ?? { material: r.material, lot: r.lot_number ?? "—", qty: 0, cogs: null, unit: r.unit ?? "lbs" };
+      const lot = r.lot_number ?? "—";
+      const key = `${r.material}|${lot}`;
+      const cur = map.get(key) ?? { lot, qty: 0, cost: null as number | null, unit: r.unit ?? "lbs", material: r.material } as any;
       cur.qty += r.type === "In" ? Number(r.quantity) : -Number(r.quantity);
-      if (cur.cogs == null && rr.cogs_per_unit) cur.cogs = rr.cogs_per_unit;
+      if (cur.cost == null && rr.cogs_per_unit != null) cur.cost = Number(rr.cogs_per_unit);
+      cur.material = r.material;
       map.set(key, cur);
     }
     return map;
   }, [ipMovements]);
 
-  const bomLines = useMemo(() => {
-    if (cases <= 0) return bom.map(line => ({ ...line, qty: 0, cogsContrib: 0, availableLots: [] as any[], cogs: null as number | null }));
-    return bom.filter(l => (l.pct ?? 0) > 0 || (l.perCase ?? 0) > 0).map(line => {
-      const qty = calcBomQty(line, cases);
-      const availableLots = [...ipStock.entries()]
-        .filter(([, v]) => v.material === line.material && v.qty > 0)
-        .map(([, v]) => v)
-        .sort((a, b) => a.lot.localeCompare(b.lot));
-      const cogs = availableLots[0]?.cogs ?? null;
-      const cogsContrib = cogs != null ? qty * cogs : 0;
-      return { ...line, qty, cogsContrib, availableLots, cogs };
-    });
-  }, [bom, cases, ipStock]);
+  const lotsFor = (material: string): LotInfo[] =>
+    [...ipStock.entries()].filter(([k, v]) => (v as any).material === material && v.qty > 0)
+      .map(([, v]) => ({ lot: v.lot, qty: v.qty, cost: v.cost }))
+      .sort((a, b) => a.lot.localeCompare(b.lot));
+  const autoCost = (material: string, lot: string): number | null => ipStock.get(`${material}|${lot}`)?.cost ?? null;
+  const unitFor = (material: string): string => {
+    for (const v of ipStock.values()) if ((v as any).material === material) return v.unit;
+    return PACK_RE.test(material) ? "Piece" : "lbs";
+  };
+  const matsForSku = (sku: string): string[] =>
+    Object.entries(bomQty[sku] ?? {}).filter(([, q]) => Number(q) > 0).map(([m]) => m);
 
-  const tolling = 0.65;
-  const autoCogs = useMemo(() => {
-    if (cases <= 0) return 0;
-    const ingredientCogs = bomLines.reduce((s, l) => s + l.cogsContrib, 0);
-    return (ingredientCogs / cases) + tolling;
-  }, [bomLines, cases]);
-
-  const finalCogs = form.override_cogs ? Number(form.override_cogs) : autoCogs;
-
-  async function save() {
-    if (!form.cases_produced || cases <= 0) { toast.error("Cases produced required"); return; }
-    if (!form.lot_number) { toast.error("Lot number required"); return; }
-    if (finalCogs <= 0) { toast.error("COGS could not be calculated — enter override COGS manually"); return; }
-    setSaving(true);
-
-    const runPayload = {
-      run_date: form.run_date, facility: form.facility, sku: form.sku,
-      cases_produced: cases, cogs_per_case: finalCogs,
-      lot_number: form.lot_number, notes: form.notes || null,
-    };
-
-    if (editingRun) {
-      const { error } = await supabase.from("production_runs").update(runPayload).eq("id", editingRun.id);
-      if (error) { toast.error(error.message); setSaving(false); return; }
-      toast.success("Production run updated");
-    } else {
-      const { data: runData, error: runErr } = await supabase
-        .from("production_runs").insert(runPayload).select().single();
-      if (runErr || !runData) { toast.error(runErr?.message ?? "Failed"); setSaving(false); return; }
-
-      const fpWh: Warehouse = form.facility === "Heinlein" ? "Heinlein" : form.facility === "Empire" ? "Empire" : "OOE";
-      await supabase.from("fp_movements").insert({
-        movement_date: form.run_date, type: "In" as const,
-        sku: form.sku, cases, warehouse: fpWh,
-        lot_number: form.lot_number, concept: "Production" as const,
-        cogs_per_case: finalCogs,
-        notes: `Production run · ${form.facility} · ${form.run_date}`,
-      });
-
-      for (const line of bomLines) {
-        if (line.qty <= 0) continue;
-        const lot = line.availableLots[0];
-        await supabase.from("ip_movements").insert({
-          movement_date: form.run_date, type: "Out" as const,
-          material: line.material, quantity: Math.round(line.qty * 100) / 100,
-          unit: line.unit, lot_number: lot?.lot ?? null,
-          concept: "Consumption" as const,
-          cogs_per_unit: lot?.cogs ?? null,
-          notes: `BOM consumption · ${form.sku} · ${cases} cases · lot ${form.lot_number}`,
-        });
-      }
-
-      toast.success(`Production run saved · ${cases} cases ${form.sku} · ${bomLines.length} IP movements created`);
-    }
-
-    setSaving(false);
-    setEditingRun(null);
-    setForm(f => ({ ...f, cases_produced: "", lot_number: "", notes: "", override_cogs: "" }));
-    loadRuns();
-    onAdded();
-  }
-
-  function startEdit(r: any) {
-    setEditingRun(r);
-    setForm({
-      run_date: r.run_date, facility: r.facility as Facility, sku: r.sku as SKU,
-      cases_produced: String(r.cases_produced), lot_number: r.lot_number ?? "",
-      notes: r.notes ?? "", override_cogs: String(r.cogs_per_case),
-    });
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }
-
-  async function removeRun(id: string) {
-    const runToDelete = runs.find(r => r.id === id);
-    if (!runToDelete) { toast.error("Run not found"); return; }
-
-    await supabase.from("fp_movements")
-      .delete()
-      .eq("lot_number", runToDelete.lot_number)
-      .eq("concept", "Production")
-      .eq("sku", runToDelete.sku)
-      .eq("movement_date", runToDelete.run_date)
-      .eq("type", "In");
-
-    await supabase.from("ip_movements")
-      .delete()
-      .eq("concept", "Consumption")
-      .eq("movement_date", runToDelete.run_date)
-      .ilike("notes", `%${runToDelete.lot_number}%`);
-
-    const { error } = await supabase.from("production_runs").delete().eq("id", id);
-    if (error) { toast.error(error.message); return; }
-    setConfirmId(null);
-    toast.success(`Production run deleted · FP movement and IP consumptions removed`);
-    loadRuns();
-    onAdded();
-  }
-
-  const inp = "rounded-lg border border-border bg-background px-3 py-1.5 text-sm w-full focus:outline-none focus:ring-2 focus:ring-primary/30";
-  const Lbl = ({ children }: { children: React.ReactNode }) => (
-    <label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">{children}</label>
-  );
+  const potes = UNITS_PER_CASE;
+  const tolling = DEFAULT_PROD_COSTS.tolling_per_unit;
 
   return (
-    <div className="space-y-5">
-      <div className="flex gap-1 rounded-xl bg-muted p-1 w-fit">
-        {(["production","transfer"] as const).map(m => (
-          <button key={m} onClick={() => setActiveForm(m)}
-            className={`rounded-lg px-4 py-1.5 text-xs font-semibold transition-colors ${activeForm===m ? "text-white shadow-sm" : "text-muted-foreground"}`}
-            style={activeForm===m ? { backgroundColor: m==="production" ? "#A3224A" : "#1C2340" } : {}}>
-            {m === "production" ? "Production run" : "Warehouse transfer"}
-          </button>
+    <div className="space-y-4">
+      <div className="flex gap-2">
+        {([["A", "Producción por SKU"], ["B", "Producción global"], ["transfer", "Warehouse transfer"]] as const).map(([m, label]) => (
+          <button key={m} onClick={() => setActiveForm(m as any)}
+            className={`rounded-lg px-4 py-1.5 text-sm font-semibold ${activeForm === m ? "text-white" : "border border-border hover:bg-muted"}`}
+            style={activeForm === m ? { backgroundColor: m === "transfer" ? "#1C2340" : "#A3224A" } : {}}>{label}</button>
         ))}
       </div>
 
-      {activeForm === "transfer" && (
-        <FPTransferForm fpMovements={fpMovements} onAdded={onAdded} />
-      )}
+      {activeForm === "A" && <BySkuForm bomQty={bomQty} matsForSku={matsForSku} lotsFor={lotsFor} autoCost={autoCost} unitFor={unitFor} potes={potes} tolling={tolling} onAdded={onAdded} />}
+      {activeForm === "B" && <GlobalForm bomQty={bomQty} matsForSku={matsForSku} lotsFor={lotsFor} autoCost={autoCost} unitFor={unitFor} potes={potes} tolling={tolling} onAdded={onAdded} />}
+      {activeForm === "transfer" && <FPTransferForm fpMovements={fpMovements} onAdded={onAdded} />}
 
-      {activeForm === "production" && (
-        <div className="rounded-2xl border border-border bg-card shadow-sm p-5">
-          {editingRun && (
-            <div className="mb-3 rounded-xl border px-4 py-2 text-sm font-semibold"
-              style={{ borderColor:"#A3224A", color:"#A3224A", backgroundColor:"#A3224A10" }}>
-              Editing run — {editingRun.lot_number}
-            </div>
-          )}
-          <h3 className="text-sm font-bold mb-4" style={{ color:"#1C2340" }}>
-            {editingRun ? "Edit Production Run" : "New Production Run"}
-          </h3>
-
-          {!editingRun && (
-            <div className="mb-5">
-              <label className="cursor-pointer block">
-                <div className="rounded-2xl border-2 border-dashed p-5 text-center hover:opacity-80 transition-opacity"
-                  style={{borderColor:"#A3224A", backgroundColor:"#A3224A08"}}>
-                  <div className="text-3xl mb-2">📄</div>
-                  <p className="text-sm font-bold" style={{color:"#A3224A"}}>Upload Heinlein production report</p>
-                  <p className="text-xs text-muted-foreground mt-1">PDF or Excel · AI reads BOM, lot number and cases automatically</p>
-                  <div className="mt-3 inline-block rounded-lg px-5 py-2 text-sm font-semibold text-white" style={{backgroundColor:"#A3224A"}}>
-                    Choose file
-                  </div>
-                </div>
-                <input type="file" accept=".pdf,.xlsx,.xls" className="hidden"
-                  onChange={e => { const f = e.target.files?.[0]; if (f) parseProductionReport(f); }} />
-              </label>
-              {parsingReport && (
-                <div className="mt-2 rounded-xl bg-muted/40 p-3 text-center text-sm text-muted-foreground">
-                  <span className="animate-pulse">🤖 AI is reading the report and filling the form…</span>
-                </div>
-              )}
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-            <div><Lbl>Run Date</Lbl>
-              <input type="date" className={`${inp} mt-1`} value={form.run_date}
-                onChange={e => set("run_date", e.target.value)} /></div>
-            <div><Lbl>Facility</Lbl>
-              <select className={`${inp} mt-1`} value={form.facility} onChange={e => set("facility", e.target.value)}>
-                {FACILITIES.map(f => <option key={f} value={f}>{f}</option>)}
-              </select></div>
-            <div><Lbl>SKU</Lbl>
-              <select className={`${inp} mt-1`} value={form.sku} onChange={e => set("sku", e.target.value)}>
-                {SKUS.map(s => <option key={s} value={s}>{s} ({SKU_ITEMS[s as SKU]})</option>)}
-              </select></div>
-            <div><Lbl>Cases Produced *</Lbl>
-              <input type="number" className={`${inp} mt-1 font-mono`} value={form.cases_produced}
-                min={1} onChange={e => set("cases_produced", e.target.value)} /></div>
-          </div>
-
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
-            <div><Lbl>Lot # *</Lbl>
-              <input className={`${inp} mt-1 font-mono`} value={form.lot_number}
-                onChange={e => set("lot_number", e.target.value)} placeholder="e.g. HEI-2026-07" /></div>
-            <div>
-              <Lbl>COGS override ($) · leave blank = auto</Lbl>
-              <input type="number" step="0.01" className={`${inp} mt-1 font-mono`}
-                value={form.override_cogs} placeholder={autoCogs > 0 ? `Auto: $${autoCogs.toFixed(2)}` : "—"}
-                onChange={e => set("override_cogs", e.target.value)} />
-            </div>
-            <div><Lbl>Notes</Lbl>
-              <input className={`${inp} mt-1`} value={form.notes} onChange={e => set("notes", e.target.value)} /></div>
-          </div>
-
-          {cases > 0 && (
-            <div className="rounded-xl border border-border bg-muted/20 p-3 mb-4">
-              <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2">
-                BOM · {cases} cases of {form.sku} — auto-generated IP OUT movements on save
-              </p>
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="text-[10px] uppercase tracking-wide text-muted-foreground border-b border-border/60">
-                      <th className="pb-1.5 text-left">Material</th>
-                      <th className="pb-1.5 text-right">Qty needed</th>
-                      <th className="pb-1.5 text-left pl-3">Available lot</th>
-                      <th className="pb-1.5 text-right">Available qty</th>
-                      <th className="pb-1.5 text-right">COGS/unit</th>
-                      <th className="pb-1.5 text-right">COGS contrib.</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {bomLines.map(line => {
-                      const firstLot = line.availableLots[0];
-                      const enough = firstLot ? firstLot.qty >= line.qty : false;
-                      return (
-                        <tr key={line.material} className={`border-t border-border/40 ${!enough ? "bg-red-50/30" : ""}`}>
-                          <td className="py-1 font-semibold" style={{ color:"#1C2340" }}>{line.material}</td>
-                          <td className="py-1 text-right font-mono">
-                            {line.qty.toFixed(1)} {line.unit}
-                          </td>
-                          <td className="py-1 pl-3 font-mono text-muted-foreground text-[10px]">
-                            {firstLot ? firstLot.lot : <span className="text-red-600 font-semibold">⚠ no stock</span>}
-                          </td>
-                          <td className="py-1 text-right font-mono text-muted-foreground">
-                            {firstLot ? `${firstLot.qty.toLocaleString()} ${line.unit}` : "—"}
-                            {!enough && firstLot && <span className="ml-1 text-red-600 font-semibold">⚠</span>}
-                          </td>
-                          <td className="py-1 text-right font-mono text-muted-foreground">
-                            {line.cogs != null ? `$${line.cogs.toFixed(4)}` : "—"}
-                          </td>
-                          <td className="py-1 text-right font-mono font-semibold" style={{ color:"#A3224A" }}>
-                            {line.cogsContrib > 0 ? `$${line.cogsContrib.toFixed(2)}` : "—"}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    <tr className="border-t-2 border-border font-semibold bg-muted/10">
-                      <td className="py-1.5" colSpan={5} style={{ color:"#1C2340" }}>
-                        Ingredients + Tolling (${tolling.toFixed(2)}/case)
-                      </td>
-                      <td className="py-1.5 text-right font-mono text-emerald-700">
-                        {finalCogs > 0 ? `$${finalCogs.toFixed(2)}/case` : "—"}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-              {form.override_cogs && (
-                <p className="mt-2 text-[10px] text-orange-600 font-semibold">
-                  ⚠ Using manual COGS override of ${Number(form.override_cogs).toFixed(2)}/case instead of calculated ${autoCogs.toFixed(2)}/case
-                </p>
-              )}
-            </div>
-          )}
-
-          <div className="flex gap-2">
-            <button onClick={save} disabled={saving}
-              className="rounded-lg px-5 py-2 text-sm font-semibold text-white disabled:opacity-50"
-              style={{ backgroundColor:"#A3224A" }}>
-              {saving ? "Saving…"
-                : editingRun ? "Update run"
-                : `+ Save · ${cases || "?"} cases ${form.sku} · COGS $${finalCogs > 0 ? finalCogs.toFixed(2) : "?"}`}
-            </button>
-            {editingRun && (
-              <button onClick={() => { setEditingRun(null); setForm(f => ({ ...f, cases_produced:"", lot_number:"", notes:"", override_cogs:"" })); }}
-                className="rounded-lg border border-border px-4 py-2 text-sm font-semibold hover:bg-muted">Cancel</button>
-            )}
-            {!editingRun && <p className="text-xs text-muted-foreground self-center">↳ Creates FP IN + {bomLines.length} IP OUT movements</p>}
-          </div>
-        </div>
-      )}
-
-      <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
-        <div className="px-5 py-3 border-b border-border bg-muted/30">
-          <p className="text-sm font-semibold" style={{ color:"#1C2340" }}>Production History</p>
-        </div>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
-              <th className="px-4 py-2.5 text-left">Date</th>
-              <th className="px-4 py-2.5 text-left">Facility</th>
-              <th className="px-4 py-2.5 text-left">SKU</th>
-              <th className="px-4 py-2.5 text-right">Cases</th>
-              <th className="px-4 py-2.5 text-right">COGS/case</th>
-              <th className="px-4 py-2.5 text-right">Total COGS</th>
-              <th className="px-4 py-2.5 text-left">Lot #</th>
-              <th className="px-4 py-2.5 text-left">Notes</th>
-              <th className="px-4 py-2.5 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loadingRuns
-              ? <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">Loading…</td></tr>
-              : runs.length === 0
-              ? <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">No production runs yet</td></tr>
-              : runs.map(r => (
-                <tr key={r.id} className="border-t border-border/60 hover:bg-muted/20">
-                  <td className="px-4 py-1.5 font-mono text-xs">{r.run_date}</td>
-                  <td className="px-4 py-1.5 text-xs">{r.facility}</td>
-                  <td className="px-4 py-1.5 font-semibold" style={{ color:"#1C2340" }}>{r.sku}</td>
-                  <td className="px-4 py-1.5 text-right font-mono font-semibold">{Number(r.cases_produced).toLocaleString()}</td>
-                  <td className="px-4 py-1.5 text-right font-mono text-muted-foreground">${Number(r.cogs_per_case).toFixed(2)}</td>
-                  <td className="px-4 py-1.5 text-right font-mono text-emerald-600">
-                    ${Math.round(Number(r.cases_produced) * Number(r.cogs_per_case)).toLocaleString()}
-                  </td>
-                  <td className="px-4 py-1.5 font-mono text-xs" style={{ color:"#A3224A" }}>{r.lot_number}</td>
-                  <td className="px-4 py-1.5 text-xs text-muted-foreground">{r.notes ?? "—"}</td>
-                  <td className="px-4 py-1.5 text-right">
-                    {confirmId === r.id ? (
-                      <span className="flex flex-col items-end gap-1">
-                        <span className="text-[10px] text-amber-600 font-semibold">⚠ Also deletes linked FP + IP movements</span>
-                        <span className="flex items-center gap-1.5 text-xs">
-                          Delete?
-                          <button onClick={() => removeRun(r.id)}
-                            className="rounded bg-red-600 px-2 py-0.5 text-[10px] font-semibold text-white">Confirm</button>
-                          <button onClick={() => setConfirmId(null)}
-                            className="rounded border border-border px-2 py-0.5 text-[10px]">Cancel</button>
-                        </span>
-                      </span>
-                    ) : (
-                      <span className="flex justify-end gap-2">
-                        <button onClick={() => startEdit(r)} className="text-muted-foreground hover:text-foreground">✎</button>
-                        <button onClick={() => setConfirmId(r.id)} className="text-muted-foreground hover:text-red-600">🗑</button>
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-          </tbody>
-        </table>
-      </div>
+      <ProductionHistory />
     </div>
   );
 }
+
 // ─── COGS Simulator Tab ───────────────────────────────────────────────────────
 const BOM_DATA: Record<string, { lbs_per_case: number; ingredients: Record<string, number> }> = {
   PW:     { lbs_per_case: 2.5, ingredients: { "IQF Raspberry": 0.825, "Chocolate": 1.428, "Pistachio Paste": 0.200, "Cocoa Butter": 0.042, "Spirulina": 0.001 } },
