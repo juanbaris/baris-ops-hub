@@ -1,5 +1,4 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { ExportButton } from "@/components/export-button";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useInvoicedActuals } from "@/hooks/use-invoiced-actuals";
 import { supabase } from "@/integrations/supabase/client";
@@ -2159,7 +2158,7 @@ const BS_ROWS: BSNode[] = [
   {id:"t-liab-equity",label:"TOTAL LIABILITIES AND EQUITY",kind:"total",indent:0,forecastFn:(m,i)=>m.total_assets[i]},
 ];
 
-function BalanceTab({ realMonths, actuals, actualOnly, scenario, paymentsPending, onPaymentsPendingChange, cfInputs }: { realMonths: number; actuals: Record<string,any>; actualOnly: boolean; scenario: Scenario; paymentsPending: Record<number,number>; onPaymentsPendingChange: React.Dispatch<React.SetStateAction<Record<number,number>>>; cfInputs: CfInputs }) {
+function BalanceTab({ realMonths, actuals, actualOnly, scenario, paymentsPending, bsOverrides, onBsFreeze, cfInputs }: { realMonths: number; actuals: Record<string,any>; actualOnly: boolean; scenario: Scenario; paymentsPending: Record<number,number>; bsOverrides: Record<number, { inv?: number, cash?: number }>; onBsFreeze: (pp: Record<number,number>, ov: Record<number, { inv?: number, cash?: number }>) => void; cfInputs: CfInputs }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(
     new Set(["g-bank","g-ar","g-inv","g-fixed","g-cc","g-capital"])
   );
@@ -2167,8 +2166,8 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario, paymentsPending
   const scenarioForecast = useFinanceScenarioForecast(scenario);
   const assumptions = useFinanceAssumptions();
   const [yearFilter, setYearFilter] = useState<'all'|2026|2027|2028>('all');
-  const [ppEditMode, setPpEditMode] = useState(false);
-  const [ppDraft, setPpDraft] = useState<Record<number,number>|null>(null);
+  const [bsEditMode, setBsEditMode] = useState(false);
+  const [bsDraft, setBsDraft] = useState<Record<number, { pp?: number, inv?: number, cash?: number }> | null>(null);
 
   // bs_detail per period (real, wherever Accountfully sent a balance sheet snapshot)
   const bsByPeriod = useMemo(() => {
@@ -2194,6 +2193,33 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario, paymentsPending
   const forecastRawMaterials = (idx: number) => S[idx].rm ?? 0;
   const forecastInventory = (idx: number) => S[idx].inventory ?? 0;
   const forecastCash = (idx: number) => S[idx].cash ?? 0;
+
+  // ── BS overrides: display-level adjustments with plug logic ──
+  // Use draft values when editing, frozen values when not
+  const activeOv = bsEditMode ? (bsDraft ?? {}) : (() => {
+    // Merge bsOverrides (inv/cash) + paymentsPending into the same shape
+    const merged: Record<number, { pp?: number, inv?: number, cash?: number }> = {};
+    for (const [k, v] of Object.entries(bsOverrides)) { merged[Number(k)] = { ...v }; }
+    for (const [k, v] of Object.entries(paymentsPending)) { if (v) (merged[Number(k)] ??= {}).pp = v; }
+    return merged;
+  })();
+  const bsAdj = (idx: number): { cash: number, inv: number, pp: number } => {
+    const m = S[idx];
+    const baseCash = m?.cash ?? 0, baseInv = m?.inventory ?? 0, basePP = m?.paymentsPending ?? 0;
+    if (!m?.isForecast) return { cash: baseCash, inv: baseInv, pp: basePP };
+    const ov = activeOv[idx];
+    if (!ov) return { cash: baseCash, inv: baseInv, pp: basePP };
+    const finalPP = ov.pp ?? basePP;
+    const deltaPP = finalPP - basePP;
+    if (ov.cash != null && ov.inv == null) {
+      // Cash edited → Inventory is plug
+      return { cash: ov.cash, inv: baseInv + deltaPP - (ov.cash - baseCash), pp: finalPP };
+    } else {
+      // Cash is plug (default)
+      const deltaInv = ov.inv != null ? ov.inv - baseInv : 0;
+      return { cash: baseCash + deltaPP - deltaInv, inventory: baseInv, inv: ov.inv ?? baseInv, pp: finalPP };
+    }
+  };
   const avgCreditCardsK = S.find(m => m.isForecast)?.creditCards ?? 0;
   const accruedK = S.find(m => m.isForecast)?.accrued ?? 10.34;
   const fwdLoansShK = S.find(m => m.isForecast)?.loansSh ?? 0;
@@ -2273,12 +2299,12 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario, paymentsPending
           : row.id === "t-capital" ? "g-capital" : null;
         if (gid) return getValue(BS_ROWS.find(r=>r.id===gid)!, idx);
       }
-      if (row.id === "t-bank") return real ? getValue(BS_ROWS.find(r=>r.id==="g-bank")!, idx) : forecastCash(idx);
+      if (row.id === "t-bank") return real ? getValue(BS_ROWS.find(r=>r.id==="g-bank")!, idx) : bsAdj(idx).cash;
       if (row.id === "t-ar")   return real ? getValue(BS_ROWS.find(r=>r.id==="g-ar")!, idx)   : forecastAR(idx);
-      if (row.id === "t-inv")  return real ? getValue(BS_ROWS.find(r=>r.id==="g-inv")!, idx)  : forecastInventory(idx);
+      if (row.id === "t-inv")  return real ? getValue(BS_ROWS.find(r=>r.id==="g-inv")!, idx)  : bsAdj(idx).inv;
       if (row.id === "t-fixed") return real ? getValue(BS_ROWS.find(r=>r.id==="g-fixed")!, idx) : fwdFixedK;
       if (row.id === "t-cc") return real ? getValue(BS_ROWS.find(r=>r.id==="g-cc")!, idx) : forecastCC(idx);
-      if (row.id === "t-other-liab") return accruedK + (S[idx].paymentsPending ?? 0);
+      if (row.id === "t-other-liab") return accruedK + bsAdj(idx).pp;
       if (row.id === "t-loans") return real ? 0 : forecastWcLoan(idx) + forecastFctLoan(idx);
       if (row.id === "t-capital") return real ? getValue(BS_ROWS.find(r=>r.id==="g-capital")!, idx) : forecastCapital(idx);
       if (row.id === "t-curr-assets") {
@@ -2307,7 +2333,7 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario, paymentsPending
     // ── Items ──
     if (isBlank) return null;
     // Payments Pending: always from the editable map (both real & forecast)
-    if (row.id === "payments_pending") return S[idx].paymentsPending ?? 0;
+    if (row.id === "payments_pending") return bsAdj(idx).pp;
     if (real && row.actualKey && real[row.actualKey] != null) {
       return Number(real[row.actualKey]) / 1000;
     }
@@ -2333,7 +2359,7 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario, paymentsPending
       if (row.id === "cap_new") return forecastCapital(idx) - fwdCapitalK;
       if (["boa7830","boa8781","citi_cc","merc_cc"].includes(row.id)) return 0;
       // Individual bank lines: show total cash on the primary line, 0 on the rest.
-      if (row.id === "bofa") return forecastCash(idx);
+      if (row.id === "bofa") return bsAdj(idx).cash;
       if (["citi_b","merc_chk","merc_trs"].includes(row.id)) return 0;
       // AR / inventory detail: AR total, plus finished goods & raw materials split out.
       if (row.id === "ar_item") return forecastAR(idx);
@@ -2361,16 +2387,34 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario, paymentsPending
             </button>
           ))}
         </div>
-        {ppEditMode ? (
+        {bsEditMode ? (
           <span className="flex items-center gap-1">
-            <button onClick={() => { if (ppDraft) onPaymentsPendingChange(ppDraft); setPpEditMode(false); setPpDraft(null); }}
-              className="rounded-full border border-emerald-300 bg-emerald-50 text-emerald-700 px-2 py-0.5 hover:bg-emerald-100">🔒 Congelar Payments Pending</button>
-            <button onClick={() => { setPpEditMode(false); setPpDraft(null); }}
+            <button onClick={() => {
+              if (bsDraft) {
+                const pp: Record<number,number> = {};
+                const ov: Record<number, { inv?: number, cash?: number }> = {};
+                for (const [k, v] of Object.entries(bsDraft)) {
+                  const idx = Number(k);
+                  if (v.pp != null) pp[idx] = v.pp;
+                  if (v.inv != null || v.cash != null) ov[idx] = { ...(v.inv != null ? { inv: v.inv } : {}), ...(v.cash != null ? { cash: v.cash } : {}) };
+                }
+                onBsFreeze(pp, ov);
+              }
+              setBsEditMode(false); setBsDraft(null);
+            }}
+              className="rounded-full border border-emerald-300 bg-emerald-50 text-emerald-700 px-2 py-0.5 hover:bg-emerald-100">🔒 Congelar cambios</button>
+            <button onClick={() => { setBsEditMode(false); setBsDraft(null); }}
               className="rounded-full border border-border px-2 py-0.5 hover:bg-muted">Cancelar</button>
           </span>
         ) : (
-          <button onClick={() => { setPpEditMode(true); setPpDraft({...paymentsPending}); }}
-            className="rounded-full border border-blue-400 text-blue-600 px-2 py-0.5 hover:bg-blue-50">✏️ Editar Payments Pending</button>
+          <button onClick={() => {
+            // Initialize draft from current frozen values
+            const draft: Record<number, { pp?: number, inv?: number, cash?: number }> = {};
+            for (const [k, v] of Object.entries(paymentsPending)) { if (v) (draft[Number(k)] ??= {}).pp = v; }
+            for (const [k, v] of Object.entries(bsOverrides)) { const d = (draft[Number(k)] ??= {}); if (v.inv != null) d.inv = v.inv; if (v.cash != null) d.cash = v.cash; }
+            setBsEditMode(true); setBsDraft(draft);
+          }}
+            className="rounded-full border border-blue-400 text-blue-600 px-2 py-0.5 hover:bg-blue-50">✏️ Editar forecast BS</button>
         )}
         <span className="flex items-center gap-1">
           <span className="h-2 w-2 rounded-full bg-emerald-500 inline-block"/>
@@ -2423,23 +2467,29 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario, paymentsPending
                   </td>
                   {vals.map((v, k) => {
                     const i = visIdx[k];
-                    // Payments Pending: editable only in edit mode
-                    if (row.id === "payments_pending") {
-                      if (ppEditMode) {
-                        const cur = ppDraft?.[i] ?? 0;
-                        return (
-                          <td key={i} className="text-right px-1 py-1">
-                            <input type="number" step={1} value={cur === 0 ? "" : cur}
-                              onChange={e => setPpDraft(prev => ({ ...(prev ?? {}), [i]: Number(e.target.value) || 0 }))}
-                              className="w-14 rounded border border-blue-300 bg-blue-50 px-1 py-0.5 text-[10px] text-right font-mono focus:outline-none focus:ring-1 focus:ring-blue-400" />
-                          </td>
-                        );
-                      }
-                      const ppv = paymentsPending[i] ?? 0;
+                    const isFc = S[i]?.isForecast;
+                    // Editable BS cells: Cash (bofa/t-bank), Inventory (t-inv), PP (payments_pending)
+                    const editableField = row.id === "payments_pending" ? "pp"
+                      : (row.id === "bofa" || row.id === "t-bank") ? "cash"
+                      : row.id === "t-inv" ? "inv"
+                      : null;
+                    if (editableField && isFc && bsEditMode) {
+                      const adj = bsAdj(i);
+                      const cur = editableField === "pp" ? (bsDraft?.[i]?.pp ?? adj.pp)
+                        : editableField === "cash" ? (bsDraft?.[i]?.cash ?? adj.cash)
+                        : (bsDraft?.[i]?.inv ?? adj.inv);
                       return (
-                        <td key={i} className="text-right px-2 py-1.5 font-mono tabular-nums"
-                          style={{color: ppv ? "#2563eb" : "#9CA3AF"}}>
-                          {ppv === 0 ? "—" : `$${ppv}`}
+                        <td key={i} className="text-right px-1 py-1">
+                          <input type="number" step={1} value={cur === 0 ? "" : Math.round(cur)}
+                            onChange={e => {
+                              const nv = Number(e.target.value) || 0;
+                              setBsDraft(prev => {
+                                const d = { ...(prev ?? {}) };
+                                d[i] = { ...(d[i] ?? {}), [editableField]: nv };
+                                return d;
+                              });
+                            }}
+                            className="w-16 rounded border border-blue-300 bg-blue-50 px-1 py-0.5 text-[10px] text-right font-mono focus:outline-none focus:ring-1 focus:ring-blue-400" />
                         </td>
                       );
                     }
@@ -2665,7 +2715,6 @@ function EBITDATab({ actuals }: { actuals: Record<string, any> }) {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 function FinancePage() {
   const [tab, setTab] = useState<FinTab>("dashboard");
-  const contentRef = useRef<HTMLDivElement>(null);
   const [period, setPeriod] = useState<Period>("fy");
   const [refMonth, setRefMonth] = useState(6); // Jul
   const [scenario, setScenario] = useState<"Forecast"|"Actual">("Actual");
@@ -2674,6 +2723,7 @@ function FinancePage() {
   // ── Shared editable inputs (Supabase: finance_shared_inputs) ──
   const [cfInputs, setCfInputs] = useState<CfInputs>({ capital:{}, wcDraw:{}, fctDraw:{}, wcInt:{}, fctInt:{}, investInt:{} });
   const [paymentsPending, setPaymentsPending] = useState<Record<number, number>>({});
+  const [bsOverrides, setBsOverrides] = useState<Record<number, { inv?: number, cash?: number }>>({});
 
   // Load shared inputs from Supabase on mount
   useEffect(() => {
@@ -2683,6 +2733,7 @@ function FinancePage() {
       const cf: any = { capital:{}, wcDraw:{}, fctDraw:{}, wcInt:{}, fctInt:{}, investInt:{} };
       for (const row of data) {
         if (row.key === "paymentsPending") { setPaymentsPending(row.data ?? {}); }
+        else if (row.key === "bsOverrides") { setBsOverrides(row.data ?? {}); }
         else if (row.key.startsWith("cf.")) {
           const field = row.key.replace("cf.", "") as keyof CfInputs;
           if (CF_FIELDS.includes(field as any)) cf[field] = row.data ?? {};
@@ -2703,13 +2754,12 @@ function FinancePage() {
     for (const f of CF_FIELDS) { saveSharedInput(`cf.${f}`, inp[f] ?? {}); }
   };
 
-  // When Payments Pending changes
-  const handlePaymentsPendingChange: React.Dispatch<React.SetStateAction<Record<number,number>>> = (action) => {
-    setPaymentsPending(prev => {
-      const next = typeof action === 'function' ? action(prev) : action;
-      saveSharedInput("paymentsPending", next);
-      return next;
-    });
+  // When BS forecast edits are frozen (PP + overrides)
+  const handleBsFreeze = (pp: Record<number,number>, overrides: Record<number, { inv?: number, cash?: number }>) => {
+    setPaymentsPending(pp);
+    setBsOverrides(overrides);
+    saveSharedInput("paymentsPending", pp);
+    saveSharedInput("bsOverrides", overrides);
   };
 
   // ── Actuals from Supabase ──
@@ -2958,7 +3008,7 @@ function FinancePage() {
       )}
 
       {/* Sub-tabs */}
-      <div className="flex gap-1 border-b border-border overflow-x-auto items-center">
+      <div className="flex gap-1 border-b border-border overflow-x-auto">
         {tabs.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)}
             className={`px-4 py-2 text-sm font-semibold border-b-2 whitespace-nowrap transition-colors ${tab === t.id ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
@@ -2966,15 +3016,7 @@ function FinancePage() {
             {t.label}
           </button>
         ))}
-        <div className="ml-auto self-center pl-2">
-          <ExportButton
-            filename={`BARIS_Finance_${(tabs.find(t => t.id === tab)?.label ?? "Finance").replace(/[^\w]+/g, "_")}${(tab === "pnl" || tab === "cashflow" || tab === "balance") ? (scenario === "Actual" ? "_Actual" : "_Forecast") : ""}`}
-            targetRef={contentRef}
-          />
-        </div>
       </div>
-
-      <div ref={contentRef}>
 
       {/* Period filter — shown on dashboard and pnl */}
       {(tab === "dashboard" || tab === "pnl") && (
@@ -3201,10 +3243,9 @@ function FinancePage() {
         );
       })()}
       {tab === "cashflow"  && <CashFlowTab actuals={actuals} actualOnly={actualOnly} scenario={projScenario} paymentsPending={paymentsPending} cfInputs={cfInputs} onCfInputsChange={handleCfInputsChange} />}
-      {tab === "balance"   && <BalanceTab realMonths={realMonths} actuals={actuals} actualOnly={actualOnly} scenario={projScenario} paymentsPending={paymentsPending} onPaymentsPendingChange={handlePaymentsPendingChange} cfInputs={cfInputs} />}
+      {tab === "balance"   && <BalanceTab realMonths={realMonths} actuals={actuals} actualOnly={actualOnly} scenario={projScenario} paymentsPending={paymentsPending} bsOverrides={bsOverrides} onBsFreeze={handleBsFreeze} cfInputs={cfInputs} />}
       {tab === "runway"    && <RunwayTab />}
       {tab === "ebitda"    && <EBITDATab actuals={actuals} />}
-      </div>
     </div>
   );
 }
