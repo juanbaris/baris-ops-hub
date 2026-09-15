@@ -1745,7 +1745,7 @@ const allocsValue = (a: LotAlloc[]) => a.reduce((s, x) => s + x.qty * x.cost, 0)
 const allocsQty = (a: LotAlloc[]) => a.reduce((s, x) => s + x.qty, 0);
 const prodBatchId = () => "b" + Date.now().toString(36);
 
-type LotInfo = { lot: string; qty: number; cost: number | null };
+type LotInfo = { lot: string; qty: number; cost: number | null; firstDate: string | null };
 
 function MatLineEditor({ line, teorico, onChange, lotsFor, autoCost }: {
   line: MatLine; teorico: number; onChange: (l: MatLine) => void;
@@ -1756,9 +1756,12 @@ function MatLineEditor({ line, teorico, onChange, lotsFor, autoCost }: {
   const value = allocsValue(allocs);
   const real = Number(line.realQty) || 0;
   const sumQty = allocsQty(allocs);
-  const wavg = sumQty > 0 ? value / sumQty : 0;
+  const displayUnit =
+    line.lotMode === "single" ? (line.singleLot ? (autoCost(line.material, line.singleLot) ?? 0) : 0)
+    : line.lotMode === "manual" ? (Number(line.manualCost) || 0)
+    : (sumQty > 0 ? value / sumQty : 0);
   const set = (patch: Partial<MatLine>) => onChange({ ...line, ...patch });
-  const lotOpt = (v: LotInfo) => `${v.lot} · ${v.qty.toLocaleString()} · $${v.cost != null ? v.cost.toFixed(4) : "?"}`;
+  const lotOpt = (v: LotInfo) => `${v.lot} · ${v.qty.toLocaleString()} · $${v.cost != null ? v.cost.toFixed(4) : "?"}${v.firstDate ? ` · ${v.firstDate}` : ""}`;
   return (
     <tr className="border-t border-border/40 align-top">
       <td className="py-1 pr-2 font-semibold" style={{ color: "#1C2340" }}>
@@ -1801,7 +1804,7 @@ function MatLineEditor({ line, teorico, onChange, lotsFor, autoCost }: {
           </div>
         )}
       </td>
-      <td className="py-1 px-2 text-right font-mono text-xs text-muted-foreground">{wavg > 0 ? `$${wavg.toFixed(4)}` : "—"}</td>
+      <td className="py-1 px-2 text-right font-mono text-xs text-muted-foreground">{displayUnit > 0 ? `$${displayUnit.toFixed(4)}` : "—"}</td>
       <td className="py-1 px-2 text-right font-mono font-semibold" style={{ color: "#A3224A" }}>{value > 0 ? `$${value.toFixed(2)}` : "—"}</td>
       <td className="py-1 px-1"><input className={`${PROD_INP} w-28`} value={line.comment} onChange={e => set({ comment: e.target.value })} placeholder="—" /></td>
     </tr>
@@ -1836,7 +1839,7 @@ function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, potes, toll
   const [sku, setSku] = useState<SKU>("XD");
   const [cases, setCases] = useState("");
   const [warehouse, setWarehouse] = useState<Warehouse>("Heinlein");
-  const [moc, setMoc] = useState("");
+  const [mocs, setMocs] = useState<{ moc: string; cases: string }[]>([{ moc: "", cases: "" }]);
   const [lines, setLines] = useState<MatLine[]>([]);
   const [saving, setSaving] = useState(false);
 
@@ -1857,19 +1860,25 @@ function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, potes, toll
     setSaving(true);
     const batch = prodBatchId();
     const facility: Facility = (FACILITIES as string[]).includes(warehouse) ? (warehouse as Facility) : "Heinlein";
-    const fpLot = moc || `PROD-${sku}-${runDate}`;
-    const runNote = `${moc ? `MOC ${moc} · ` : ""}#${batch}`;
-    const { error: runErr } = await supabase.from("production_runs").insert({
-      run_date: runDate, facility, sku, cases_produced: nCases,
-      cogs_per_case: cogsPerCase, lot_number: fpLot, notes: runNote,
-    });
-    if (runErr) { toast.error(runErr.message); setSaving(false); return; }
-    const { error: fpErr } = await supabase.from("fp_movements").insert({
-      movement_date: runDate, type: "In", sku, cases: nCases, warehouse,
-      lot_number: fpLot, moc: moc || null, concept: "Production",
-      cogs_per_case: cogsPerCase, notes: `Producción · ${sku} · ${nCases} cases · #${batch}`,
-    } as any);
-    if (fpErr) { toast.error(fpErr.message); setSaving(false); return; }
+    const mocRows = mocs.filter(m => Number(m.cases) > 0);
+    const batches = mocRows.length
+      ? mocRows.map(m => ({ moc: m.moc.trim(), cases: Number(m.cases) }))
+      : [{ moc: "", cases: nCases }];
+    for (const b of batches) {
+      const fpLot = b.moc || `PROD-${sku}-${runDate}`;
+      const { error: runErr } = await supabase.from("production_runs").insert({
+        run_date: runDate, facility, sku, cases_produced: b.cases,
+        cogs_per_case: cogsPerCase, lot_number: fpLot,
+        notes: `${b.moc ? `MOC ${b.moc} · ` : ""}#${batch}`,
+      });
+      if (runErr) { toast.error(runErr.message); setSaving(false); return; }
+      const { error: fpErr } = await supabase.from("fp_movements").insert({
+        movement_date: runDate, type: "In", sku, cases: b.cases, warehouse,
+        lot_number: fpLot, moc: b.moc || null, concept: "Production",
+        cogs_per_case: cogsPerCase, notes: `Producción · ${sku} · ${b.cases} cases · #${batch}`,
+      } as any);
+      if (fpErr) { toast.error(fpErr.message); setSaving(false); return; }
+    }
     const ipRows: any[] = [];
     for (const l of active) for (const a of lineAllocs(l, autoCost)) {
       if (a.qty <= 0) continue;
@@ -1882,7 +1891,7 @@ function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, potes, toll
     }
     if (ipRows.length) { const { error } = await supabase.from("ip_movements").insert(ipRows); if (error) { toast.error(error.message); setSaving(false); return; } }
     toast.success(`Producción guardada · ${nCases} cases ${sku} · ${ipRows.length} IP OUT · $${cogsPerPote.toFixed(4)}/pote`);
-    setCases(""); setMoc(""); setSaving(false);
+    setCases(""); setMocs([{ moc: "", cases: "" }]); setSaving(false);
     setLines(matsForSku(sku).map(m => blankLine(m, unitFor(m), Number(bomQty[sku]?.[m]) || 0)));
     onAdded();
   }
@@ -1890,7 +1899,7 @@ function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, potes, toll
   return (
     <div className="rounded-2xl border border-border bg-card shadow-sm p-5 space-y-4">
       <p className="text-sm font-bold" style={{ color: "#1C2340" }}>Nueva producción · por SKU</p>
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Fecha</label>
           <input type="date" className={`${PROD_INP} mt-1 w-full`} value={runDate} onChange={e => setRunDate(e.target.value)} /></div>
         <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">SKU</label>
@@ -1903,8 +1912,21 @@ function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, potes, toll
           <select className={`${PROD_INP} mt-1 w-full`} value={warehouse} onChange={e => setWarehouse(e.target.value as Warehouse)}>
             {WAREHOUSES.map(w => <option key={w} value={w}>{w}</option>)}
           </select></div>
-        <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">MOC</label>
-          <input className={`${PROD_INP} mt-1 w-full`} value={moc} onChange={e => setMoc(e.target.value)} placeholder="nombre MOC" /></div>
+      </div>
+
+      <div>
+        <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">MOC (opcional · repartí las cases en uno o varios)</p>
+        <div className="space-y-1">
+          {mocs.map((m, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <input className={`${PROD_INP} w-56`} value={m.moc} onChange={e => setMocs(p => p.map((x, j) => j === i ? { ...x, moc: e.target.value } : x))} placeholder="nombre MOC" />
+              <input type="number" className={`${PROD_INP} w-28 text-right font-mono`} value={m.cases} onChange={e => setMocs(p => p.map((x, j) => j === i ? { ...x, cases: e.target.value } : x))} placeholder="cases" />
+              <button onClick={() => setMocs(p => { const n = p.filter((_, j) => j !== i); return n.length ? n : [{ moc: "", cases: "" }]; })} className="text-muted-foreground hover:text-red-600 text-xs">✕</button>
+            </div>
+          ))}
+          <button onClick={() => setMocs(p => [...p, { moc: "", cases: "" }])} className="text-[10px] text-muted-foreground hover:text-foreground">+ MOC</button>
+          {(() => { const sum = mocs.reduce((s, m) => s + (Number(m.cases) || 0), 0); return sum > 0 && Math.abs(sum - nCases) > 0.5 ? <span className="ml-2 text-[10px] text-orange-600">Σ MOC {sum.toLocaleString()} ≠ cases {nCases.toLocaleString()}</span> : null; })()}
+        </div>
       </div>
 
       {nCases > 0 && (
@@ -1931,7 +1953,7 @@ function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, potes, toll
         <button onClick={save} disabled={saving} className="rounded-lg px-5 py-2 text-sm font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "#A3224A" }}>
           {saving ? "Guardando…" : `+ Guardar · ${nCases || "?"} cases ${sku} · $${cogsPerPote > 0 ? cogsPerPote.toFixed(4) : "?"}/pote`}
         </button>
-        <span className="text-xs text-muted-foreground">↳ Crea 1 FP IN + N IP OUT (Consumption)</span>
+        <span className="text-xs text-muted-foreground">↳ Crea 1 FP IN por MOC + N IP OUT (Consumption)</span>
       </div>
     </div>
   );
@@ -2197,9 +2219,10 @@ function ProductionTab({ fpMovements, ipMovements, onAdded }: {
       const rr = r as any;
       const lot = r.lot_number ?? "—";
       const key = `${r.material}|${lot}`;
-      const cur = map.get(key) ?? { lot, qty: 0, cost: null as number | null, unit: r.unit ?? "lbs", material: r.material } as any;
+      const cur = map.get(key) ?? { lot, qty: 0, cost: null as number | null, unit: r.unit ?? "lbs", material: r.material, firstDate: null as string | null } as any;
       cur.qty += r.type === "In" ? Number(r.quantity) : -Number(r.quantity);
       if (cur.cost == null && rr.cogs_per_unit != null) cur.cost = Number(rr.cogs_per_unit);
+      if (r.type === "In" && r.movement_date && (!cur.firstDate || r.movement_date < cur.firstDate)) cur.firstDate = r.movement_date;
       cur.material = r.material;
       map.set(key, cur);
     }
@@ -2207,9 +2230,9 @@ function ProductionTab({ fpMovements, ipMovements, onAdded }: {
   }, [ipMovements]);
 
   const lotsFor = (material: string): LotInfo[] =>
-    [...ipStock.entries()].filter(([k, v]) => (v as any).material === material && v.qty > 0)
-      .map(([, v]) => ({ lot: v.lot, qty: v.qty, cost: v.cost }))
-      .sort((a, b) => a.lot.localeCompare(b.lot));
+    [...ipStock.entries()].filter(([, v]) => (v as any).material === material && v.qty > 0)
+      .map(([, v]) => ({ lot: v.lot, qty: v.qty, cost: v.cost, firstDate: (v as any).firstDate ?? null }))
+      .sort((a, b) => (a.firstDate ?? "0000-00-00").localeCompare(b.firstDate ?? "0000-00-00") || a.lot.localeCompare(b.lot));
   const autoCost = (material: string, lot: string): number | null => ipStock.get(`${material}|${lot}`)?.cost ?? null;
   const unitFor = (material: string): string => {
     for (const v of ipStock.values()) if ((v as any).material === material) return v.unit;
