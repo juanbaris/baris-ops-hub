@@ -1744,6 +1744,7 @@ function lineAllocs(l: MatLine, autoCost: (m: string, lot: string) => number | n
 const allocsValue = (a: LotAlloc[]) => a.reduce((s, x) => s + x.qty * x.cost, 0);
 const allocsQty = (a: LotAlloc[]) => a.reduce((s, x) => s + x.qty, 0);
 const prodBatchId = () => "b" + Date.now().toString(36);
+const prodBatchOf = (notes: string | null): string | null => { const m = (notes || "").match(/#(b[a-z0-9]+)/i); return m ? m[1] : null; };
 
 type LotInfo = { lot: string; qty: number; cost: number | null; firstDate: string | null };
 
@@ -1829,11 +1830,12 @@ function MatLineHead() {
 }
 
 // ── Modo A · Producción por SKU (directo) ──
-function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, potes, tolling, onAdded }: {
+function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, potes, tolling, onAdded, initial, editBatch, onCancelEdit }: {
   bomQty: Record<string, Record<string, number>>;
   matsForSku: (sku: string) => string[];
   lotsFor: (m: string) => LotInfo[]; autoCost: (m: string, lot: string) => number | null;
   unitFor: (m: string) => string; potes: number; tolling: number; onAdded: () => void;
+  initial?: any; editBatch?: string | null; onCancelEdit?: () => void;
 }) {
   const [runDate, setRunDate] = useState(ymd());
   const [sku, setSku] = useState<SKU>("XD");
@@ -1842,11 +1844,24 @@ function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, potes, toll
   const [mocs, setMocs] = useState<{ moc: string; cases: string }[]>([{ moc: "", cases: "" }]);
   const [lines, setLines] = useState<MatLine[]>([]);
   const [saving, setSaving] = useState(false);
+  const appliedRef = useRef<string | null>(null);
+  const skipRebuild = useRef(false);
 
   useEffect(() => {
+    if (skipRebuild.current) { skipRebuild.current = false; return; }
+    if (editBatch) return;
     const mats = matsForSku(sku);
     setLines(mats.map(m => blankLine(m, unitFor(m), Number(bomQty[sku]?.[m]) || 0)));
-  }, [sku, bomQty]);
+  }, [sku, bomQty, editBatch]);
+
+  useEffect(() => {
+    if (initial && initial.batch !== appliedRef.current) {
+      appliedRef.current = initial.batch;
+      skipRebuild.current = true;
+      setRunDate(initial.runDate); setSku(initial.sku); setCases(initial.cases);
+      setWarehouse(initial.warehouse); setMocs(initial.mocs); setLines(initial.lines);
+    }
+  }, [initial]);
 
   const nCases = Number(cases) || 0;
   const mpTotal = useMemo(() => lines.reduce((s, l) => s + allocsValue(lineAllocs(l, autoCost)), 0), [lines, autoCost]);
@@ -1858,6 +1873,11 @@ function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, potes, toll
     const active = lines.filter(l => lineAllocs(l, autoCost).length > 0);
     if (!active.length) { toast.error("Cargá al menos un material consumido"); return; }
     setSaving(true);
+    if (editBatch) {
+      await supabase.from("fp_movements").delete().ilike("notes", `%#${editBatch}%`);
+      await supabase.from("ip_movements").delete().ilike("notes", `%#${editBatch}%`);
+      await supabase.from("production_runs").delete().ilike("notes", `%#${editBatch}%`);
+    }
     const batch = prodBatchId();
     const facility: Facility = (FACILITIES as string[]).includes(warehouse) ? (warehouse as Facility) : "Heinlein";
     const mocRows = mocs.filter(m => Number(m.cases) > 0);
@@ -1890,7 +1910,8 @@ function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, potes, toll
       });
     }
     if (ipRows.length) { const { error } = await supabase.from("ip_movements").insert(ipRows); if (error) { toast.error(error.message); setSaving(false); return; } }
-    toast.success(`Producción guardada · ${nCases} cases ${sku} · ${ipRows.length} IP OUT · $${cogsPerPote.toFixed(4)}/pote`);
+    toast.success(`${editBatch ? "Producción actualizada" : "Producción guardada"} · ${nCases} cases ${sku} · ${ipRows.length} IP OUT · $${cogsPerPote.toFixed(4)}/pote`);
+    appliedRef.current = null;
     setCases(""); setMocs([{ moc: "", cases: "" }]); setSaving(false);
     setLines(matsForSku(sku).map(m => blankLine(m, unitFor(m), Number(bomQty[sku]?.[m]) || 0)));
     onAdded();
@@ -1951,20 +1972,22 @@ function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, potes, toll
 
       <div className="flex items-center gap-3">
         <button onClick={save} disabled={saving} className="rounded-lg px-5 py-2 text-sm font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "#A3224A" }}>
-          {saving ? "Guardando…" : `+ Guardar · ${nCases || "?"} cases ${sku} · $${cogsPerPote > 0 ? cogsPerPote.toFixed(4) : "?"}/pote`}
+          {saving ? "Guardando…" : editBatch ? `✎ Actualizar · ${nCases || "?"} cases ${sku}` : `+ Guardar · ${nCases || "?"} cases ${sku} · $${cogsPerPote > 0 ? cogsPerPote.toFixed(4) : "?"}/pote`}
         </button>
-        <span className="text-xs text-muted-foreground">↳ Crea 1 FP IN por MOC + N IP OUT (Consumption)</span>
+        {editBatch && <button onClick={() => { appliedRef.current = null; onCancelEdit && onCancelEdit(); }} className="rounded-lg border border-border px-4 py-2 text-sm font-semibold hover:bg-muted">Cancelar</button>}
+        <span className="text-xs text-muted-foreground">{editBatch ? "↳ Reemplaza los FP/IP de esta producción" : "↳ Crea 1 FP IN por MOC + N IP OUT (Consumption)"}</span>
       </div>
     </div>
   );
 }
 
 // ── Modo B · Producción global (absorción) ──
-function GlobalForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, potes, tolling, onAdded }: {
+function GlobalForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, potes, tolling, onAdded, initial, editBatch, onCancelEdit }: {
   bomQty: Record<string, Record<string, number>>;
   matsForSku: (sku: string) => string[];
   lotsFor: (m: string) => LotInfo[]; autoCost: (m: string, lot: string) => number | null;
   unitFor: (m: string) => string; potes: number; tolling: number; onAdded: () => void;
+  initial?: any; editBatch?: string | null; onCancelEdit?: () => void;
 }) {
   const [runDate, setRunDate] = useState(ymd());
   const [warehouse, setWarehouse] = useState<Warehouse>("Heinlein");
@@ -1972,6 +1995,15 @@ function GlobalForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, potes, tol
   const [skuCases, setSkuCases] = useState<Record<string, string>>({});
   const [lineMap, setLineMap] = useState<Record<string, MatLine>>({});
   const [saving, setSaving] = useState(false);
+  const appliedRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (initial && initial.batch !== appliedRef.current) {
+      appliedRef.current = initial.batch;
+      setRunDate(initial.runDate); setWarehouse(initial.warehouse); setMoc(initial.moc);
+      setSkuCases(initial.skuCases); setLineMap(initial.lineMap);
+    }
+  }, [initial]);
 
   const activeSkus = SKUS.filter(s => (Number(skuCases[s]) || 0) > 0);
   const skuCasesKey = activeSkus.map(s => `${s}:${skuCases[s]}`).join(",");
@@ -2017,6 +2049,11 @@ function GlobalForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, potes, tol
     const usedLines = matsUnion.map(getLine).filter(l => lineAllocs(l, autoCost).length > 0);
     if (!usedLines.length) { toast.error("Cargá al menos un material consumido"); return; }
     setSaving(true);
+    if (editBatch) {
+      await supabase.from("fp_movements").delete().ilike("notes", `%#${editBatch}%`);
+      await supabase.from("ip_movements").delete().ilike("notes", `%#${editBatch}%`);
+      await supabase.from("production_runs").delete().ilike("notes", `%#${editBatch}%`);
+    }
     const batch = prodBatchId();
     const facility: Facility = (FACILITIES as string[]).includes(warehouse) ? (warehouse as Facility) : "Heinlein";
     // FP IN + production_runs por SKU
@@ -2048,7 +2085,8 @@ function GlobalForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, potes, tol
       });
     }
     if (ipRows.length) { const { error } = await supabase.from("ip_movements").insert(ipRows); if (error) { toast.error(error.message); setSaving(false); return; } }
-    toast.success(`Producción global · ${activeSkus.length} SKU · ${ipRows.length} IP OUT`);
+    toast.success(`${editBatch ? "Producción global actualizada" : "Producción global"} · ${activeSkus.length} SKU · ${ipRows.length} IP OUT`);
+    appliedRef.current = null;
     setSkuCases({}); setLineMap({}); setMoc(""); setSaving(false);
     onAdded();
   }
@@ -2123,29 +2161,27 @@ function GlobalForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, potes, tol
 
       <div className="flex items-center gap-3">
         <button onClick={save} disabled={saving} className="rounded-lg px-5 py-2 text-sm font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "#A3224A" }}>
-          {saving ? "Guardando…" : `+ Guardar global · ${activeSkus.length} SKU`}
+          {saving ? "Guardando…" : editBatch ? `✎ Actualizar global · ${activeSkus.length} SKU` : `+ Guardar global · ${activeSkus.length} SKU`}
         </button>
-        <span className="text-xs text-muted-foreground">↳ Crea N FP IN (1 por SKU) + IP OUT por material</span>
+        {editBatch && <button onClick={() => { appliedRef.current = null; onCancelEdit && onCancelEdit(); }} className="rounded-lg border border-border px-4 py-2 text-sm font-semibold hover:bg-muted">Cancelar</button>}
+        <span className="text-xs text-muted-foreground">{editBatch ? "↳ Reemplaza los FP/IP de esta producción" : "↳ Crea N FP IN (1 por SKU) + IP OUT por material"}</span>
       </div>
     </div>
   );
 }
 
 // ── Historial ──
-function ProductionHistory() {
+function ProductionHistory({ onEdit, reloadSignal }: { onEdit: (r: any) => void; reloadSignal: number }) {
   const [runs, setRuns] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [confirmId, setConfirmId] = useState<string | null>(null);
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [reloadSignal]);
   async function load() {
     const { data } = await supabase.from("production_runs").select("*").order("run_date", { ascending: false });
     setRuns(data ?? []); setLoading(false);
   }
-  function batchOf(notes: string | null): string | null {
-    const m = (notes || "").match(/#(b[a-z0-9]+)/i); return m ? m[1] : null;
-  }
   async function removeRun(r: any) {
-    const batch = batchOf(r.notes);
+    const batch = prodBatchOf(r.notes);
     if (batch) {
       await supabase.from("fp_movements").delete().ilike("notes", `%#${batch}%`);
       await supabase.from("ip_movements").delete().ilike("notes", `%#${batch}%`);
@@ -2184,7 +2220,12 @@ function ProductionHistory() {
                       <button onClick={() => removeRun(r)} className="rounded bg-red-600 px-2 py-0.5 text-[10px] font-semibold text-white">Sí</button>
                       <button onClick={() => setConfirmId(null)} className="rounded border border-border px-2 py-0.5 text-[10px]">No</button>
                     </span>
-                  ) : <button onClick={() => setConfirmId(r.id)} className="text-muted-foreground hover:text-red-600">🗑</button>}
+                  ) : (
+                    <span className="flex items-center justify-end gap-2">
+                      <button onClick={() => onEdit(r)} className="text-muted-foreground hover:text-foreground" title="Editar">✎</button>
+                      <button onClick={() => setConfirmId(r.id)} className="text-muted-foreground hover:text-red-600" title="Eliminar">🗑</button>
+                    </span>
+                  )}
                 </td>
               </tr>
             ))}
@@ -2244,6 +2285,60 @@ function ProductionTab({ fpMovements, ipMovements, onAdded }: {
   const potes = UNITS_PER_CASE;
   const tolling = DEFAULT_PROD_COSTS.tolling_per_unit;
 
+  const [edit, setEdit] = useState<any | null>(null);
+  const [bump, setBump] = useState(0);
+  const afterSave = () => { onAdded(); setBump(b => b + 1); setEdit(null); };
+
+  function reconstruct(batch: string) {
+    const fps = fpMovements.filter(r => r.type === "In" && r.concept === "Production" && (r.notes || "").includes(`#${batch}`));
+    const ips = ipMovements.filter(r => r.type === "Out" && r.concept === "Consumption" && (r.notes || "").includes(`#${batch}`));
+    if (!fps.length) return null;
+    const skus = [...new Set(fps.map(f => f.sku))];
+    const isGlobal = skus.length > 1 || fps.some(f => (f.notes || "").toLowerCase().includes("global"));
+    const runDate = fps[0].movement_date;
+    const warehouse = (fps[0] as any).warehouse ?? "Heinlein";
+    const byMat = new Map<string, { lot: string; qty: number; cost: number }[]>();
+    for (const r of ips) {
+      const rr = r as any;
+      const arr = byMat.get(r.material) ?? [];
+      arr.push({ lot: r.lot_number ?? "", qty: Number(r.quantity) || 0, cost: Number(rr.cogs_per_unit) || 0 });
+      byMat.set(r.material, arr);
+    }
+    const matLine = (material: string, bomPerCase: number): MatLine => {
+      const allocs = byMat.get(material) ?? [];
+      const unit = (ips.find(r => r.material === material) as any)?.unit ?? (PACK_RE.test(material) ? "Piece" : "lbs");
+      const base = blankLine(material, unit, bomPerCase);
+      if (!allocs.length) return base;
+      if (allocs.length === 1 && allocs[0].lot === "MIX/manual")
+        return { ...base, lotMode: "manual", manualLot: allocs[0].lot, manualCost: String(allocs[0].cost), realQty: String(allocs[0].qty) };
+      if (allocs.length === 1)
+        return { ...base, lotMode: "single", singleLot: allocs[0].lot, realQty: String(allocs[0].qty) };
+      return { ...base, lotMode: "mix", mixRows: allocs.map(a => ({ lot: a.lot, qty: String(a.qty) })), realQty: String(allocs.reduce((s, a) => s + a.qty, 0)) };
+    };
+    if (isGlobal) {
+      const skuCases: Record<string, string> = {};
+      for (const f of fps) skuCases[f.sku] = String(f.cases);
+      const lineMap: Record<string, MatLine> = {};
+      for (const m of byMat.keys()) lineMap[m] = matLine(m, 0);
+      return { mode: "B", batch, runDate, warehouse, moc: (fps[0] as any).moc ?? "", skuCases, lineMap };
+    }
+    const sku = skus[0];
+    const mocs = fps.map(f => ({ moc: (f as any).moc ?? "", cases: String(f.cases) }));
+    const totalCases = fps.reduce((s, f) => s + (Number(f.cases) || 0), 0);
+    const mats = matsForSku(sku);
+    const lines = mats.map(m => matLine(m, Number(bomQty[sku]?.[m]) || 0));
+    for (const m of byMat.keys()) if (!mats.includes(m)) lines.push(matLine(m, 0));
+    return { mode: "A", batch, runDate, warehouse, sku, cases: String(totalCases), mocs: mocs.length ? mocs : [{ moc: "", cases: "" }], lines };
+  }
+
+  function startEdit(r: any) {
+    const batch = prodBatchOf(r.notes);
+    if (!batch) { toast.error("Producción sin batch id — borrala y recargala para editar"); return; }
+    const rec = reconstruct(batch);
+    if (!rec) { toast.error("No pude reconstruir la producción desde los movimientos"); return; }
+    setEdit(rec); setActiveForm(rec.mode as any);
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex gap-2">
@@ -2254,11 +2349,11 @@ function ProductionTab({ fpMovements, ipMovements, onAdded }: {
         ))}
       </div>
 
-      {activeForm === "A" && <BySkuForm bomQty={bomQty} matsForSku={matsForSku} lotsFor={lotsFor} autoCost={autoCost} unitFor={unitFor} potes={potes} tolling={tolling} onAdded={onAdded} />}
-      {activeForm === "B" && <GlobalForm bomQty={bomQty} matsForSku={matsForSku} lotsFor={lotsFor} autoCost={autoCost} unitFor={unitFor} potes={potes} tolling={tolling} onAdded={onAdded} />}
+      {activeForm === "A" && <BySkuForm bomQty={bomQty} matsForSku={matsForSku} lotsFor={lotsFor} autoCost={autoCost} unitFor={unitFor} potes={potes} tolling={tolling} onAdded={afterSave} initial={edit?.mode === "A" ? edit : undefined} editBatch={edit?.mode === "A" ? edit.batch : null} onCancelEdit={() => setEdit(null)} />}
+      {activeForm === "B" && <GlobalForm bomQty={bomQty} matsForSku={matsForSku} lotsFor={lotsFor} autoCost={autoCost} unitFor={unitFor} potes={potes} tolling={tolling} onAdded={afterSave} initial={edit?.mode === "B" ? edit : undefined} editBatch={edit?.mode === "B" ? edit.batch : null} onCancelEdit={() => setEdit(null)} />}
       {activeForm === "transfer" && <FPTransferForm fpMovements={fpMovements} onAdded={onAdded} />}
 
-      <ProductionHistory />
+      <ProductionHistory onEdit={startEdit} reloadSignal={bump} />
     </div>
   );
 }
