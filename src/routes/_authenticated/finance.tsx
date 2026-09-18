@@ -1902,7 +1902,7 @@ function CashFlowTab({ actuals, actualOnly, scenario, paymentsPending, cfInputs,
 
     if (m.isForecast) {
       // Cash-driven: EOM = BOM + CFO + CFI, CFI = the six editable lines. Reconciles by construction.
-      const bop = runEop != null ? runEop : (prev?.cash ?? 0);
+      const bop: number = runEop != null ? runEop : (prev?.cash ?? 0);
       cashBop[i] = bop;
       capContrib[i] = cfget('capital', i); wcDrawA[i] = cfget('wcDraw', i); fctDrawA[i] = cfget('fctDraw', i);
       wcIntA[i] = cfget('wcInt', i); fctIntA[i] = cfget('fctInt', i); investIntA[i] = cfget('investInt', i);
@@ -1910,7 +1910,7 @@ function CashFlowTab({ actuals, actualOnly, scenario, paymentsPending, cfInputs,
       const cfiV = (capContrib[i] as number) + (wcDrawA[i] as number) + (fctDrawA[i] as number) + netInt;
       cfi[i] = cfiV;
       cashMove[i] = (cfoV ?? 0) + cfiV;
-      const eop = bop + (cashMove[i] as number);
+      const eop: number = bop + (cashMove[i] as number);
       cashEop[i] = eop; runEop = eop;
     } else {
       // Real months: EOM is actual cash; CFI = sum of components (same as forecast).
@@ -2217,7 +2217,7 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario, paymentsPending
     } else {
       // Cash is plug (default)
       const deltaInv = ov.inv != null ? ov.inv - baseInv : 0;
-      return { cash: baseCash + deltaPP - deltaInv, inventory: baseInv, inv: ov.inv ?? baseInv, pp: finalPP };
+      return { cash: baseCash + deltaPP - deltaInv, inv: ov.inv ?? baseInv, pp: finalPP };
     }
   };
   const avgCreditCardsK = S.find(m => m.isForecast)?.creditCards ?? 0;
@@ -2732,8 +2732,8 @@ function FinancePage() {
       if (!data) return;
       const cf: any = { capital:{}, wcDraw:{}, fctDraw:{}, wcInt:{}, fctInt:{}, investInt:{} };
       for (const row of data) {
-        if (row.key === "paymentsPending") { setPaymentsPending(row.data ?? {}); }
-        else if (row.key === "bsOverrides") { setBsOverrides(row.data ?? {}); }
+        if (row.key === "paymentsPending") { setPaymentsPending((row.data ?? {}) as Record<number, number>); }
+        else if (row.key === "bsOverrides") { setBsOverrides((row.data ?? {}) as Record<number, { inv?: number, cash?: number }>); }
         else if (row.key.startsWith("cf.")) {
           const field = row.key.replace("cf.", "") as keyof CfInputs;
           if (CF_FIELDS.includes(field as any)) cf[field] = row.data ?? {};

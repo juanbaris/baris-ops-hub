@@ -35,7 +35,7 @@ export function useInvoicedBreakdown() {
 
       const bySkuMonth: Record<string, Record<string, number>> = {};
       const byDistMonth: Record<string, Record<string, number>> = {};
-      for (const o of (rows ?? []) as Record<string, unknown>[]) {
+      for (const o of (rows ?? []) as unknown as Record<string, unknown>[]) {
         const raw = (o.invoice_date ?? o.po_date) as string | null;
         if (!raw) continue;
         const [y, m] = String(raw).split("-").map(Number);

@@ -1945,7 +1945,7 @@ function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, invName, fa
     for (const b of batches) {
       const { error: runErr } = await supabase.from("production_runs").insert({
         run_date: runDate, facility, sku, cases_produced: b.cases,
-        cogs_per_case: cogsPerCase, lot_number: b.moc || null,
+        cogs_per_case: cogsPerCase, lot_number: (b.moc || null) as unknown as string,
         notes: `${b.moc ? `MOC ${b.moc} · ` : ""}#${batch}`,
       });
       if (runErr) { toast.error(runErr.message); setSaving(false); return; }
@@ -2109,7 +2109,7 @@ function GlobalForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, invName, f
       const info = perSku[sk];
       const { error: runErr } = await supabase.from("production_runs").insert({
         run_date: runDate, facility, sku: sk, cases_produced: info.cases,
-        cogs_per_case: info.cogsPerCase, lot_number: moc || null,
+        cogs_per_case: info.cogsPerCase, lot_number: (moc || null) as unknown as string,
         notes: `Global${moc ? ` · MOC ${moc}` : ""} · #${batch}`,
       });
       if (runErr) { toast.error(runErr.message); setSaving(false); return; }
@@ -3389,7 +3389,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     }
   }
   // ─── Editable material master: scrap %, overfill %, lead weeks, payment terms (Supabase: ops_raw_materials) ───
-  const [dbMaterials, setDbMaterials] = useState<{material:string;scrap_pct:number;overfill_pct:number;lead_time_weeks:number;payment_terms:string;default_price:number;unit:string;active:boolean;sort_order:number}[]>([]);
+  const [dbMaterials, setDbMaterials] = useState<{pack_size?:number;material:string;scrap_pct:number;overfill_pct:number;lead_time_weeks:number;payment_terms:string;default_price:number;unit:string;active:boolean;sort_order:number}[]>([]);
   const [rmLoaded, setRmLoaded] = useState(false);
   useEffect(() => {
     (async () => {
@@ -4517,7 +4517,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
           <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-border bg-card px-4 py-3 shadow-sm">
             <span className="text-xs font-semibold text-muted-foreground">Buy for:</span>
             {([["next","Next run only"],["3m","Next 3 months"],["all","Full horizon (12 mo)"]] as const).map(([id,label])=>(
-              <button key={id} onClick={()=>setShopScope(id)}
+              <button key={id} onClick={()=>setShopScope(id as unknown as typeof shopScope)}
                 className="rounded-full border px-3 py-1 text-xs font-semibold transition-colors"
                 style={shopScope===id
                   ?{backgroundColor:"#A3224A",borderColor:"#A3224A",color:"#fff"}

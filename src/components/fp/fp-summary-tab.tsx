@@ -217,7 +217,7 @@ export function FPSummaryTab() {
         const lotCogs = resolveCogs({ cogs_per_case: null, lot_number: mv.lot_number }, lotMap).cogs;
         const pote = lotCogs != null
           ? lotCogs
-          : (mv.cogs_per_case != null && mv.cogs_per_case !== "" ? Number(mv.cogs_per_case) : null);
+          : (mv.cogs_per_case != null ? Number(mv.cogs_per_case) : null);
         if (pote != null) curV[key] = (curV[key] ?? 0) + signed * pote * 8;
       }
       take(mo, curC, curV);
