@@ -712,7 +712,7 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
   const [form, setForm] = useState({
     movement_date: ymd(), material: "", vendor: "",
     type: "In" as MoveType, quantity: "", unit: "lbs",
-    lot_number: "", concept: "Procurement" as IPConcept,
+    lot_number: "", moc: "", concept: "Procurement" as IPConcept,
     warehouse: "Heinlein",
     total_price: "", shipping_price: "", other_costs: "",
     estimated_receive_date: "", estimated_payment_date: "",
