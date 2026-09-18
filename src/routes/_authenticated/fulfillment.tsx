@@ -634,9 +634,17 @@ function LineageModal({ order, onClose, onSent }: { order: Order; onClose: () =>
 // ─── BOL Upload Modal ─────────────────────────────────────────────────────────
 // A lot allocation = one lot shipped for a SKU on this BOL. Multiple allocs per
 // SKU support shipments split across lots (e.g. XD 30 = 25 of lot A + 5 of lot B).
-type LotAlloc = { mode: "pick" | "other"; lot: string; moc: string; cases: number };
-type LotOption = { lot: string; moc: string };
-const blankAlloc = (): LotAlloc => ({ mode: "pick", lot: "", moc: "", cases: 0 });
+// warehouse follows the lot (lot_master.warehouse) so the OUT movement subtracts
+// from the warehouse the stock actually left (Lineage Newark vs Linden, etc.).
+type LotAlloc = { mode: "pick" | "other"; lot: string; moc: string; warehouse: string; cases: number };
+type LotOption = { lot: string; moc: string; warehouse: string };
+const blankAlloc = (): LotAlloc => ({ mode: "pick", lot: "", moc: "", warehouse: "", cases: 0 });
+const WAREHOUSES: Database["public"]["Enums"]["warehouse"][] = [
+  "Lineage Newark", "Lineage Linden", "Cold Chain", "Empire", "Heinlein",
+  "OOE", "FreezPak", "PermaFrost", "Pod Chicago", "Pod MidAtlantic", "Pod Texas",
+];
+const isWarehouse = (w: string): w is Database["public"]["Enums"]["warehouse"] =>
+  (WAREHOUSES as string[]).includes(w);
 
 function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () => void; onConfirmed: (o: Order) => void }) {
   const [step, setStep] = useState<"upload" | "review" | "saving">("upload");
@@ -670,13 +678,13 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
     (async () => {
       const { data } = await supabase
         .from("lot_master")
-        .select("lot_number, moc, sku")
+        .select("lot_number, moc, sku, warehouse")
         .order("lot_number", { ascending: true });
       if (!data) return;
       const grouped: Record<string, LotOption[]> = {};
       for (const r of data) {
         const s = String(r.sku);
-        (grouped[s] ||= []).push({ lot: r.lot_number, moc: r.moc ?? "" });
+        (grouped[s] ||= []).push({ lot: r.lot_number, moc: r.moc ?? "", warehouse: r.warehouse ?? "" });
       }
       setLotsBySku(grouped);
     })();
@@ -754,7 +762,7 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
             type: "Out",
             sku: skuEnum,
             cases,
-            warehouse: "Lineage Newark",
+            warehouse: isWarehouse(r.warehouse) ? r.warehouse : "Lineage Newark",
             lot_number: lotVal,
             moc: r.moc.trim() || null,
             concept: "Sale",
@@ -909,27 +917,40 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
                       </div>
                       <div className="space-y-1.5">
                         {rows.map((r, i) => (
-                          <div key={i} className="flex items-center gap-1.5">
+                          <div key={i} className="flex flex-wrap items-center gap-1.5">
                             {r.mode === "pick" ? (
-                              <select value={r.lot}
+                              <select value={r.lot ? `${r.lot}@@${r.warehouse}` : ""}
                                 onChange={e => {
                                   const v = e.target.value;
-                                  if (v === "__other__") setRow(i, { mode: "other", lot: "", moc: "" });
-                                  else { const o = opts.find(o => o.lot === v); setRow(i, { lot: v, moc: o?.moc ?? "" }); }
+                                  if (v === "__other__") { setRow(i, { mode: "other", lot: "", moc: "", warehouse: "" }); return; }
+                                  if (!v) { setRow(i, { lot: "", moc: "", warehouse: "" }); return; }
+                                  const [lot, wh = ""] = v.split("@@");
+                                  const o = opts.find(o => o.lot === lot && (o.warehouse ?? "") === wh);
+                                  setRow(i, { lot, warehouse: wh, moc: o?.moc ?? "" });
                                 }}
-                                className="flex-1 min-w-0 rounded-lg border border-border px-2 py-1 text-[11px] font-mono">
+                                className="flex-1 min-w-[160px] rounded-lg border border-border px-2 py-1 text-[11px] font-mono">
                                 <option value="">— elegir lote —</option>
-                                {opts.map(o => <option key={o.lot} value={o.lot}>{o.lot}{o.moc ? ` · MOC ${o.moc}` : ""}</option>)}
+                                {opts.map(o => (
+                                  <option key={`${o.lot}@@${o.warehouse}`} value={`${o.lot}@@${o.warehouse}`}>
+                                    {o.lot}{o.warehouse ? ` · ${o.warehouse}` : ""}{o.moc ? ` · MOC ${o.moc}` : ""}
+                                  </option>
+                                ))}
                                 <option value="__other__">Otro (manual)…</option>
                               </select>
                             ) : (
                               <>
                                 <input value={r.lot} placeholder="Lote"
                                   onChange={e => setRow(i, { lot: e.target.value })}
-                                  className="flex-1 min-w-0 rounded-lg border border-border px-2 py-1 text-[11px] font-mono" />
+                                  className="flex-1 min-w-[90px] rounded-lg border border-border px-2 py-1 text-[11px] font-mono" />
                                 <input value={r.moc} placeholder="MOC"
                                   onChange={e => setRow(i, { moc: e.target.value })}
-                                  className="flex-1 min-w-0 rounded-lg border border-border px-2 py-1 text-[11px] font-mono" />
+                                  className="flex-1 min-w-[90px] rounded-lg border border-border px-2 py-1 text-[11px] font-mono" />
+                                <select value={r.warehouse}
+                                  onChange={e => setRow(i, { warehouse: e.target.value })}
+                                  className="flex-1 min-w-[120px] rounded-lg border border-border px-2 py-1 text-[11px]">
+                                  <option value="">— warehouse —</option>
+                                  {WAREHOUSES.map(w => <option key={w} value={w}>{w}</option>)}
+                                </select>
                               </>
                             )}
                             {multi && (
