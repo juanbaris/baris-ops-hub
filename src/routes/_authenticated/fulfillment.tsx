@@ -632,15 +632,29 @@ function LineageModal({ order, onClose, onSent }: { order: Order; onClose: () =>
 }
 
 // ─── BOL Upload Modal ─────────────────────────────────────────────────────────
+// A lot allocation = one lot shipped for a SKU on this BOL. Multiple allocs per
+// SKU support shipments split across lots (e.g. XD 30 = 25 of lot A + 5 of lot B).
+type LotAlloc = { mode: "pick" | "other"; lot: string; moc: string; cases: number };
+type LotOption = { lot: string; moc: string };
+const blankAlloc = (): LotAlloc => ({ mode: "pick", lot: "", moc: "", cases: 0 });
+
 function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () => void; onConfirmed: (o: Order) => void }) {
   const [step, setStep] = useState<"upload" | "review" | "saving">("upload");
   const [bolCases, setBolCases] = useState<Record<string, number>>({});
   const [bolNumber, setBolNumber] = useState("");
   const [shipDate, setShipDate] = useState(new Date().toISOString().slice(0, 10));
-  const [lots, setLots] = useState<Record<string, string>>({});
+  const [allocs, setAllocs] = useState<Record<string, LotAlloc[]>>({});
+  const [lotsBySku, setLotsBySku] = useState<Record<string, LotOption[]>>({});
   const [processing, setProcessing] = useState(false);
   const [bolFile, setBolFile] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // SKU label ("W&M") → sku enum ("WM"), matching how FP movements are written.
+  const skuEnumOf = (label: string) => label.replace("&", "").replace(" ", "");
+  const emptyAllocs = (): Record<string, LotAlloc[]> => ({
+    wd: [blankAlloc()], pw: [blankAlloc()], hm: [blankAlloc()],
+    matcha: [blankAlloc()], xd: [blankAlloc()], wm: [blankAlloc()],
+  });
 
   useEffect(() => {
     setBolCases({
@@ -648,7 +662,25 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
       hm: Number(order.hm_cases) || 0, matcha: Number(order.matcha_cases) || 0,
       xd: Number(order.xd_cases) || 0, wm: Number(order.wm_cases) || 0,
     });
+    setAllocs(emptyAllocs());
   }, [order]);
+
+  // Lot Master is the source of truth for lot ↔ MOC. Load once, group by SKU.
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase
+        .from("lot_master")
+        .select("lot_number, moc, sku")
+        .order("lot_number", { ascending: true });
+      if (!data) return;
+      const grouped: Record<string, LotOption[]> = {};
+      for (const r of data) {
+        const s = String(r.sku);
+        (grouped[s] ||= []).push({ lot: r.lot_number, moc: r.moc ?? "" });
+      }
+      setLotsBySku(grouped);
+    })();
+  }, []);
 
   async function handleFile(file: File) {
     setProcessing(true);
@@ -671,14 +703,8 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
         });
         if (data.bol_number) setBolNumber(String(data.bol_number));
         if (data.ship_date && /^\d{4}-\d{2}-\d{2}$/.test(String(data.ship_date))) setShipDate(String(data.ship_date));
-        const ln = data.lot_numbers ?? {};
-        const single = Object.values(ln).find(v => typeof v === "string" && v.trim());
-        setLots({
-          wd: (ln.wd || single || "") as string, pw: (ln.pw || single || "") as string,
-          hm: (ln.hm || single || "") as string, matcha: (ln.matcha || single || "") as string,
-          xd: (ln.xd || single || "") as string, wm: (ln.wm || single || "") as string,
-        });
-        toast.success("BOL extracted — review quantities");
+        setAllocs(emptyAllocs());
+        toast.success("BOL extracted — revisá cantidades y asigná lotes");
       } else {
         toast.error("Could not extract — review manually");
       }
@@ -702,6 +728,45 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
       const today = new Date().toISOString().slice(0, 10);
       const fillRate = computeFillRate();
       const shipped = shipDate || today;
+
+      // Build + validate FP movements from lot allocations FIRST, before any DB
+      // write, so a validation failure never leaves the order half-confirmed.
+      // One movement per lot → supports multiple lots per SKU (25 + 5).
+      const movements: Database["public"]["Tables"]["fp_movements"]["Insert"][] = [];
+      for (const sk of SKU_ITEMS) {
+        const bolKey = sk.key.replace("_cases", "");           // wm, wd, xd, …
+        const qty = Number(bolCases[bolKey]) || 0;
+        if (qty <= 0) continue;
+        const rows = allocs[bolKey] ?? [];
+        if (rows.length === 0) { toast.error(`${sk.label}: falta asignar el lote`); setStep("review"); return; }
+        const single = rows.length === 1;
+        const skuEnum = skuEnumOf(sk.label) as Database["public"]["Enums"]["sku"];
+        let sum = 0;
+        for (let i = 0; i < rows.length; i++) {
+          const r = rows[i];
+          const lotVal = r.lot.trim();
+          if (!lotVal) { toast.error(`${sk.label}: falta el lote en la fila ${i + 1}`); setStep("review"); return; }
+          const cases = single ? qty : (Number(r.cases) || 0);
+          if (!single && cases <= 0) { toast.error(`${sk.label}: la fila ${i + 1} no tiene casos`); setStep("review"); return; }
+          sum += cases;
+          movements.push({
+            movement_date: shipped,
+            type: "Out",
+            sku: skuEnum,
+            cases,
+            warehouse: "Lineage Newark",
+            lot_number: lotVal,
+            moc: r.moc.trim() || null,
+            concept: "Sale",
+            po_number_ref: order.po_number,
+            notes: `BOL ${bolNumber || "—"} · PO ${order.po_number} · Fill ${fillRate}%`,
+          });
+        }
+        if (!single && sum !== qty) {
+          toast.error(`${sk.label}: los lotes suman ${sum} pero la BOL dice ${qty}`);
+          setStep("review"); return;
+        }
+      }
 
       const patch: Database["public"]["Tables"]["customer_orders"]["Update"] = {
         status: "BOL Confirmed",
@@ -727,20 +792,6 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
         if (upErr) toast.error(`BOL file not saved: ${upErr.message}`);
       }
 
-      const lotKeyByField: Record<string, string> = { wd_cases: "wd", pw_cases: "pw", hm_cases: "hm", matcha_cases: "matcha", xd_cases: "xd", wm_cases: "wm" };
-      const movements = SKU_ITEMS
-        .filter(sk => Number(patch[sk.key]) > 0)
-        .map(sk => ({
-          movement_date: shipped,
-          type: "Out" as const,
-          sku: sk.label.replace("&", "").replace(" ", "") as Database["public"]["Enums"]["sku"],
-          cases: Number(patch[sk.key]),
-          warehouse: "Lineage Newark" as Database["public"]["Enums"]["warehouse"],
-          lot_number: lots[lotKeyByField[sk.key]!]?.trim() || `BOL-${order.po_number}-${shipped}`,
-          concept: "Sale" as Database["public"]["Enums"]["fp_concept"],
-          po_number_ref: order.po_number,
-          notes: `BOL ${bolNumber || "—"} · PO ${order.po_number} · Fill ${fillRate}%`,
-        }));
       if (movements.length > 0) {
         const { error: fpErr } = await supabase.from("fp_movements").insert(movements);
         if (fpErr) toast.error(`FP error: ${fpErr.message}`);
@@ -831,12 +882,76 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
                         PO: {poQty}{diff < 0 ? ` (${diff})` : diff > 0 ? ` (+${diff})` : " ✓"}
                       </p>
                     )}
-                    <input value={lots[bolKey] ?? ""} onChange={e => setLots(x => ({ ...x, [bolKey]: e.target.value }))}
-                      placeholder="Lot #"
-                      className="mt-1 w-full rounded-lg border border-border px-2 py-1 text-[11px] font-mono" />
                   </div>
                 );
               })}
+            </div>
+
+            {/* Lot assignment — 1+ lots per SKU; writes lot_number + MOC to FP movements */}
+            <div className="mb-4 rounded-xl border border-border p-3">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2">Lotes por SKU</p>
+              <div className="space-y-3">
+                {skuMap.filter(([, bolKey]) => (bolCases[bolKey] ?? 0) > 0).map(([label, bolKey]) => {
+                  const qty = bolCases[bolKey] ?? 0;
+                  const skuEnum = skuEnumOf(label);
+                  const opts = lotsBySku[skuEnum] ?? [];
+                  const rows = allocs[bolKey] ?? [blankAlloc()];
+                  const multi = rows.length > 1;
+                  const sum = multi ? rows.reduce((s, r) => s + (Number(r.cases) || 0), 0) : qty;
+                  const ok = sum === qty;
+                  const setRow = (i: number, patch: Partial<LotAlloc>) =>
+                    setAllocs(x => { const n = { ...x }; const a = [...(n[bolKey] ?? [])]; a[i] = { ...a[i], ...patch }; n[bolKey] = a; return n; });
+                  return (
+                    <div key={bolKey}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-semibold">{label} <span className="text-muted-foreground font-normal">· {qty} cs</span></span>
+                        {multi && <span className={`text-[10px] font-mono font-semibold ${ok ? "text-emerald-600" : "text-red-600"}`}>Σ {sum}/{qty}</span>}
+                      </div>
+                      <div className="space-y-1.5">
+                        {rows.map((r, i) => (
+                          <div key={i} className="flex items-center gap-1.5">
+                            {r.mode === "pick" ? (
+                              <select value={r.lot}
+                                onChange={e => {
+                                  const v = e.target.value;
+                                  if (v === "__other__") setRow(i, { mode: "other", lot: "", moc: "" });
+                                  else { const o = opts.find(o => o.lot === v); setRow(i, { lot: v, moc: o?.moc ?? "" }); }
+                                }}
+                                className="flex-1 min-w-0 rounded-lg border border-border px-2 py-1 text-[11px] font-mono">
+                                <option value="">— elegir lote —</option>
+                                {opts.map(o => <option key={o.lot} value={o.lot}>{o.lot}{o.moc ? ` · MOC ${o.moc}` : ""}</option>)}
+                                <option value="__other__">Otro (manual)…</option>
+                              </select>
+                            ) : (
+                              <>
+                                <input value={r.lot} placeholder="Lote"
+                                  onChange={e => setRow(i, { lot: e.target.value })}
+                                  className="flex-1 min-w-0 rounded-lg border border-border px-2 py-1 text-[11px] font-mono" />
+                                <input value={r.moc} placeholder="MOC"
+                                  onChange={e => setRow(i, { moc: e.target.value })}
+                                  className="flex-1 min-w-0 rounded-lg border border-border px-2 py-1 text-[11px] font-mono" />
+                              </>
+                            )}
+                            {multi && (
+                              <input type="number" value={r.cases || ""} placeholder="cs"
+                                onChange={e => setRow(i, { cases: parseInt(e.target.value) || 0 })}
+                                className="w-14 flex-shrink-0 rounded-lg border border-border px-2 py-1 text-[11px] font-mono" />
+                            )}
+                            {(multi || r.mode === "other") && (
+                              <button type="button" title="Quitar"
+                                onClick={() => setAllocs(x => { const n = { ...x }; let a = (n[bolKey] ?? []).filter((_, j) => j !== i); if (a.length === 0) a = [blankAlloc()]; n[bolKey] = a; return n; })}
+                                className="flex-shrink-0 text-red-500 text-xs px-1">✕</button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                      <button type="button"
+                        onClick={() => setAllocs(x => { const n = { ...x }; const a = [...(n[bolKey] ?? [blankAlloc()])]; if (a.length === 1) a[0] = { ...a[0], cases: qty }; a.push(blankAlloc()); n[bolKey] = a; return n; })}
+                        className="mt-1 text-[10px] font-semibold text-muted-foreground hover:text-foreground">+ lote</button>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
 
             <div className={`rounded-xl border p-3 mb-4 flex items-center justify-between ${fillRate < 100 ? "border-orange-200 bg-orange-50" : "border-emerald-200 bg-emerald-50"}`}>
