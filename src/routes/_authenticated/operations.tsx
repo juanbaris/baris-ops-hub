@@ -30,8 +30,8 @@ type MoveType = Database["public"]["Enums"]["movement_type"];
 // New flavors confirmed for launch — short codes match Sales → By SKU tab (VS, CS, GR, GS).
 // Default to 0 everywhere until real data (item numbers, BOM, movements) is entered.
 const NEW_FIXED_SKUS = ["VS","CS","GR","GS"] as const;
-const SKUS: SKU[] = ["XD","PW","HM","WM","WD","Matcha", ...NEW_FIXED_SKUS];
-const SKU_ITEMS: Record<SKU, string> = {
+const SKUS = ["XD","PW","HM","WM","WD","Matcha", ...NEW_FIXED_SKUS] as unknown as SKU[];
+const SKU_ITEMS: Record<string, string> = {
   XD:"88021", PW:"77670", HM:"77671", WM:"93562", WD:"23141", Matcha:"77672",
   VS:"TBD", CS:"TBD", GR:"TBD", GS:"TBD",
 };
