@@ -121,7 +121,7 @@ const SKU_KEYS: Record<string, string> = {
   GR:"__unsupported_sku_col__", GS:"__unsupported_sku_col__",
 };
 /** Fallback used only until the shared sales forecast is available. */
-const FORECAST_FALLBACK: Record<SKU, number> = {
+const FORECAST_FALLBACK: Record<string, number> = {
   XD:1161, PW:967, HM:696, WM:464, WD:310, Matcha:271,
   VS:0, CS:0, GR:0, GS:0,
 };
