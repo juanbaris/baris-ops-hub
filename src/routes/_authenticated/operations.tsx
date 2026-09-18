@@ -115,7 +115,7 @@ function ymd(d = new Date()) { return d.toISOString().slice(0,10); }
 // ─── FP Stock Tab ─────────────────────────────────────────────────────────────
 // customer_orders has no columns yet for the new flavors — point at a column that doesn't exist so
 // any lookup safely resolves to 0 (Committed/Order-qty for them) until Fulfillment adds real support.
-const SKU_KEYS: Record<SKU, string> = {
+const SKU_KEYS: Record<string, string> = {
   XD:"xd_cases", PW:"pw_cases", HM:"hm_cases", WM:"wm_cases", WD:"wd_cases", Matcha:"matcha_cases",
   VS:"__unsupported_sku_col__", CS:"__unsupported_sku_col__",
   GR:"__unsupported_sku_col__", GS:"__unsupported_sku_col__",
