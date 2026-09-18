@@ -26,7 +26,7 @@ const SKU_ITEMS = [
 
 type DateFilter = "all" | "this_month" | "last_month" | "quarter" | "this_year" | "last_year" | "custom";
 type Quarter = "Q1" | "Q2" | "Q3" | "Q4";
-type Tab = "pipeline" | "tasks" | "collections" | "logistics" | "stockhealth";
+type Tab = "dashboard" | "pipeline" | "tasks" | "collections" | "logistics" | "stockhealth";
 type DateField = "po_date" | "ship_est_date" | "invoice_date";
 
 function ymd(d: Date) { return d.toISOString().slice(0, 10); }
@@ -1691,6 +1691,255 @@ const MONEY_KEYS = new Set<keyof Order>(["gross_sales", "promo_discount", "net_s
 function rowTotalCases(r: Order) { return CASE_KEYS.reduce((s, k) => s + (Number(r[k]) || 0), 0); }
 function fmtMoney(n: number) { return `$${Math.round(n).toLocaleString()}`; }
 
+// ─── Dashboard Tab ────────────────────────────────────────────────────────────
+// All metrics derive from customer_orders (the PO pipeline) for the selected year.
+// Formulas (per selected year, filtered by po_date):
+//   cases(o)   = Σ of the 6 SKU case fields                (rowTotalCases)
+//   gross(o)   = gross_sales
+//   net(o)     = net_sales ?? gross − promo_discount       ("Facturación")
+//   monthsActive = # distinct YYYY-MM present in po_date    (denominator for /mes)
+//   $/caja     = Σ gross / Σ cases
+//   fill rate  = cases-weighted avg of fill_rate (orders that have it)
+//   cycle days = avg of (bol_date − po_date), (invoice_date − bol_date), (invoice_date − po_date)
+function DashboardTab({ orders }: { orders: Order[] }) {
+  const years = useMemo(
+    () => [...new Set(orders.map(o => (o.po_date ?? "").slice(0, 4)).filter(Boolean))].sort().reverse(),
+    [orders],
+  );
+  const [year, setYear] = useState(String(new Date().getFullYear()));
+  useEffect(() => { if (years.length && !years.includes(year)) setYear(years[0]); }, [years, year]);
+
+  const m = useMemo(() => {
+    const yr = orders.filter(o => (o.po_date ?? "").startsWith(year));
+    const cases = (o: Order) => rowTotalCases(o);
+    const gross = (o: Order) => Number(o.gross_sales) || 0;
+    const promo = (o: Order) => Number(o.promo_discount) || 0;
+    const net = (o: Order) => (o.net_sales != null ? Number(o.net_sales) : gross(o) - promo(o));
+
+    const nPOs = yr.length;
+    const totCases = yr.reduce((s, o) => s + cases(o), 0);
+    const totGross = yr.reduce((s, o) => s + gross(o), 0);
+    const totNet = yr.reduce((s, o) => s + net(o), 0);
+    const totPromo = yr.reduce((s, o) => s + promo(o), 0);
+    const monthsActive = new Set(yr.map(o => (o.po_date ?? "").slice(0, 7))).size;
+
+    let frNum = 0, frDen = 0;
+    for (const o of yr) if (o.fill_rate != null) { frNum += Number(o.fill_rate) * cases(o); frDen += cases(o); }
+    const fillRate = frDen > 0 ? frNum / frDen : null;
+
+    const days = (a?: string | null, b?: string | null) => {
+      if (!a || !b) return null;
+      const d = (new Date(b).getTime() - new Date(a).getTime()) / 86400000;
+      return isFinite(d) ? d : null;
+    };
+    const avg = (xs: number[]) => (xs.length ? xs.reduce((s, v) => s + v, 0) / xs.length : null);
+    const nn = (v: number | null): v is number => v != null && v >= 0;
+    const poToShip = avg(yr.map(o => days(o.po_date, o.bol_date)).filter(nn));
+    const shipToInv = avg(yr.map(o => days(o.bol_date, o.invoice_date)).filter(nn));
+    const poToInv = avg(yr.map(o => days(o.po_date, o.invoice_date)).filter(nn));
+    const nShip = yr.filter(o => o.bol_date).length;
+    const nInv = yr.filter(o => o.invoice_date).length;
+
+    const monthly = Array.from({ length: 12 }, () => ({ net: 0, gross: 0, cases: 0 }));
+    for (const o of yr) {
+      const mo = parseInt((o.po_date ?? "").slice(5, 7), 10) - 1;
+      if (mo >= 0 && mo < 12) { monthly[mo].net += net(o); monthly[mo].gross += gross(o); monthly[mo].cases += cases(o); }
+    }
+    const quarters = [0, 0, 0, 0];
+    monthly.forEach((mm, i) => { quarters[Math.floor(i / 3)] += mm.net; });
+
+    const group = (keyOf: (o: Order) => string) => {
+      const map = new Map<string, { orders: number; cases: number; net: number }>();
+      for (const o of yr) {
+        const k = keyOf(o) || "—";
+        const e = map.get(k) ?? { orders: 0, cases: 0, net: 0 };
+        e.orders++; e.cases += cases(o); e.net += net(o); map.set(k, e);
+      }
+      return [...map.entries()].map(([name, v]) => ({ name, ...v })).sort((a, b) => b.net - a.net);
+    };
+    const byDist = group(o => o.distributor);
+    const byCust = group(o => o.customer).slice(0, 15);
+
+    const bySku = SKU_ITEMS
+      .map(sk => ({ label: sk.label, item: sk.item, cases: yr.reduce((s, o) => s + (Number(o[sk.key]) || 0), 0) }))
+      .filter(x => x.cases !== 0)
+      .sort((a, b) => b.cases - a.cases);
+
+    return { nPOs, totCases, totGross, totNet, totPromo, monthsActive, fillRate,
+      poToShip, shipToInv, poToInv, nShip, nInv, monthly, quarters, byDist, byCust, bySku };
+  }, [orders, year]);
+
+  const yoy = useMemo(() => {
+    const map = new Map<string, { orders: number; cases: number; gross: number; net: number }>();
+    for (const o of orders) {
+      const y = (o.po_date ?? "").slice(0, 4); if (!y) continue;
+      const g = Number(o.gross_sales) || 0;
+      const n = o.net_sales != null ? Number(o.net_sales) : g - (Number(o.promo_discount) || 0);
+      const e = map.get(y) ?? { orders: 0, cases: 0, gross: 0, net: 0 };
+      e.orders++; e.cases += rowTotalCases(o); e.gross += g; e.net += n; map.set(y, e);
+    }
+    return [...map.entries()].map(([yy, v]) => ({ year: yy, ...v })).sort((a, b) => a.year.localeCompare(b.year));
+  }, [orders]);
+
+  const num = (n: number, d = 0) => n.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+  const show = (v: number | null, fmt: (n: number) => string) => (v == null ? "—" : fmt(v));
+  const perMonth = (v: number) => (m.monthsActive > 0 ? v / m.monthsActive : null);
+  const perPO = (v: number) => (m.nPOs > 0 ? v / m.nPOs : null);
+  const maxMonthly = Math.max(1, ...m.monthly.map(x => x.net));
+  const MONTHS = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+
+  const kpis: { label: string; value: string; hint?: string }[] = [
+    { label: "POs", value: show(m.nPOs, v => num(v)) },
+    { label: "POs / mes", value: show(perMonth(m.nPOs), v => num(v, 1)), hint: `${m.monthsActive} meses activos` },
+    { label: "Cajas", value: show(m.totCases, v => num(v)) },
+    { label: "Cajas / mes", value: show(perMonth(m.totCases), v => num(v, 0)) },
+    { label: "Cajas / PO", value: show(perPO(m.totCases), v => num(v, 0)) },
+    { label: "$/caja (gross)", value: show(m.totCases > 0 ? m.totGross / m.totCases : null, v => `$${num(v, 2)}`) },
+    { label: "Facturación (net)", value: show(m.totNet, fmtMoney) },
+    { label: "Facturación / mes", value: show(perMonth(m.totNet), fmtMoney) },
+    { label: "Facturación / PO", value: show(perPO(m.totNet), fmtMoney) },
+    { label: "Gross sales", value: show(m.totGross, fmtMoney) },
+    { label: "Promo / allowance", value: show(m.totPromo, fmtMoney) },
+    { label: "Fill rate prom.", value: show(m.fillRate, v => `${num(v, 1)}%`) },
+  ];
+
+  const th = "py-1 font-semibold";
+  const tdN = "text-right font-mono py-1";
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">KPIs del pipeline de POs · año <span className="font-semibold text-foreground">{year}</span></p>
+        <select value={year} onChange={e => setYear(e.target.value)}
+          className="rounded-lg border border-border px-3 py-1.5 text-sm font-semibold">
+          {years.map(y => <option key={y} value={y}>{y}</option>)}
+        </select>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+        {kpis.map(k => (
+          <div key={k.label} className="rounded-xl border border-border bg-card p-3">
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">{k.label}</p>
+            <p className="mt-1 text-lg font-bold font-mono" style={{ color: "#1C2340" }}>{k.value}</p>
+            {k.hint && <p className="text-[10px] text-muted-foreground mt-0.5">{k.hint}</p>}
+          </div>
+        ))}
+      </div>
+
+      <div>
+        <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2">Tiempos promedio (días)</p>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {[
+            { label: "PO → Ship (BOL)", v: m.poToShip, n: m.nShip },
+            { label: "Ship → Invoice", v: m.shipToInv, n: m.nInv },
+            { label: "PO → Invoice", v: m.poToInv, n: m.nInv },
+          ].map(c => (
+            <div key={c.label} className="rounded-xl border border-border bg-card p-3">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">{c.label}</p>
+              <p className="mt-1 text-lg font-bold font-mono" style={{ color: "#A3224A" }}>{show(c.v, v => `${num(v, 1)} d`)}</p>
+              <p className="text-[10px] text-muted-foreground mt-0.5">{c.n} POs con fecha</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-border bg-card p-4">
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Facturación por mes (net)</p>
+          <div className="text-[10px] text-muted-foreground font-mono">Q1 {fmtMoney(m.quarters[0])} · Q2 {fmtMoney(m.quarters[1])} · Q3 {fmtMoney(m.quarters[2])} · Q4 {fmtMoney(m.quarters[3])}</div>
+        </div>
+        <div className="space-y-1.5">
+          {m.monthly.map((mm, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <span className="w-8 text-[11px] text-muted-foreground font-mono">{MONTHS[i]}</span>
+              <div className="flex-1 h-4 rounded bg-muted/50 overflow-hidden">
+                <div className="h-full rounded" style={{ width: `${(mm.net / maxMonthly) * 100}%`, backgroundColor: "#A3224A" }} />
+              </div>
+              <span className="w-24 text-right text-[11px] font-mono">{fmtMoney(mm.net)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="rounded-xl border border-border bg-card p-4">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2">% por distribuidor (net)</p>
+          <table className="w-full text-xs">
+            <thead><tr className="text-muted-foreground border-b border-border">
+              <th className={`text-left ${th}`}>Distribuidor</th><th className={`text-right ${th}`}>POs</th>
+              <th className={`text-right ${th}`}>Cajas</th><th className={`text-right ${th}`}>Net</th><th className={`text-right ${th}`}>%</th>
+            </tr></thead>
+            <tbody>
+              {m.byDist.map(d => (
+                <tr key={d.name} className="border-b border-border/50">
+                  <td className="py-1">{d.name}</td><td className={tdN}>{num(d.orders)}</td>
+                  <td className={tdN}>{num(d.cases)}</td><td className={tdN}>{fmtMoney(d.net)}</td>
+                  <td className={tdN}>{m.totNet !== 0 ? num((d.net / m.totNet) * 100, 1) : "—"}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="rounded-xl border border-border bg-card p-4">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2">Cajas por SKU</p>
+          <table className="w-full text-xs">
+            <thead><tr className="text-muted-foreground border-b border-border">
+              <th className={`text-left ${th}`}>SKU</th><th className={`text-right ${th}`}>Cajas</th><th className={`text-right ${th}`}>%</th>
+            </tr></thead>
+            <tbody>
+              {m.bySku.map(s => (
+                <tr key={s.label} className="border-b border-border/50">
+                  <td className="py-1">{s.label} <span className="text-muted-foreground">({s.item})</span></td>
+                  <td className={tdN}>{num(s.cases)}</td>
+                  <td className={tdN}>{m.totCases !== 0 ? num((s.cases / m.totCases) * 100, 1) : "—"}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-border bg-card p-4">
+        <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2">Top 15 clientes / DC (net)</p>
+        <table className="w-full text-xs">
+          <thead><tr className="text-muted-foreground border-b border-border">
+            <th className={`text-left ${th}`}>Cliente / DC</th><th className={`text-right ${th}`}>POs</th>
+            <th className={`text-right ${th}`}>Cajas</th><th className={`text-right ${th}`}>Net</th><th className={`text-right ${th}`}>%</th>
+          </tr></thead>
+          <tbody>
+            {m.byCust.map(c => (
+              <tr key={c.name} className="border-b border-border/50">
+                <td className="py-1">{c.name}</td><td className={tdN}>{num(c.orders)}</td>
+                <td className={tdN}>{num(c.cases)}</td><td className={tdN}>{fmtMoney(c.net)}</td>
+                <td className={tdN}>{m.totNet !== 0 ? num((c.net / m.totNet) * 100, 1) : "—"}%</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="rounded-xl border border-border bg-card p-4">
+        <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2">Por año (todo el pipeline)</p>
+        <table className="w-full text-xs">
+          <thead><tr className="text-muted-foreground border-b border-border">
+            <th className={`text-left ${th}`}>Año</th><th className={`text-right ${th}`}>POs</th>
+            <th className={`text-right ${th}`}>Cajas</th><th className={`text-right ${th}`}>Gross</th><th className={`text-right ${th}`}>Net</th>
+          </tr></thead>
+          <tbody>
+            {yoy.map(y => (
+              <tr key={y.year} className={`border-b border-border/50 ${y.year === year ? "bg-muted/40 font-semibold" : ""}`}>
+                <td className="py-1">{y.year}</td><td className={tdN}>{num(y.orders)}</td>
+                <td className={tdN}>{num(y.cases)}</td><td className={tdN}>{fmtMoney(y.gross)}</td><td className={tdN}>{fmtMoney(y.net)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function cellClass(c: (typeof COLUMNS)[number]) {
   const base = c.numeric ? "text-right font-mono tabular-nums" : "text-left";
   if (c.sku) return `${base} bg-sku-column`;
@@ -2232,6 +2481,7 @@ function Fulfillment() {
   }
 
   const tabs: { id: Tab; label: string }[] = [
+    { id: "dashboard", label: "Dashboard" },
     { id: "pipeline", label: "Pipeline PO" },
     { id: "tasks", label: "Task Queue" },
     { id: "collections", label: "Collections" },
@@ -2255,6 +2505,7 @@ function Fulfillment() {
         ))}
       </div>
 
+      {activeTab === "dashboard" && <DashboardTab orders={rows} />}
       {activeTab === "tasks" && <TaskQueueTab orders={rows} onUpdated={applyUpdate} />}
       {activeTab === "collections" && <CollectionsTab orders={rows} />}
       {activeTab === "logistics" && <LogisticsTab orders={rows} />}
