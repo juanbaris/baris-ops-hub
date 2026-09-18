@@ -14,6 +14,7 @@ import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiProcessPoRouteImport } from './routes/api/process-po'
+import { Route as ApiBarisAgentRouteImport } from './routes/api/baris-agent'
 import { Route as ApiAiSearchRouteImport } from './routes/api/ai-search'
 import { Route as AuthenticatedSystemRouteImport } from './routes/_authenticated/system'
 import { Route as AuthenticatedSalesRouteImport } from './routes/_authenticated/sales'
@@ -49,6 +50,11 @@ const IndexRoute = IndexRouteImport.update({
 const ApiProcessPoRoute = ApiProcessPoRouteImport.update({
   id: '/api/process-po',
   path: '/api/process-po',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiBarisAgentRoute = ApiBarisAgentRouteImport.update({
+  id: '/api/baris-agent',
+  path: '/api/baris-agent',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiAiSearchRoute = ApiAiSearchRouteImport.update({
@@ -130,6 +136,7 @@ export interface FileRoutesByFullPath {
   '/sales': typeof AuthenticatedSalesRoute
   '/system': typeof AuthenticatedSystemRoute
   '/api/ai-search': typeof ApiAiSearchRoute
+  '/api/baris-agent': typeof ApiBarisAgentRoute
   '/api/process-po': typeof ApiProcessPoRoute
   '/api/public/seed-users': typeof ApiPublicSeedUsersRoute
 }
@@ -148,6 +155,7 @@ export interface FileRoutesByTo {
   '/sales': typeof AuthenticatedSalesRoute
   '/system': typeof AuthenticatedSystemRoute
   '/api/ai-search': typeof ApiAiSearchRoute
+  '/api/baris-agent': typeof ApiBarisAgentRoute
   '/api/process-po': typeof ApiProcessPoRoute
   '/api/public/seed-users': typeof ApiPublicSeedUsersRoute
 }
@@ -168,6 +176,7 @@ export interface FileRoutesById {
   '/_authenticated/sales': typeof AuthenticatedSalesRoute
   '/_authenticated/system': typeof AuthenticatedSystemRoute
   '/api/ai-search': typeof ApiAiSearchRoute
+  '/api/baris-agent': typeof ApiBarisAgentRoute
   '/api/process-po': typeof ApiProcessPoRoute
   '/api/public/seed-users': typeof ApiPublicSeedUsersRoute
 }
@@ -188,6 +197,7 @@ export interface FileRouteTypes {
     | '/sales'
     | '/system'
     | '/api/ai-search'
+    | '/api/baris-agent'
     | '/api/process-po'
     | '/api/public/seed-users'
   fileRoutesByTo: FileRoutesByTo
@@ -206,6 +216,7 @@ export interface FileRouteTypes {
     | '/sales'
     | '/system'
     | '/api/ai-search'
+    | '/api/baris-agent'
     | '/api/process-po'
     | '/api/public/seed-users'
   id:
@@ -225,6 +236,7 @@ export interface FileRouteTypes {
     | '/_authenticated/sales'
     | '/_authenticated/system'
     | '/api/ai-search'
+    | '/api/baris-agent'
     | '/api/process-po'
     | '/api/public/seed-users'
   fileRoutesById: FileRoutesById
@@ -235,6 +247,7 @@ export interface RootRouteChildren {
   AuthRoute: typeof AuthRoute
   ParseLogisticsInvoiceRoute: typeof ParseLogisticsInvoiceRoute
   ApiAiSearchRoute: typeof ApiAiSearchRoute
+  ApiBarisAgentRoute: typeof ApiBarisAgentRoute
   ApiProcessPoRoute: typeof ApiProcessPoRoute
   ApiPublicSeedUsersRoute: typeof ApiPublicSeedUsersRoute
 }
@@ -274,6 +287,13 @@ declare module '@tanstack/react-router' {
       path: '/api/process-po'
       fullPath: '/api/process-po'
       preLoaderRoute: typeof ApiProcessPoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/baris-agent': {
+      id: '/api/baris-agent'
+      path: '/api/baris-agent'
+      fullPath: '/api/baris-agent'
+      preLoaderRoute: typeof ApiBarisAgentRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/ai-search': {
@@ -398,6 +418,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthRoute: AuthRoute,
   ParseLogisticsInvoiceRoute: ParseLogisticsInvoiceRoute,
   ApiAiSearchRoute: ApiAiSearchRoute,
+  ApiBarisAgentRoute: ApiBarisAgentRoute,
   ApiProcessPoRoute: ApiProcessPoRoute,
   ApiPublicSeedUsersRoute: ApiPublicSeedUsersRoute,
 }
