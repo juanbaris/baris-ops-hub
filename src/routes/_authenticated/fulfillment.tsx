@@ -202,31 +202,9 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
     await loadFiles();
   }
 
-  // Open/download via a LOCAL blob URL instead of the Supabase URL directly.
+  // Download via a LOCAL blob URL instead of the Supabase URL directly.
   // Ad-blockers / privacy extensions block navigation to *.supabase.co
   // (ERR_BLOCKED_BY_CLIENT); a blob: URL is local and can never be blocked.
-  async function openAttachment(name: string) {
-    // Open the blank tab synchronously (inside the click gesture) so the
-    // popup blocker allows it, then fill it with the blob once downloaded.
-    const w = window.open("", "_blank");
-    const { data, error } = await supabase.storage
-      .from("po-attachments")
-      .download(`${order.po_number}/${name}`);
-    if (error || !data) {
-      if (w) w.close();
-      toast.error("No se pudo abrir el archivo");
-      return;
-    }
-    const url = URL.createObjectURL(data);
-    if (w) {
-      w.location.href = url;
-    } else {
-      const a = document.createElement("a");
-      a.href = url; a.download = name; a.click();
-    }
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
-  }
-
   async function downloadAttachment(name: string) {
     const { data, error } = await supabase.storage
       .from("po-attachments")
@@ -578,14 +556,9 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
                       <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold flex-shrink-0 ${badge.color}`}>{badge.label}</span>
                       <span className="flex-1 text-xs font-medium truncate" title={f.name}>{f.name}</span>
                       <button
-                        onClick={() => openAttachment(f.name)}
-                        className="rounded px-2 py-0.5 text-[10px] font-semibold text-white flex-shrink-0" style={{ backgroundColor: "#1C2340" }}>
-                        Open
-                      </button>
-                      <button
                         onClick={() => downloadAttachment(f.name)}
-                        className="rounded px-2 py-0.5 text-[10px] font-semibold border border-border hover:bg-muted flex-shrink-0">
-                        ↓
+                        className="rounded px-2.5 py-0.5 text-[10px] font-semibold text-white flex-shrink-0" style={{ backgroundColor: "#1C2340" }}>
+                        Download
                       </button>
                       <button onClick={() => deleteFile(f.name)}
                         className="rounded px-2 py-0.5 text-[10px] font-semibold text-red-500 hover:bg-red-50 flex-shrink-0">
