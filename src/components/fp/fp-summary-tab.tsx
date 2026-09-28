@@ -66,17 +66,25 @@ export function FPSummaryTab() {
 
   useEffect(() => {
     (async () => {
-      const [mv, lots] = await Promise.all([
-        supabase
+      // Paginate fp_movements to bypass Supabase PostgREST row limit
+      const allMv: Mv[] = [];
+      let from = 0;
+      const PAGE = 1000;
+      while (true) {
+        const { data } = await supabase
           .from("fp_movements")
           .select("movement_date, type, sku, cases, lot_number, concept, warehouse, cogs_per_case")
           .order("movement_date")
-          .limit(10000),
-        supabase.from("lot_master").select("lot_number,sku,warehouse,cases_initial,cogs_per_case,cogs_status,expiry_date"),
-      ]);
-      setMovements((mv.data as unknown as Mv[]) ?? []);
-      setLotRows(lots.data ?? []);
-      setLotMap(buildLotMap(lots.data ?? []));
+          .range(from, from + PAGE - 1);
+        if (!data || data.length === 0) break;
+        allMv.push(...(data as unknown as Mv[]));
+        if (data.length < PAGE) break;
+        from += PAGE;
+      }
+      const { data: lotsData } = await supabase.from("lot_master").select("lot_number,sku,warehouse,cases_initial,cogs_per_case,cogs_status,expiry_date");
+      setMovements(allMv);
+      setLotRows(lotsData ?? []);
+      setLotMap(buildLotMap(lotsData ?? []));
       setLoading(false);
     })();
   }, []);
