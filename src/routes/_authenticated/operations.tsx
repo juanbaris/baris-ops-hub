@@ -40,7 +40,7 @@ const FP_CONCEPTS: FPConcept[] = ["Production","Sale","Sample","Damage","Transfe
 const IP_CONCEPTS: IPConcept[] = ["Procurement","Consumption","Damage","Transfer"];
 const FACILITIES: Facility[] = ["Heinlein","Empire","OOE"];
 const FULL_TRUCK = 6630;
-const LOT_BASELINE_DATE = "2026-08-14"; // Lot Master fixed as of this date; later FP movements adjust each lot
+const LOT_BASELINE_DATE = "2024-12-31"; // Lot Master fixed as of this date; later FP movements adjust each lot
 
 type BaselineRow = {
   id: string;
@@ -316,7 +316,7 @@ export function FPStockTab({ movements, orders, loading, baseline, lotMap }: { m
                 {whTitle}
               </p>
               <p className="text-xs text-muted-foreground">
-                From Lot Master · fixed {baselineDate} + later FP movements · as of {ymd()}
+                Newark + Cold Chain + Linden · from Lot Master · as of {ymd()}
               </p>
             </div>
             <table className="w-full text-sm">
@@ -5621,7 +5621,7 @@ function OperationsPage() {
   const [loadingIP, setLoadingIP] = useState(true);
 
   async function loadFP() {
-    const { data } = await supabase.from("fp_movements").select("*").order("movement_date", { ascending: false });
+    const { data } = await supabase.from("fp_movements").select("*").order("movement_date", { ascending: false }).limit(10000);
     setFpMovements(data ?? []);
     setLoadingFP(false);
   }
