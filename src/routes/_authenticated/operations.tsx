@@ -40,7 +40,7 @@ const FP_CONCEPTS: FPConcept[] = ["Production","Sale","Sample","Damage","Transfe
 const IP_CONCEPTS: IPConcept[] = ["Procurement","Consumption","Damage","Transfer"];
 const FACILITIES: Facility[] = ["Heinlein","Empire","OOE"];
 const FULL_TRUCK = 6630;
-const LOT_BASELINE_DATE = "2024-12-31"; // Lot Master fixed as of this date; later FP movements adjust each lot
+const LOT_BASELINE_DATE = "2000-01-01"; // Lot Master fixed as of this date; later FP movements adjust each lot
 
 type BaselineRow = {
   id: string;
