@@ -48,13 +48,26 @@ export function LotMasterTab() {
   const [draft, setDraft] = useState({ warehouse: "Lineage Newark", sku: "XD", lineage_item_code: "", lot_number: "", moc: "", expiry_date: "", cases_initial: "", cogs_per_case: "", notes: "" });
 
   async function load() {
-    const [lm, mv] = await Promise.all([
-      supabase.from("lot_master").select("*"),
-      supabase.from("fp_movements").select("movement_date,type,lot_number,moc,cases,sku,warehouse,cogs_per_case").gt("movement_date", LOT_BASELINE).limit(10000),
-    ]);
-    if (lm.error) toast.error(lm.error.message);
-    setMaster(lm.data ?? []);
-    setMovements((mv.data as unknown as Mv[]) ?? []);
+    const { data: lmData, error: lmErr } = await supabase.from("lot_master").select("*");
+    if (lmErr) toast.error(lmErr.message);
+    setMaster(lmData ?? []);
+    // Paginate fp_movements to bypass PostgREST row limit
+    const allMv: Mv[] = [];
+    let from = 0;
+    const PAGE = 1000;
+    while (true) {
+      const { data } = await supabase
+        .from("fp_movements")
+        .select("movement_date,type,lot_number,moc,cases,sku,warehouse,cogs_per_case")
+        .gt("movement_date", LOT_BASELINE)
+        .order("movement_date")
+        .range(from, from + PAGE - 1);
+      if (!data || data.length === 0) break;
+      allMv.push(...(data as unknown as Mv[]));
+      if (data.length < PAGE) break;
+      from += PAGE;
+    }
+    setMovements(allMv);
     setLoading(false);
   }
   useEffect(() => { load(); }, []);
