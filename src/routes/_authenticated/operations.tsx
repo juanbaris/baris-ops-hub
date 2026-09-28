@@ -5621,8 +5621,17 @@ function OperationsPage() {
   const [loadingIP, setLoadingIP] = useState(true);
 
   async function loadFP() {
-    const { data } = await supabase.from("fp_movements").select("*").order("movement_date", { ascending: false }).limit(10000);
-    setFpMovements(data ?? []);
+    const all: FPRow[] = [];
+    let from = 0;
+    const PAGE = 1000;
+    while (true) {
+      const { data } = await supabase.from("fp_movements").select("*").order("movement_date", { ascending: false }).range(from, from + PAGE - 1);
+      if (!data || data.length === 0) break;
+      all.push(...data);
+      if (data.length < PAGE) break;
+      from += PAGE;
+    }
+    setFpMovements(all);
     setLoadingFP(false);
   }
   async function loadIP() {
