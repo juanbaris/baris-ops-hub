@@ -1899,7 +1899,7 @@ function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, invName, fa
   const [sku, setSku] = useState<SKU>("XD");
   const [cases, setCases] = useState("");
   const [warehouse, setWarehouse] = useState<Warehouse>("Lineage Linden");
-  const [mocs, setMocs] = useState<{ moc: string; cases: string }[]>([{ moc: "", cases: "" }]);
+  const [mocs, setMocs] = useState<{ moc: string; cases: string; lot: string }[]>([{ moc: "", cases: "", lot: "" }]);
   const [tollingFee, setTollingFee] = useState(String(tolling));
   const [lines, setLines] = useState<MatLine[]>([]);
   const [saving, setSaving] = useState(false);
@@ -1941,17 +1941,18 @@ function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, invName, fa
     const batch = prodBatchId();
     const facility: Facility = (FACILITIES as string[]).includes(warehouse) ? (warehouse as Facility) : "Heinlein";
     const mocRows = mocs.filter(m => Number(m.cases) > 0);
-    const batches = mocRows.length ? mocRows.map(m => ({ moc: m.moc.trim(), cases: Number(m.cases) })) : [{ moc: "", cases: nCases }];
+    const batches = mocRows.length ? mocRows.map(m => ({ moc: m.moc.trim(), cases: Number(m.cases), lot: m.lot.trim() })) : [{ moc: "", cases: nCases, lot: "" }];
     for (const b of batches) {
       const { error: runErr } = await supabase.from("production_runs").insert({
         run_date: runDate, facility, sku, cases_produced: b.cases,
         cogs_per_case: cogsPerCase, lot_number: (b.moc || null) as unknown as string,
-        notes: `${b.moc ? `MOC ${b.moc} · ` : ""}#${batch}`,
+        wh_lot: (b.lot || null) as any,
+        notes: `${b.moc ? `MOC ${b.moc} · ` : ""}${b.lot ? `LOT ${b.lot} · ` : ""}#${batch}`,
       });
       if (runErr) { toast.error(runErr.message); setSaving(false); return; }
       const { error: fpErr } = await supabase.from("fp_movements").insert({
         movement_date: runDate, type: "In", sku, cases: b.cases, warehouse,
-        lot_number: b.moc || `MOC-${sku}-${batch}`, moc: b.moc || null, concept: "Production",
+        lot_number: b.lot || b.moc || `MOC-${sku}-${batch}`, moc: b.moc || null, concept: "Production",
         cogs_per_case: cogsPerCase, notes: `Producción · ${sku} · ${b.cases} cases · #${batch}`,
       } as any);
       if (fpErr) { toast.error(fpErr.message); setSaving(false); return; }
@@ -1969,7 +1970,7 @@ function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, invName, fa
     if (ipRows.length) { const { error } = await supabase.from("ip_movements").insert(ipRows); if (error) { toast.error(error.message); setSaving(false); return; } }
     toast.success(`${editBatch ? "Producción actualizada" : "Producción guardada"} · ${nCases} cases ${sku} · ${ipRows.length} IP OUT · $${cogsPerPote.toFixed(4)}/pote`);
     appliedRef.current = null;
-    setCases(""); setMocs([{ moc: "", cases: "" }]); setSaving(false);
+    setCases(""); setMocs([{ moc: "", cases: "", lot: "" }]); setSaving(false);
     setLines(matsForSku(sku).map(m => blankLine(m, unitFor(m), Number(bomQty[sku]?.[m]) || 0)));
     onAdded();
   }
@@ -1999,12 +2000,13 @@ function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, invName, fa
         <div className="space-y-1">
           {mocs.map((m, i) => (
             <div key={i} className="flex items-center gap-2">
-              <input className={`${PROD_INP} w-56`} value={m.moc} onChange={e => setMocs(p => p.map((x, j) => j === i ? { ...x, moc: e.target.value } : x))} placeholder="nombre MOC" />
+              <input className={`${PROD_INP} w-44`} value={m.moc} onChange={e => setMocs(p => p.map((x, j) => j === i ? { ...x, moc: e.target.value } : x))} placeholder="nombre MOC" />
               <input type="number" className={`${PROD_INP} w-28 text-right font-mono`} value={m.cases} onChange={e => setMocs(p => p.map((x, j) => j === i ? { ...x, cases: e.target.value } : x))} placeholder="cases" />
-              <button onClick={() => setMocs(p => { const n = p.filter((_, j) => j !== i); return n.length ? n : [{ moc: "", cases: "" }]; })} className="text-muted-foreground hover:text-red-600 text-xs">✕</button>
+              <input className={`${PROD_INP} w-36 font-mono`} value={m.lot} onChange={e => setMocs(p => p.map((x, j) => j === i ? { ...x, lot: e.target.value } : x))} placeholder="LOT (warehouse)" />
+              <button onClick={() => setMocs(p => { const n = p.filter((_, j) => j !== i); return n.length ? n : [{ moc: "", cases: "", lot: "" }]; })} className="text-muted-foreground hover:text-red-600 text-xs">✕</button>
             </div>
           ))}
-          <button onClick={() => setMocs(p => [...p, { moc: "", cases: "" }])} className="text-[10px] text-muted-foreground hover:text-foreground">+ MOC</button>
+          <button onClick={() => setMocs(p => [...p, { moc: "", cases: "", lot: "" }])} className="text-[10px] text-muted-foreground hover:text-foreground">+ MOC</button>
           {(() => { const sum = mocs.reduce((s, m) => s + (Number(m.cases) || 0), 0); return sum > 0 && Math.abs(sum - nCases) > 0.5 ? <span className="ml-2 text-[10px] text-orange-600">Σ MOC {sum.toLocaleString()} ≠ cases {nCases.toLocaleString()}</span> : null; })()}
         </div>
       </div>
@@ -2245,11 +2247,11 @@ function ProductionHistory({ onEdit, reloadSignal }: { onEdit: (r: any) => void;
         <thead><tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
           <th className="px-4 py-2.5 text-left">Fecha</th><th className="px-4 py-2.5 text-left">Facility</th><th className="px-4 py-2.5 text-left">SKU</th>
           <th className="px-4 py-2.5 text-right">Cases</th><th className="px-4 py-2.5 text-right">COGS/pote</th><th className="px-4 py-2.5 text-right">Total COGS</th>
-          <th className="px-4 py-2.5 text-left">MOC</th><th className="px-4 py-2.5 text-left">Notas</th><th className="px-4 py-2.5 text-right">Acción</th>
+          <th className="px-4 py-2.5 text-left">MOC</th><th className="px-4 py-2.5 text-left">LOT</th><th className="px-4 py-2.5 text-left">Notas</th><th className="px-4 py-2.5 text-right">Acción</th>
         </tr></thead>
         <tbody>
-          {loading ? <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">Cargando…</td></tr>
-            : runs.length === 0 ? <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">Sin producciones aún</td></tr>
+          {loading ? <tr><td colSpan={10} className="p-8 text-center text-muted-foreground">Cargando…</td></tr>
+            : runs.length === 0 ? <tr><td colSpan={10} className="p-8 text-center text-muted-foreground">Sin producciones aún</td></tr>
             : runs.map(r => (
               <tr key={r.id} className="border-t border-border/60 hover:bg-muted/20">
                 <td className="px-4 py-1.5 font-mono text-xs">{r.run_date}</td>
@@ -2259,6 +2261,7 @@ function ProductionHistory({ onEdit, reloadSignal }: { onEdit: (r: any) => void;
                 <td className="px-4 py-1.5 text-right font-mono text-muted-foreground">${(Number(r.cogs_per_case) / 8).toFixed(4)}</td>
                 <td className="px-4 py-1.5 text-right font-mono text-emerald-600">${Math.round(Number(r.cases_produced) * Number(r.cogs_per_case)).toLocaleString()}</td>
                 <td className="px-4 py-1.5 font-mono text-xs" style={{ color: "#A3224A" }}>{r.lot_number ?? "—"}</td>
+                <td className="px-4 py-1.5 font-mono text-xs" style={{ color: "#2563EB" }}>{(r as any).wh_lot ?? "—"}</td>
                 <td className="px-4 py-1.5 text-xs text-muted-foreground">{r.notes ?? "—"}</td>
                 <td className="px-4 py-1.5 text-right">
                   {confirmId === r.id ? (
@@ -2385,13 +2388,13 @@ function ProductionTab({ fpMovements, ipMovements, onAdded }: {
       return { mode: "B", batch, runDate, warehouse, moc: (fps[0] as any).moc ?? "", skuCases, lineMap };
     }
     const sku = skus[0];
-    const mocs = fps.map(f => ({ moc: (f as any).moc ?? "", cases: String(f.cases) }));
+    const mocs = fps.map(f => ({ moc: (f as any).moc ?? "", cases: String(f.cases), lot: f.lot_number ?? "" }));
     const totalCases = fps.reduce((s, f) => s + (Number(f.cases) || 0), 0);
     const mats = matsForSku(sku);
     const lines = mats.map(m => matLine(m, Number(bomQty[sku]?.[m]) || 0));
     const coveredInv = new Set(mats.map(m => invName(m)));
     for (const invM of byMat.keys()) if (!coveredInv.has(invM)) lines.push(matLine(invM, 0));
-    return { mode: "A", batch, runDate, warehouse, sku, cases: String(totalCases), mocs: mocs.length ? mocs : [{ moc: "", cases: "" }], lines };
+    return { mode: "A", batch, runDate, warehouse, sku, cases: String(totalCases), mocs: mocs.length ? mocs : [{ moc: "", cases: "", lot: "" }], lines };
   }
 
   function startEdit(r: any) {
