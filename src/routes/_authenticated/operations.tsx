@@ -141,49 +141,28 @@ const STATUS_PILL: Record<string, string> = {
 
 export function FPStockTab({ movements, orders, loading, baseline, lotMap }: { movements: FPRow[]; orders: any[]; loading: boolean; baseline: BaselineRow[]; lotMap: Record<string, LotCard> }) {
   const { bySkuMonthKey } = useSalesForecast();
-  const [lots, setLots] = useState<any[]>([]);
-  useEffect(() => { (async () => { const { data } = await supabase.from("lot_master").select("*"); setLots(data ?? []); })(); }, [movements]);
 
-  // Live lot on-hand = master cases (as of LOT_BASELINE_DATE) + signed movements after it (keyed by lot+warehouse).
-  const deltaByLot = useMemo(() => {
-    const d: Record<string, number> = {};
-    for (const m of (movements ?? [])) {
-      const lot = (m.lot_number ?? "").trim();
-      if (!lot || m.movement_date <= LOT_BASELINE_DATE) continue;
-      const k = `${lot}||${m.warehouse ?? "—"}`;
-      d[k] = (d[k] ?? 0) + (m.type === "In" ? Number(m.cases) : -Number(m.cases));
-    }
-    return d;
-  }, [movements]);
-
-  // Aggregate lot on-hand into per-SKU and per-SKU/warehouse stock + $ value (from Lot Master COGS × 8).
+  // Stock computed purely from FP movements (same source of truth as Lot Master tab)
   const { bySku, whRows, cogsBySku, valBySku } = useMemo(() => {
     const casesSku: Record<string, number> = {};
     const casesWh: Record<string, number> = {};
     const valWh: Record<string, number> = {};
     const valSku: Record<string, number> = {};
-    const seen = new Set<string>();
-    const add = (sku: string, wh: string, c: number, cogs: number | null) => {
-      casesSku[sku] = (casesSku[sku] ?? 0) + c;
-      const k = `${sku}|${wh}`;
-      casesWh[k] = (casesWh[k] ?? 0) + c;
-      const v = c * (Number(cogs) || 0) * 8;
-      valWh[k] = (valWh[k] ?? 0) + v;
-      valSku[sku] = (valSku[sku] ?? 0) + v;
-    };
-    for (const r of lots) { const k=`${r.lot_number}||${r.warehouse ?? "—"}`; seen.add(k); add(r.sku, r.warehouse ?? "—", (Number(r.cases_initial) || 0) + (deltaByLot[k] ?? 0), r.cogs_per_case); }
     for (const m of (movements ?? [])) {
-      const lot = (m.lot_number ?? "").trim();
-      const k = `${lot}||${m.warehouse ?? "—"}`;
-      if (!lot || seen.has(k) || m.movement_date <= LOT_BASELINE_DATE) continue;
-      seen.add(k); add(m.sku, m.warehouse ?? "—", deltaByLot[k] ?? 0, m.cogs_per_case);
+      const delta = m.type === "In" ? Number(m.cases) : -Number(m.cases);
+      const cogs = Number(m.cogs_per_case) || 0;
+      casesSku[m.sku] = (casesSku[m.sku] ?? 0) + delta;
+      const k = `${m.sku}|${m.warehouse}`;
+      casesWh[k] = (casesWh[k] ?? 0) + delta;
+      valSku[m.sku] = (valSku[m.sku] ?? 0) + delta * cogs * 8;
+      valWh[k] = (valWh[k] ?? 0) + delta * cogs * 8;
     }
     const bySku: Record<string, number> = {};
     const cogsBySku: Record<string, number> = {};
     for (const sku of SKUS) {
       const c = casesSku[sku] ?? 0;
-      bySku[sku] = Math.max(0, Math.round(c));               // stock never < 0
-      cogsBySku[sku] = c > 0 ? (valSku[sku] ?? 0) / c : 0;    // effective $/case (per-pote × 8, weighted)
+      bySku[sku] = Math.max(0, Math.round(c));
+      cogsBySku[sku] = c > 0 ? (valSku[sku] ?? 0) / c : 0;
     }
     const whRows = Object.entries(casesWh).map(([k, c]) => {
       const [sku, warehouse] = k.split("|");
@@ -192,7 +171,7 @@ export function FPStockTab({ movements, orders, loading, baseline, lotMap }: { m
     const valBySku: Record<string, number> = {};
     for (const sku of SKUS) valBySku[sku] = Math.max(0, valSku[sku] ?? 0);
     return { bySku, whRows, cogsBySku, valBySku };
-  }, [lots, movements, deltaByLot]);
+  }, [movements]);
 
   const forecastNextMonth = useMemo(() => {
     const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() + 1);
