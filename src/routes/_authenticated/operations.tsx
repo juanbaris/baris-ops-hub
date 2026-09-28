@@ -142,7 +142,7 @@ const STATUS_PILL: Record<string, string> = {
 export function FPStockTab({ movements, orders, loading, baseline, lotMap }: { movements: FPRow[]; orders: any[]; loading: boolean; baseline: BaselineRow[]; lotMap: Record<string, LotCard> }) {
   const { bySkuMonthKey } = useSalesForecast();
   const [lots, setLots] = useState<any[]>([]);
-  useEffect(() => { (async () => { const { data } = await supabase.from("lot_master").select("*"); setLots(data ?? []); })(); }, []);
+  useEffect(() => { (async () => { const { data } = await supabase.from("lot_master").select("*"); setLots(data ?? []); })(); }, [movements]);
 
   // Live lot on-hand = master cases (as of LOT_BASELINE_DATE) + signed movements after it (keyed by lot+warehouse).
   const deltaByLot = useMemo(() => {
