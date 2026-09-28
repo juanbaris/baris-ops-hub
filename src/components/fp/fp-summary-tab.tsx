@@ -54,7 +54,7 @@ const UNITS_PER_CASE = 8;
 // stock forward. This MUST match FPStockTab's LOT_BASELINE_DATE so FP Summary's
 // current-month closing equals FP Stock by construction:
 //   current stock = lot_master snapshot + movements after baseline.
-const LOT_BASELINE = "2026-08-14";
+const LOT_BASELINE = "2024-12-31";
 const monthLabel = (m: string) => m.slice(2).replace("-", "/");
 
 export function FPSummaryTab() {
@@ -471,7 +471,7 @@ function AccumulatedInventory({
       <div className="px-5 py-3 border-b border-border bg-muted/30 flex items-center justify-between">
         <div>
           <p className="text-sm font-bold" style={{ color: BRAND }}>Accumulated inventory — by warehouse</p>
-          <p className="text-xs text-muted-foreground">Prior months from FP movements · current from Lot Master baseline (2026-08-14) + later FP movements</p>
+          <p className="text-xs text-muted-foreground">Accumulated inventory from all FP movements</p>
         </div>
         <div className="flex gap-1 rounded-xl bg-muted p-1">
           {(["cases", "value"] as const).map((m) => (
