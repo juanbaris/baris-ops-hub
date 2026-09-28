@@ -34,7 +34,7 @@ const SKU_COLORS: Record<string, string> = {
 /** Preferred display order for warehouses; anything else follows alphabetically. */
 const WH_ORDER = ["Lineage Newark", "Lineage Linden", "Cold Chain", "Heinlein", "OOE"];
 /** Warehouses that are retired — never shown as their own card, and left out of the combined total. */
-const HIDDEN_WAREHOUSES = ["FreezPak", "Empire"];
+const HIDDEN_WAREHOUSES = ["FreezPak", "Empire", "PermaFrost", "Pod Chicago", "Pod MidAtlantic", "Pod Texas"];
 /** Always render a card for these even if there are no movements yet (e.g. a new 3PL coming online). */
 const ALWAYS_SHOW_WAREHOUSES = ["Lineage Newark", "Cold Chain", "Lineage Linden"];
 
@@ -82,7 +82,7 @@ export function FPSummaryTab() {
   }, []);
 
   const months = useMemo(
-    () => [...new Set(movements.map((m) => m.movement_date.slice(0, 7)))].sort().reverse(),
+    () => [...new Set(movements.map((m) => m.movement_date.slice(0, 7)))].filter(m => m >= "2025-01").sort().reverse(),
     [movements],
   );
 
@@ -223,7 +223,7 @@ export function FPSummaryTab() {
       take(mo, curC, curV);
     }
 
-    return { monthList: mList, whList: whs, accCases: snapC, accValue: snapV };
+    return { monthList: mList.filter(m => m >= "2025-01"), whList: whs, accCases: snapC, accValue: snapV };
   }, [movements, lotMap, lotRows]);
 
   // ── Monthly COGS of sales (net: Out adds, In/return subtracts) ────────────
