@@ -7,7 +7,7 @@ const inp = "rounded-lg border border-border bg-background px-2 py-1 text-sm foc
 const BRAND = "#1C2340";
 const UNITS_PER_CASE = 8;
 // Lot Master values are fixed as of TODAY; FP movements dated AFTER this adjust each lot.
-const LOT_BASELINE = "2026-08-14";
+const LOT_BASELINE = "2024-12-31";
 const WH_ORDER = ["Lineage Newark", "Cold Chain", "Lineage Linden"];
 
 type Lot = {
@@ -316,7 +316,7 @@ export function LotMasterTab() {
           {totals.lots} lots · <strong>{totals.cases.toLocaleString(undefined, { maximumFractionDigits: 1 })}</strong> cases · <strong className="text-emerald-700">${Math.round(totals.value).toLocaleString()}</strong>
           {(filterSku !== "all" || filterWh !== "all") && " (filtered)"}
         </span>
-        <span className="ml-auto text-[11px] text-muted-foreground">Values as of {LOT_BASELINE} + later FP movements</span>
+        <span className="ml-auto text-[11px] text-muted-foreground">From FP movements (all history)</span>
       </div>
 
       {adding && (
