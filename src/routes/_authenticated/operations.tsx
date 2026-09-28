@@ -1951,7 +1951,7 @@ function BySkuForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, invName, fa
       if (runErr) { toast.error(runErr.message); setSaving(false); return; }
       const { error: fpErr } = await supabase.from("fp_movements").insert({
         movement_date: runDate, type: "In", sku, cases: b.cases, warehouse,
-        lot_number: null, moc: b.moc || null, concept: "Production",
+        lot_number: b.moc || `MOC-${sku}-${batch}`, moc: b.moc || null, concept: "Production",
         cogs_per_case: cogsPerCase, notes: `Producción · ${sku} · ${b.cases} cases · #${batch}`,
       } as any);
       if (fpErr) { toast.error(fpErr.message); setSaving(false); return; }
@@ -2115,7 +2115,7 @@ function GlobalForm({ bomQty, matsForSku, lotsFor, autoCost, unitFor, invName, f
       if (runErr) { toast.error(runErr.message); setSaving(false); return; }
       const { error: fpErr } = await supabase.from("fp_movements").insert({
         movement_date: runDate, type: "In", sku: sk, cases: info.cases, warehouse,
-        lot_number: null, moc: moc || null, concept: "Production",
+        lot_number: moc || `MOC-${sk}-${batch}`, moc: moc || null, concept: "Production",
         cogs_per_case: info.cogsPerCase, notes: `Producción global · ${sk} · ${info.cases} cases · #${batch}`,
       } as any);
       if (fpErr) { toast.error(fpErr.message); setSaving(false); return; }
