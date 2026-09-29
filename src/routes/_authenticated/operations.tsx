@@ -707,6 +707,8 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
   const [filterWarehouse, setFilterWarehouse] = useState("all");
   const [filterReceived, setFilterReceived] = useState("all");
   const [filterPaid, setFilterPaid] = useState("all");
+  const [filterDateFrom, setFilterDateFrom] = useState("");
+  const [filterDateTo, setFilterDateTo] = useState("");
   const [sortCol, setSortCol] = useState<"date"|"material"|"qty">("date");
   const [sortDir, setSortDir] = useState<"asc"|"desc">("desc");
 
@@ -815,10 +817,29 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
   const materials = useMemo(() => [...new Set(movements.map(r => r.material))].sort(), [movements]);
   const warehouses = useMemo(() => [...new Set(movements.map(r => (r as any).warehouse).filter(Boolean))].sort(), [movements]);
 
+  // Available months from movements for quick filter chips
+  const availableMonths = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of movements) {
+      if (r.movement_date) {
+        const d = r.movement_date.slice(0, 7); // "YYYY-MM"
+        set.add(d);
+      }
+    }
+    return [...set].sort().reverse(); // newest first
+  }, [movements]);
+
   const filtered = useMemo(() => {
     return [...movements]
       .filter(r => {
         const rr = r as any;
+        // Date range filter
+        if (filterDateFrom && r.movement_date < filterDateFrom) return false;
+        if (filterDateTo) {
+          // filterDateTo is "YYYY-MM-DD" or "YYYY-MM"; if month-only, include full month
+          const toDate = filterDateTo.length === 7 ? filterDateTo + "-31" : filterDateTo;
+          if (r.movement_date > toDate) return false;
+        }
         return (filterConcept  === "all" || r.concept  === filterConcept) &&
         (filterType     === "all" || r.type     === filterType) &&
         (filterMaterial === "all" || r.material === filterMaterial) &&
@@ -833,7 +854,7 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
         if (sortCol === "qty")      cmp = Number(a.quantity) - Number(b.quantity);
         return sortDir === "asc" ? cmp : -cmp;
       });
-  }, [movements, filterConcept, filterType, filterMaterial, filterWarehouse, filterReceived, filterPaid, sortCol, sortDir]);
+  }, [movements, filterConcept, filterType, filterMaterial, filterWarehouse, filterReceived, filterPaid, filterDateFrom, filterDateTo, sortCol, sortDir]);
 
   function toggleSort(col: "date"|"material"|"qty") {
     if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc");
@@ -1012,6 +1033,33 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
         <span className="rounded-full bg-muted px-2.5 py-1 font-mono text-[11px] text-muted-foreground">
           {filtered.length} records
         </span>
+      </div>
+      {/* Date range filter */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mr-1">Date:</span>
+        <button onClick={() => { setFilterDateFrom(""); setFilterDateTo(""); }}
+          className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium transition-colors ${!filterDateFrom && !filterDateTo ? "bg-[#1C2340] text-white" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}>All time</button>
+        {availableMonths.slice(0, 12).map(mk => {
+          const [y, m] = mk.split("-");
+          const MN = ["","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+          const label = `${MN[Number(m)]} ${y.slice(-2)}`;
+          const isActive = filterDateFrom === mk + "-01" && filterDateTo === mk;
+          return <button key={mk} onClick={() => {
+            if (isActive) { setFilterDateFrom(""); setFilterDateTo(""); }
+            else { setFilterDateFrom(mk + "-01"); setFilterDateTo(mk); }
+          }} className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium transition-colors ${isActive ? "bg-[#1C2340] text-white" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}>{label}</button>;
+        })}
+        <span className="text-muted-foreground text-[11px] mx-1">|</span>
+        <span className="text-[10px] text-muted-foreground">From</span>
+        <input type="date" value={filterDateFrom} onChange={e => setFilterDateFrom(e.target.value)}
+          className="rounded-lg border border-border bg-background px-2 py-0.5 text-xs focus:outline-none w-[130px]" />
+        <span className="text-[10px] text-muted-foreground">To</span>
+        <input type="date" value={filterDateTo.length === 7 ? filterDateTo + "-31" : filterDateTo} onChange={e => setFilterDateTo(e.target.value)}
+          className="rounded-lg border border-border bg-background px-2 py-0.5 text-xs focus:outline-none w-[130px]" />
+        {(filterDateFrom || filterDateTo) && <button onClick={() => { setFilterDateFrom(""); setFilterDateTo(""); }}
+          className="text-[11px] text-red-500 hover:text-red-700 font-medium ml-1">✕ Clear</button>}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
         <button onClick={() => {
           const head = ["Date","Type","Material","Qty","Unit","Vendor","Lot","MOC","Warehouse","Total ($)","Shipping ($)","Other ($)","COGS/unit","Comment","Received","Paid"];
           const rows = filtered.map(r => {
