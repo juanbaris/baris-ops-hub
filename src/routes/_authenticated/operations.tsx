@@ -2841,6 +2841,11 @@ function shiftWeeks(d: Date, weeks: number): Date {
 }
 function fmtMonthShort(d: Date): string { return d.toLocaleString("en-US", { month: "short", year: "2-digit" }); }
 function monthKeyOf(d: Date): string { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; }
+/** Extract "YYYY-MM" from a date string like "2026-11-02" WITHOUT timezone shift */
+function monthKeyFromStr(dateStr: string): string {
+  const parts = dateStr.split("-");
+  return `${parts[0]}-${parts[1]}`;
+}
 // When a purchase is paid, given production month date, its lead time, and payment terms.
 function payDateFor(prodDate: Date, leadWeeks: number, term: PayTerm): Date {
   if (term === "t0") return shiftWeeks(prodDate, leadWeeks);              // pay when ordered (production − lead)
@@ -4030,8 +4035,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       // Use estimated_payment_date if available, else movement_date
       const payDate = (m as any).estimated_payment_date || m.movement_date;
       if (!payDate) continue;
-      const d = new Date(payDate);
-      const mk = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+      const mk = monthKeyFromStr(payDate);
       byMonth[mk] = (byMonth[mk] ?? 0) + cost;
       const [y2,m2] = mk.split("-").map(Number);
       meta[mk] = new Date(y2, m2-1, 1).toLocaleDateString("en",{month:"short",year:"2-digit"});
@@ -4202,8 +4206,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       if (m.type === "In" && !received) {
         const q = Number(m.quantity || 0);
         if (q <= 0) continue;
-        const d = new Date(m.movement_date);
-        const mk = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+        const mk = monthKeyFromStr(m.movement_date);
         items.push({
           id: nextId--,
           material: proc, qty: q,
@@ -4230,8 +4233,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       if (m.type === "In" && received) {
         const q = Number(m.quantity || 0);
         if (q <= 0) continue;
-        const d = new Date(m.movement_date);
-        const mk = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+        const mk = monthKeyFromStr(m.movement_date);
         if (mk < FIFO_START_KEY) continue; // only from Aug 2026 onward
         const tp = Number((m as any).total_price || 0);
         const sp = Number((m as any).shipping_price || 0);
@@ -4251,15 +4253,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
 
   // Qty of received purchases from FIFO start onward per material — subtract from starting stock
   // so we don't double-count (starting stock = current, which already includes these)
-  const ipReceivedAdjust = useMemo(() => {
-    const adj: Record<string, number> = {};
-    for (const po of ipReceivedAsPOs) {
-      adj[po.material] = (adj[po.material] ?? 0) + po.qty;
-    }
-    return adj;
-  }, [ipReceivedAsPOs]);
-
-  // Also extract real IP consumption from ip_movements (Out) from FIFO start month onward
+  // Extract real IP consumption from ip_movements (Out) from FIFO start month onward
   // These represent actual production consumption that should appear in the FIFO
   const ipRealConsumption = useMemo(() => {
     const out: { material: string; qty: number; month: string }[] = [];
@@ -4269,8 +4263,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       if (m.type === "Out") {
         const q = Number(m.quantity || 0);
         if (q <= 0) continue;
-        const d = new Date(m.movement_date);
-        const mk = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+        const mk = monthKeyFromStr(m.movement_date);
         if (mk < FIFO_START_KEY) continue;
         out.push({ material: proc, qty: q, month: mk });
       }
@@ -4278,30 +4271,35 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     return out;
   }, [ipMovements]);
 
-  // Net consumption adjustment: real consumption already happened, so subtract from starting stock too
-  const ipConsumedAdjust = useMemo(() => {
-    const adj: Record<string, number> = {};
-    for (const c of ipRealConsumption) {
-      adj[c.material] = (adj[c.material] ?? 0) + c.qty;
-    }
-    return adj;
-  }, [ipRealConsumption]);
-
-  // IP starting stock for FIFO: current stock adjusted back to end-of-July
+  // Compute starting stock from ip_movements directly (end of month BEFORE FIFO start)
+  // This is consistent across all users — no localStorage dependency
   const ipStartForForecast = useMemo(() => {
     const out: Record<string, { qty: number; costPerUnit: number }> = {};
+    // FIFO starts at Aug 2026, so starting stock = end of July 2026
+    // Sum all ip_movements before the FIFO start month
+    const cutoff = FIFO_START_KEY; // "2026-08"
+    const stock: Record<string, number> = {};
+    for (const m of (ipMovements ?? [])) {
+      const proc = resolveToProc((m as any).material);
+      if (!proc) continue;
+      const mk = monthKeyFromStr(m.movement_date);
+      if (mk >= cutoff) continue; // only movements BEFORE Aug 2026
+      const q = Number(m.quantity || 0);
+      if (m.type === "In") {
+        const received = (m as any).received ?? false;
+        if (received) stock[proc] = (stock[proc] ?? 0) + q;
+      } else {
+        stock[proc] = (stock[proc] ?? 0) - q;
+      }
+    }
     for (const mat of allMaterialsList) {
-      let qty = parseInt(ingInv[mat]) || 0;
+      const qty = Math.round(stock[mat] ?? 0);
       const price = ingPrices[mat] ?? 0;
-      // Adjust: subtract received purchases from Aug onward (they'll come through as POs)
-      qty -= (ipReceivedAdjust[mat] ?? 0);
-      // Adjust: add back consumption from Aug onward (it'll come through FIFO consumption)
-      qty += (ipConsumedAdjust[mat] ?? 0);
       if (qty > 0) out[mat] = { qty, costPerUnit: price };
-      else if (qty === 0) out[mat] = { qty: 0, costPerUnit: price };
+      else out[mat] = { qty: Math.max(0, qty), costPerUnit: price };
     }
     return out;
-  }, [ingInv, ingPrices, allMaterialsList, ipReceivedAdjust, ipConsumedAdjust]);
+  }, [ipMovements, ingPrices, allMaterialsList]);
 
   // Combine all POs for FIFO simulation: received real + ordered (pending) + forecast
   const allPOsForFifo = useMemo(() => [...ipReceivedAsPOs, ...ipOrderedAsPOs, ...ipForecastPOs], [ipReceivedAsPOs, ipOrderedAsPOs, ipForecastPOs]);
