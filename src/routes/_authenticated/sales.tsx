@@ -498,7 +498,7 @@ function SKUTab({forecast,newSkus,mixOverrides,mixOverrideActive,committedCount,
 }) {
   const SKU_COLORS: Record<string,string> = {
     XD:"#1C2340",PW:"#A3224A",HM:"#3B82F6",WM:"#10B981",WD:"#F59E0B",Matcha:"#8B5CF6",
-    VS:"#EC4899",CS:"#F97316",GR:"#14B8A6",GS:"#A855F7",
+    DS:"#EC4899",CS:"#F97316",GR:"#14B8A6",GS:"#A855F7",
   };
   const SKUS = [...EXTENDED_SKUS];
   const LEGACY_SKUS = new Set(["XD","PW","HM","WM","WD","Matcha"]);
@@ -1048,7 +1048,7 @@ function PromoCalendarTab({rows,accounts,byAccountMonth,loading,onUpdated,onInse
   async function addSku(accountName:string){
     const rowsForAcct=rows.filter(r=>r.year===year&&r.account_name===accountName);
     const dist=rowsForAcct[0]?.distributor ?? accounts.find(a=>a.account_name===accountName&&a.year===year)?.distributor ?? "UNFI";
-    const sku=window.prompt("Código de SKU (XD, PW, HM, WM, WD, Matcha, VS, CS, GR, GS):");
+    const sku=window.prompt("Código de SKU (XD, PW, HM, WM, WD, Matcha, DS, CS, GR, GS):");
     if(!sku||!sku.trim()) return;
     const stores=parseFloat(window.prompt("Stores:","0")||"0")||0;
     const vel=parseFloat(window.prompt("Reg AVG Vel. (u/tienda/semana):","0")||"0")||0;
