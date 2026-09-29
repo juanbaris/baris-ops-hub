@@ -7,12 +7,12 @@ import { UNITS_PER_CASE } from "@/lib/sales-forecast";
 
 export type Distributor = "UNFI" | "KEHE" | "Rainforest";
 
-export const EXTENDED_SKUS = ["XD", "PW", "HM", "WM", "WD", "Matcha", "VS", "CS", "GR", "GS"] as const;
+export const EXTENDED_SKUS = ["XD", "PW", "HM", "WM", "WD", "Matcha", "DS", "CS", "GR", "GS"] as const;
 export type ExtendedSku = (typeof EXTENDED_SKUS)[number];
 
 export const SKU_FULL_NAMES: Record<string, string> = {
   XD: "Extra Dark Rasp", PW: "Pistachio Rasp", HM: "Hazelnut Rasp", WM: "Milk Rasp",
-  WD: "Dark Rasp", Matcha: "Matcha Rasp", VS: "Vanilla Straw", CS: "Caramel Straw",
+  WD: "Dark Rasp", Matcha: "Matcha Rasp", DS: "Vanilla Straw", CS: "Caramel Straw",
   GR: "Greek Rasp", GS: "Greek Straw",
 };
 
