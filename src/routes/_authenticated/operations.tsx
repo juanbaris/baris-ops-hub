@@ -4053,93 +4053,6 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     return result;
   },[hasAnyManual,stockProj,fcstOps]);
 
-  // ─── FIFO Forecast simulation ───
-  // Build IP starting stock from I&P Summary (on-hand) with average cost
-  const ipStartForForecast = useMemo(() => {
-    const out: Record<string, { qty: number; costPerUnit: number }> = {};
-    for (const mat of allMaterialsList) {
-      let qty = parseInt(ingInv[mat]) || 0;
-      const price = ingPrices[mat] ?? 0;
-      // Adjust: subtract received purchases from Aug onward (they'll come through as POs)
-      qty -= (ipReceivedAdjust[mat] ?? 0);
-      // Adjust: add back consumption from Aug onward (it'll come through FIFO consumption)
-      qty += (ipConsumedAdjust[mat] ?? 0);
-      if (qty > 0) out[mat] = { qty, costPerUnit: price };
-      else if (qty === 0) out[mat] = { qty: 0, costPerUnit: price };
-    }
-    return out;
-  }, [ingInv, ingPrices, allMaterialsList, ipReceivedAdjust, ipConsumedAdjust]);
-
-  // Build FP starting stock: bySku (lot master stock) + WIP (in production now)
-  // This matches what the Schedule uses as starting point: stock + WIP
-  const fpStartForForecast = useMemo(() => {
-    const out: Record<string, { cases: number; totalValue: number }> = {};
-    for (const sku of dynamicProcSkus) {
-      const stock = bySku[sku] ?? 0;
-      const wipCases = wipBySku[sku] ?? 0;
-      const cases = stock + wipCases;
-      const avgCogs = cogs[sku]?.per_case ?? 0;
-      out[sku] = { cases, totalValue: cases * avgCogs };
-    }
-    return out;
-  }, [bySku, wipBySku, cogs, dynamicProcSkus]);
-
-  // Build production plan from schedule for FIFO simulation
-  const prodPlanForForecast = useMemo(() => {
-    const out: { sku: string; cases: number; month: string }[] = [];
-    for (const sku of dynamicProcSkus) {
-      for (let i = 0; i < FORECAST_MONTHS_OPS.length; i++) {
-        const cases = plan[sku]?.[i] ?? 0;
-        if (cases > 0) {
-          const fk = FORECAST_KEYS_OPS[i];
-          // Convert YYYY-M to YYYY-MM
-          const [y, m] = fk.split("-");
-          out.push({ sku, cases, month: `${y}-${m.padStart(2, "0")}` });
-        }
-      }
-    }
-    return out;
-  }, [plan]);
-
-  // Build sales forecast map for FIFO
-  // Current-month adjustment: lot_master stock already reflects actual sales that
-  // happened this month, so subtracting the FULL forecast would double-count.
-  // Instead, for the current month only subtract the remaining forecast:
-  //   remaining = max(0, forecast − invoiced actuals from Real Monthly)
-  const salesFcstForForecast = useMemo(() => {
-    const out: Record<string, Record<string, number>> = {};
-    const now = new Date();
-    const cmk = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-    const MO = ["","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-    const cmLabel = `${MO[now.getMonth() + 1]} ${now.getFullYear()}`; // e.g. "Sep 2026"
-    const cmActual = invoicedByLabel[cmLabel];
-    const skuLower: Record<string, string> = {
-      XD: "xd", PW: "pw", HM: "hm", WM: "wm", WD: "wd", Matcha: "matcha",
-    };
-    for (const sku of dynamicProcSkus) {
-      out[sku] = {};
-      for (let i = 0; i < FORECAST_KEYS_OPS.length; i++) {
-        const fk = FORECAST_KEYS_OPS[i];
-        const [y, m] = fk.split("-");
-        const mk = `${y}-${m.padStart(2, "0")}`;
-        let cases = fcstOps[sku]?.[i] ?? 0;
-        // Current month: only subtract what hasn't been sold yet
-        if (mk === cmk && cmActual) {
-          const lk = skuLower[sku];
-          const sold = lk ? ((cmActual.sku as any)[lk] ?? 0) : 0;
-          cases = Math.max(0, cases - sold);
-        }
-        out[sku][mk] = cases;
-      }
-    }
-    return out;
-  }, [fcstOps, dynamicProcSkus, invoicedByLabel]);
-
-  // Tolling per case
-  const tollingPerCase = (prodCosts.tolling_per_unit ?? 0) * UNITS_PER_CASE_BOM;
-
-  // Build IP ordered items (not yet received) from IP movements with estimated receive dates
-  // IP movements that are ordered (In, not yet received) → become POs in FIFO
   const ipOrderedAsPOs = useMemo(() => {
     const items: IPForecastPO[] = [];
     let nextId = -1;
@@ -4234,6 +4147,93 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     }
     return adj;
   }, [ipRealConsumption]);
+  // ─── FIFO Forecast simulation ───
+  // Build IP starting stock from I&P Summary (on-hand) with average cost
+  const ipStartForForecast = useMemo(() => {
+    const out: Record<string, { qty: number; costPerUnit: number }> = {};
+    for (const mat of allMaterialsList) {
+      let qty = parseInt(ingInv[mat]) || 0;
+      const price = ingPrices[mat] ?? 0;
+      // Adjust: subtract received purchases from Aug onward (they'll come through as POs)
+      qty -= (ipReceivedAdjust[mat] ?? 0);
+      // Adjust: add back consumption from Aug onward (it'll come through FIFO consumption)
+      qty += (ipConsumedAdjust[mat] ?? 0);
+      if (qty > 0) out[mat] = { qty, costPerUnit: price };
+      else if (qty === 0) out[mat] = { qty: 0, costPerUnit: price };
+    }
+    return out;
+  }, [ingInv, ingPrices, allMaterialsList, ipReceivedAdjust, ipConsumedAdjust]);
+
+  // Build FP starting stock: bySku (lot master stock) + WIP (in production now)
+  // This matches what the Schedule uses as starting point: stock + WIP
+  const fpStartForForecast = useMemo(() => {
+    const out: Record<string, { cases: number; totalValue: number }> = {};
+    for (const sku of dynamicProcSkus) {
+      const stock = bySku[sku] ?? 0;
+      const wipCases = wipBySku[sku] ?? 0;
+      const cases = stock + wipCases;
+      const avgCogs = cogs[sku]?.per_case ?? 0;
+      out[sku] = { cases, totalValue: cases * avgCogs };
+    }
+    return out;
+  }, [bySku, wipBySku, cogs, dynamicProcSkus]);
+
+  // Build production plan from schedule for FIFO simulation
+  const prodPlanForForecast = useMemo(() => {
+    const out: { sku: string; cases: number; month: string }[] = [];
+    for (const sku of dynamicProcSkus) {
+      for (let i = 0; i < FORECAST_MONTHS_OPS.length; i++) {
+        const cases = plan[sku]?.[i] ?? 0;
+        if (cases > 0) {
+          const fk = FORECAST_KEYS_OPS[i];
+          // Convert YYYY-M to YYYY-MM
+          const [y, m] = fk.split("-");
+          out.push({ sku, cases, month: `${y}-${m.padStart(2, "0")}` });
+        }
+      }
+    }
+    return out;
+  }, [plan]);
+
+  // Build sales forecast map for FIFO
+  // Current-month adjustment: lot_master stock already reflects actual sales that
+  // happened this month, so subtracting the FULL forecast would double-count.
+  // Instead, for the current month only subtract the remaining forecast:
+  //   remaining = max(0, forecast − invoiced actuals from Real Monthly)
+  const salesFcstForForecast = useMemo(() => {
+    const out: Record<string, Record<string, number>> = {};
+    const now = new Date();
+    const cmk = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    const MO = ["","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    const cmLabel = `${MO[now.getMonth() + 1]} ${now.getFullYear()}`; // e.g. "Sep 2026"
+    const cmActual = invoicedByLabel[cmLabel];
+    const skuLower: Record<string, string> = {
+      XD: "xd", PW: "pw", HM: "hm", WM: "wm", WD: "wd", Matcha: "matcha",
+    };
+    for (const sku of dynamicProcSkus) {
+      out[sku] = {};
+      for (let i = 0; i < FORECAST_KEYS_OPS.length; i++) {
+        const fk = FORECAST_KEYS_OPS[i];
+        const [y, m] = fk.split("-");
+        const mk = `${y}-${m.padStart(2, "0")}`;
+        let cases = fcstOps[sku]?.[i] ?? 0;
+        // Current month: only subtract what hasn't been sold yet
+        if (mk === cmk && cmActual) {
+          const lk = skuLower[sku];
+          const sold = lk ? ((cmActual.sku as any)[lk] ?? 0) : 0;
+          cases = Math.max(0, cases - sold);
+        }
+        out[sku][mk] = cases;
+      }
+    }
+    return out;
+  }, [fcstOps, dynamicProcSkus, invoicedByLabel]);
+
+  // Tolling per case
+  const tollingPerCase = (prodCosts.tolling_per_unit ?? 0) * UNITS_PER_CASE_BOM;
+
+  // Build IP ordered items (not yet received) from IP movements with estimated receive dates
+  // IP movements that are ordered (In, not yet received) → become POs in FIFO
 
   // Combine all POs for FIFO simulation: received real + ordered (pending) + forecast
   const allPOsForFifo = useMemo(() => [...ipReceivedAsPOs, ...ipOrderedAsPOs, ...ipForecastPOs], [ipReceivedAsPOs, ipOrderedAsPOs, ipForecastPOs]);
