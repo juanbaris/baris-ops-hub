@@ -13,7 +13,7 @@ import { EXTENDED_SKUS, fetchSalesAccounts, fetchPromoCalendar, aggregatePromoCa
 
 // Map full new-SKU names (from sales-forecast.ts DEFAULT_NEW_SKUS) → short codes used everywhere
 const NEW_SKU_NAME_TO_CODE: Record<string, string> = {
-  "Strawberry & White": "DS", "Strawberry vainilla": "DS", "Strawberry Vainilla": "DS",
+  "Strawberry & White": "VS", "Strawberry vainilla": "VS", "Strawberry Vainilla": "VS",
   "Strawberry Caramel": "CS", "Strawberry caramel": "CS",
   "Strawberry Yogurt": "GS", "Strawberry yogurt": "GS",
   "Raspberry Yogurt": "GR", "Raspberry yogurt": "GR",
@@ -28,13 +28,13 @@ type IPConcept = Database["public"]["Enums"]["ip_concept"];
 type Facility = Database["public"]["Enums"]["facility"];
 type MoveType = Database["public"]["Enums"]["movement_type"];
 
-// New flavors confirmed for launch — short codes match Sales → By SKU tab (DS, CS, GR, GS).
+// New flavors confirmed for launch — short codes match Sales → By SKU tab (VS, CS, GR, GS).
 // Default to 0 everywhere until real data (item numbers, BOM, movements) is entered.
-const NEW_FIXED_SKUS = ["DS","CS","GR","GS"] as const;
+const NEW_FIXED_SKUS = ["VS","CS","GR","GS"] as const;
 const SKUS = ["XD","PW","HM","WM","WD","Matcha", ...NEW_FIXED_SKUS] as unknown as SKU[];
 const SKU_ITEMS: Record<string, string> = {
   XD:"88021", PW:"77670", HM:"77671", WM:"93562", WD:"23141", Matcha:"77672",
-  DS:"TBD", CS:"TBD", GR:"TBD", GS:"TBD",
+  VS:"TBD", CS:"TBD", GR:"TBD", GS:"TBD",
 };
 const WAREHOUSES: Warehouse[] = ["Lineage Newark","Lineage Linden","Cold Chain","Empire","Heinlein","OOE"];
 const FP_CONCEPTS: FPConcept[] = ["Production","Sale","Sample","Damage","Transfer","Free"];
@@ -118,13 +118,13 @@ function ymd(d = new Date()) { return d.toISOString().slice(0,10); }
 // any lookup safely resolves to 0 (Committed/Order-qty for them) until Fulfillment adds real support.
 const SKU_KEYS: Record<string, string> = {
   XD:"xd_cases", PW:"pw_cases", HM:"hm_cases", WM:"wm_cases", WD:"wd_cases", Matcha:"matcha_cases",
-  DS:"__unsupported_sku_col__", CS:"__unsupported_sku_col__",
+  VS:"__unsupported_sku_col__", CS:"__unsupported_sku_col__",
   GR:"__unsupported_sku_col__", GS:"__unsupported_sku_col__",
 };
 /** Fallback used only until the shared sales forecast is available. */
 const FORECAST_FALLBACK: Record<string, number> = {
   XD:1161, PW:967, HM:696, WM:464, WD:310, Matcha:271,
-  DS:0, CS:0, GR:0, GS:0,
+  VS:0, CS:0, GR:0, GS:0,
 };
 
 function stockStatus(available: number, woh: number) {
@@ -2609,11 +2609,11 @@ const UNITS_PER_CASE_BOM = 8;
 const DEFAULT_PROD_COSTS = { tolling_per_unit:0.65, cup_per_unit:0.095, lid_per_unit:0.092, sealer_per_unit:0.030, case_per_case:0.36 };
 
 // ─── Procurement material master + BOM (quantities are PER CASE of 8 units) ───
-const PROC_SKUS: string[] = ["XD","PW","HM","WM","WD","Matcha","DS","CS","GR","GS"];
+const PROC_SKUS: string[] = ["XD","PW","HM","WM","WD","Matcha","VS","CS","GR","GS"];
 const PROC_SKU_LABEL: Record<string,string> = {
   XD:"Extra Dark", PW:"Pistachio & White", HM:"Hazelnut & Milk",
   WM:"White & Milk", WD:"White & Dark", Matcha:"Matcha & White",
-  DS:"Strawberry Vainilla", CS:"Strawberry Caramel", GR:"Raspberry Yogurt", GS:"Strawberry Yogurt",
+  VS:"Strawberry Vainilla", CS:"Strawberry Caramel", GR:"Raspberry Yogurt", GS:"Strawberry Yogurt",
 };
 const RAW_MATS = [
   "IQF Raspberries","Choc Extra Dark (Revere 70%)","Choc Dark (Duluth)","Choc Milk (Valcour)",
@@ -2642,7 +2642,7 @@ const BOM_QTY: Record<string, Record<string, number>> = (()=>{
     Matcha: { "IQF Raspberries":1.159794, "Choc White (Corinthian)":1.363067, "Cocoa Butter":0.025773, "Matcha Powder":0.022680, "Sea Salt":0.003557, "Soy Lecithin":0.002448 },
     // Confirmed new flavors — recipe not finalized yet, starts at 0 (editable in BOM + COGS, or via
     // "Upload new BOM for everyone" once the real recipe is ready).
-    DS: {}, CS: {}, GR: {}, GS: {},
+    VS: {}, CS: {}, GR: {}, GS: {},
   };
   for (const s of PACK_SKUS) {
     b[s] = b[s] || {};
@@ -2700,7 +2700,7 @@ const ING_PACK_SIZES: Record<string,number> = (()=>{
   for (const m of PACK_MATS) o[m] = 1;
   return o;
 })();
-const SKU_MIX_PCT: Record<string,number> = {XD:0.27,PW:0.20,HM:0.19,WM:0.06,WD:0.05,Matcha:0.01,DS:0.08,CS:0.08,GR:0.02,GS:0.02};
+const SKU_MIX_PCT: Record<string,number> = {XD:0.27,PW:0.20,HM:0.19,WM:0.06,WD:0.05,Matcha:0.01,VS:0.08,CS:0.08,GR:0.02,GS:0.02};
 
 // Maps an IP Summary material name → Procurement material name (to pull current stock from I&P).
 const IP_TO_PROC_MAT: Record<string,string> = {
@@ -2716,18 +2716,29 @@ const IP_TO_PROC_MAT: Record<string,string> = {
   "Spirulina":"Spirulina",
   "Sea Salt":"Sea Salt",
   "Soy Lecithin":"Soy Lecithin",
+  "Strawberry":"Strawberry",
+  "Caramel coating":"Caramel coating",
+  "Vanilla":"Vanilla",
+  "Greek Yogurt":"Greek Yogurt",
+  "Coconut Oil":"Coconut Oil",
+  "Yogurt oil":"Yogurt oil",
+  "Choc White (all)":"Choc White (all)",
   "Cup ED":"Cup - Extra Dark",
   "Cup P&W":"Cup - Pistachio & White",
   "Cup H&M":"Cup - Hazelnut & Milk",
   "Cup W&M":"Cup - White & Milk",
   "Cup W&D":"Cup - White & Dark",
   "Cup Matcha":"Cup - Matcha & White",
+  "Cup SV":"Cup - Strawberry Vainilla",
+  "Cup SC":"Cup - Strawberry Caramel",
   "Lid ED":"Lid - Extra Dark",
   "Lid P&W":"Lid - Pistachio & White",
   "Lid H&M":"Lid - Hazelnut & Milk",
   "Lid W&M":"Lid - White & Milk",
   "Lid W&D":"Lid - White & Dark",
   "Lid Matcha":"Lid - Matcha & White",
+  "Lid SV":"Lid - Strawberry Vainilla",
+  "Lid SC":"Lid - Strawberry Caramel",
   "Sealers":"Sealers (Momar)",
   "Cases":"Master Cases (8u)",
 };
@@ -2735,6 +2746,14 @@ const IP_TO_PROC_MAT: Record<string,string> = {
 const PROC_TO_IP_MAT: Record<string,string> = Object.fromEntries(
   Object.entries(IP_TO_PROC_MAT).map(([ip, proc]) => [proc, ip])
 );
+// Resolve any material name (short IP name OR full proc name) → proc name
+// Handles cases where ip_movements entries use the full name instead of the short name
+const _PROC_NAME_SET = new Set(Object.values(IP_TO_PROC_MAT));
+function resolveToProc(material: string): string | undefined {
+  if (IP_TO_PROC_MAT[material]) return IP_TO_PROC_MAT[material];
+  if (_PROC_NAME_SET.has(material)) return material; // already a proc name
+  return undefined;
+}
 type PayTerm = "t0"|"lead"|"lead1m";
 const PAY_TERM_LABEL: Record<PayTerm,string> = { t0:"On order (t=0)", lead:"On arrival (t=lead)", lead1m:"30d after receipt" };
 const PAY_TERM_KEY = "baris.ops.payTerms.v1";
@@ -2971,7 +2990,7 @@ const DEFAULT_LEAD_WEEKS = 4;
 
 const OPS_SKU_COLORS: Record<string,string> = {
   XD:"#1C2340",PW:"#A3224A",HM:"#3B82F6",WM:"#10B981",WD:"#F59E0B",Matcha:"#8B5CF6",
-  DS:"#EC4899",CS:"#F97316",GR:"#14B8A6",GS:"#A855F7",
+  VS:"#EC4899",CS:"#F97316",GR:"#14B8A6",GS:"#A855F7",
 };
 
 /** Forecast sales by SKU — mirrors the Sales → By SKU table exactly. */
@@ -3212,7 +3231,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     const stock: Record<string, number> = {};
     const ordered: Record<string, number> = {};
     for (const m of (ipMovements ?? [])) {
-      const proc = IP_TO_PROC_MAT[(m as any).material];
+      const proc = resolveToProc((m as any).material);
       if (!proc) continue;
       const q = Number(m.quantity || 0);
       const received = (m as any).received ?? false;
@@ -4053,100 +4072,6 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     return result;
   },[hasAnyManual,stockProj,fcstOps]);
 
-  const ipOrderedAsPOs = useMemo(() => {
-    const items: IPForecastPO[] = [];
-    let nextId = -1;
-    for (const m of (ipMovements ?? [])) {
-      const proc = IP_TO_PROC_MAT[(m as any).material];
-      if (!proc) continue;
-      const received = (m as any).received ?? false;
-      if (m.type === "In" && !received) {
-        const q = Number(m.quantity || 0);
-        if (q <= 0) continue;
-        const d = new Date(m.movement_date);
-        const mk = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
-        items.push({
-          id: nextId--,
-          material: proc, qty: q,
-          matCost: q * (ingPrices[proc] ?? 0), freight: 0,
-          mBuy: mk, mRecv: mk,
-          mPay: "9999-12", // won't affect payments calculation
-        });
-      }
-    }
-    return items;
-  }, [ipMovements, ingPrices]);
-
-  // IP movements that ARE received (In, received=true) from FIFO start month onward
-  // These are "real purchases" that need to appear as POs in the FIFO simulation
-  // so they show up as movements in the correct month (instead of being lumped into starting stock).
-  const FIFO_START_KEY = FORECAST_HORIZON_MONTHS[0]?.key ?? "2026-08";
-  const ipReceivedAsPOs = useMemo(() => {
-    const items: IPForecastPO[] = [];
-    let nextId = -10000;
-    for (const m of (ipMovements ?? [])) {
-      const proc = IP_TO_PROC_MAT[(m as any).material];
-      if (!proc) continue;
-      const received = (m as any).received ?? false;
-      if (m.type === "In" && received) {
-        const q = Number(m.quantity || 0);
-        if (q <= 0) continue;
-        const d = new Date(m.movement_date);
-        const mk = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
-        if (mk < FIFO_START_KEY) continue; // only from Aug 2026 onward
-        const tp = Number((m as any).total_price || 0);
-        const sp = Number((m as any).shipping_price || 0);
-        const oc = Number((m as any).other_costs || 0);
-        const cost = (tp + sp + oc) > 0 ? (tp + sp + oc) : q * (ingPrices[proc] ?? 0);
-        items.push({
-          id: nextId--,
-          material: proc, qty: q,
-          matCost: cost, freight: 0,
-          mBuy: mk, mRecv: mk,
-          mPay: "9999-12",
-        });
-      }
-    }
-    return items;
-  }, [ipMovements, ingPrices]);
-
-  // Qty of received purchases from FIFO start onward per material — subtract from starting stock
-  // so we don't double-count (starting stock = current, which already includes these)
-  const ipReceivedAdjust = useMemo(() => {
-    const adj: Record<string, number> = {};
-    for (const po of ipReceivedAsPOs) {
-      adj[po.material] = (adj[po.material] ?? 0) + po.qty;
-    }
-    return adj;
-  }, [ipReceivedAsPOs]);
-
-  // Also extract real IP consumption from ip_movements (Out) from FIFO start month onward
-  // These represent actual production consumption that should appear in the FIFO
-  const ipRealConsumption = useMemo(() => {
-    const out: { material: string; qty: number; month: string }[] = [];
-    for (const m of (ipMovements ?? [])) {
-      const proc = IP_TO_PROC_MAT[(m as any).material];
-      if (!proc) continue;
-      if (m.type === "Out") {
-        const q = Number(m.quantity || 0);
-        if (q <= 0) continue;
-        const d = new Date(m.movement_date);
-        const mk = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
-        if (mk < FIFO_START_KEY) continue;
-        out.push({ material: proc, qty: q, month: mk });
-      }
-    }
-    return out;
-  }, [ipMovements]);
-
-  // Net consumption adjustment: real consumption already happened, so subtract from starting stock too
-  const ipConsumedAdjust = useMemo(() => {
-    const adj: Record<string, number> = {};
-    for (const c of ipRealConsumption) {
-      adj[c.material] = (adj[c.material] ?? 0) + c.qty;
-    }
-    return adj;
-  }, [ipRealConsumption]);
   // ─── FIFO Forecast simulation ───
   // Build IP starting stock from I&P Summary (on-hand) with average cost
   const ipStartForForecast = useMemo(() => {
@@ -4234,6 +4159,100 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
 
   // Build IP ordered items (not yet received) from IP movements with estimated receive dates
   // IP movements that are ordered (In, not yet received) → become POs in FIFO
+  const ipOrderedAsPOs = useMemo(() => {
+    const items: IPForecastPO[] = [];
+    let nextId = -1;
+    for (const m of (ipMovements ?? [])) {
+      const proc = resolveToProc((m as any).material);
+      if (!proc) continue;
+      const received = (m as any).received ?? false;
+      if (m.type === "In" && !received) {
+        const q = Number(m.quantity || 0);
+        if (q <= 0) continue;
+        const d = new Date(m.movement_date);
+        const mk = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+        items.push({
+          id: nextId--,
+          material: proc, qty: q,
+          matCost: q * (ingPrices[proc] ?? 0), freight: 0,
+          mBuy: mk, mRecv: mk,
+          mPay: "9999-12", // won't affect payments calculation
+        });
+      }
+    }
+    return items;
+  }, [ipMovements, ingPrices]);
+
+  // IP movements that ARE received (In, received=true) from FIFO start month onward
+  // These are "real purchases" that need to appear as POs in the FIFO simulation
+  // so they show up as movements in the correct month (instead of being lumped into starting stock).
+  const FIFO_START_KEY = FORECAST_HORIZON_MONTHS[0]?.key ?? "2026-08";
+  const ipReceivedAsPOs = useMemo(() => {
+    const items: IPForecastPO[] = [];
+    let nextId = -10000;
+    for (const m of (ipMovements ?? [])) {
+      const proc = resolveToProc((m as any).material);
+      if (!proc) continue;
+      const received = (m as any).received ?? false;
+      if (m.type === "In" && received) {
+        const q = Number(m.quantity || 0);
+        if (q <= 0) continue;
+        const d = new Date(m.movement_date);
+        const mk = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+        if (mk < FIFO_START_KEY) continue; // only from Aug 2026 onward
+        const tp = Number((m as any).total_price || 0);
+        const sp = Number((m as any).shipping_price || 0);
+        const oc = Number((m as any).other_costs || 0);
+        const cost = (tp + sp + oc) > 0 ? (tp + sp + oc) : q * (ingPrices[proc] ?? 0);
+        items.push({
+          id: nextId--,
+          material: proc, qty: q,
+          matCost: cost, freight: 0,
+          mBuy: mk, mRecv: mk,
+          mPay: "9999-12",
+        });
+      }
+    }
+    return items;
+  }, [ipMovements, ingPrices]);
+
+  // Qty of received purchases from FIFO start onward per material — subtract from starting stock
+  // so we don't double-count (starting stock = current, which already includes these)
+  const ipReceivedAdjust = useMemo(() => {
+    const adj: Record<string, number> = {};
+    for (const po of ipReceivedAsPOs) {
+      adj[po.material] = (adj[po.material] ?? 0) + po.qty;
+    }
+    return adj;
+  }, [ipReceivedAsPOs]);
+
+  // Also extract real IP consumption from ip_movements (Out) from FIFO start month onward
+  // These represent actual production consumption that should appear in the FIFO
+  const ipRealConsumption = useMemo(() => {
+    const out: { material: string; qty: number; month: string }[] = [];
+    for (const m of (ipMovements ?? [])) {
+      const proc = resolveToProc((m as any).material);
+      if (!proc) continue;
+      if (m.type === "Out") {
+        const q = Number(m.quantity || 0);
+        if (q <= 0) continue;
+        const d = new Date(m.movement_date);
+        const mk = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+        if (mk < FIFO_START_KEY) continue;
+        out.push({ material: proc, qty: q, month: mk });
+      }
+    }
+    return out;
+  }, [ipMovements]);
+
+  // Net consumption adjustment: real consumption already happened, so subtract from starting stock too
+  const ipConsumedAdjust = useMemo(() => {
+    const adj: Record<string, number> = {};
+    for (const c of ipRealConsumption) {
+      adj[c.material] = (adj[c.material] ?? 0) + c.qty;
+    }
+    return adj;
+  }, [ipRealConsumption]);
 
   // Combine all POs for FIFO simulation: received real + ordered (pending) + forecast
   const allPOsForFifo = useMemo(() => [...ipReceivedAsPOs, ...ipOrderedAsPOs, ...ipForecastPOs], [ipReceivedAsPOs, ipOrderedAsPOs, ipForecastPOs]);
