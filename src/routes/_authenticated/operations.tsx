@@ -8,7 +8,7 @@ import type { Database } from "@/integrations/supabase/types";
 import { useSalesForecast } from "@/hooks/use-sales-forecast";
 import { calcForecast, skuForecastByMonthKey, forecastFromState, committedForecastFromState, productionRequirements, DEFAULT_VEL_CHAINS, NEW_RETAILERS, FORECAST_MONTHS, skuForecast as skuForecastFormula, DEFAULT_MIX_PCT, type Scenario as SalesScenario, type ForecastRow } from "@/lib/sales-forecast";
 import { buildLotMap, resolveCogs, type LotCard } from "@/lib/fp-shared";
-import { EXTENDED_SKUS, fetchSalesAccounts, fetchPromoCalendar, aggregatePromoCalendar, dbSkuByMonthFromAgg, mergeForecastWithDb, type SalesAccount, type PromoCalendarRow } from "@/lib/sales-database";
+import { EXTENDED_SKUS, fetchSalesAccounts, fetchPromoCalendar, aggregatePromoCalendar, dbSkuByMonthFromAgg, mergeForecastWithDb, shiftPromoOneMonthEarlier, type SalesAccount, type PromoCalendarRow } from "@/lib/sales-database";
 
 // Map full new-SKU names (from sales-forecast.ts DEFAULT_NEW_SKUS) → short codes used everywhere
 const NEW_SKU_NAME_TO_CODE: Record<string, string> = {
@@ -3843,7 +3843,8 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       } catch (e) { console.error("Promo calendar load error:", e); }
     })();
   }, []);
-  const dbAgg = useMemo(() => aggregatePromoCalendar(dbPromo, dbAccounts), [dbPromo, dbAccounts]);
+  const displayPromo = useMemo(() => shiftPromoOneMonthEarlier(dbPromo), [dbPromo]);
+  const dbAgg = useMemo(() => aggregatePromoCalendar(displayPromo, dbAccounts), [displayPromo, dbAccounts]);
   const dbSkuByMonth = useMemo(() => dbSkuByMonthFromAgg(dbAgg), [dbAgg]);
   const scenarioPct = useMemo(() => {
     try { const v = window.localStorage.getItem("baris.sales.scenarioPct"); if (v) return parseFloat(v) || 25; } catch {} return 25;
