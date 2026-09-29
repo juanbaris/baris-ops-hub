@@ -2802,7 +2802,7 @@ const IP_FORECAST_KEY = "baris.ops.ipForecastPOs.v1";
 const FORECAST_HORIZON_MONTHS = (() => {
   const out: { key: string; label: string }[] = [];
   const MONTHS_EN = ["","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-  let y = 2026, m = 9;
+  let y = 2026, m = 8; // Start from Aug 2026 (previous month anchor)
   while (y < 2029) {
     out.push({ key: `${y}-${String(m).padStart(2,"0")}`, label: `${MONTHS_EN[m]} ${String(y).slice(-2)}` });
     m++; if (m > 12) { m = 1; y++; }
@@ -2841,6 +2841,7 @@ function runFifoForecast(
   tollingPerCase: number,
   allMaterials: string[],
   skuList: string[],
+  realConsumption?: { material: string; qty: number; month: string }[],
 ): ForecastMonthResult[] {
   // Initialize IP lots
   const ipLots: Record<string, FifoLot[]> = {};
@@ -2878,6 +2879,21 @@ function runFifoForecast(
         if (!ipLots[po.material]) ipLots[po.material] = [];
         ipLots[po.material].push({ id: `PO${po.id}`, qty: po.qty, remaining: po.qty, costPerUnit: cpu, monthArrived: m.key, label: `PO#${po.id}` });
         r.ipReceived[po.material] = (r.ipReceived[po.material] ?? 0) + po.qty;
+      }
+    }
+
+    // 1.5) Real IP consumption from ip_movements (Out) — consume FIFO lots
+    if (realConsumption) {
+      for (const rc of realConsumption) {
+        if (rc.month !== m.key || rc.qty <= 0) continue;
+        let rem = rc.qty;
+        for (const lot of (ipLots[rc.material] ?? [])) {
+          if (rem <= 0) break;
+          const take = Math.min(lot.remaining, rem);
+          lot.remaining -= take;
+          rem -= take;
+        }
+        r.ipConsumed[rc.material] = (r.ipConsumed[rc.material] ?? 0) + (rc.qty - rem);
       }
     }
 
@@ -3933,6 +3949,29 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   const cogs = useMemo(()=>calcCOGSFull(ingPrices,prodCosts,matScrap,matOverfill,bomQty,dynamicProcSkus),[ingPrices,prodCosts,matScrap,matOverfill,bomQty,dynamicProcSkus]);
 
   // ─── Payments forecast — from IP Forecast POs (by payment month) + Heinlein tolling (30d after production) ───
+  // Real ingredient purchases from ip_movements (In, concept=Procurement/Purchase, any status)
+  const ipRealPayments = useMemo(() => {
+    const byMonth: Record<string, number> = {};
+    const meta: Record<string, string> = {};
+    for (const m of (ipMovements ?? [])) {
+      if (m.type !== "In") continue;
+      const tp = Number((m as any).total_price || 0);
+      const sp = Number((m as any).shipping_price || 0);
+      const oc = Number((m as any).other_costs || 0);
+      const cost = tp + sp + oc;
+      if (cost <= 0) continue;
+      // Use estimated_payment_date if available, else movement_date
+      const payDate = (m as any).estimated_payment_date || m.movement_date;
+      if (!payDate) continue;
+      const d = new Date(payDate);
+      const mk = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+      byMonth[mk] = (byMonth[mk] ?? 0) + cost;
+      const [y2,m2] = mk.split("-").map(Number);
+      meta[mk] = new Date(y2, m2-1, 1).toLocaleDateString("en",{month:"short",year:"2-digit"});
+    }
+    return { byMonth, meta };
+  }, [ipMovements]);
+
   const payments = useMemo(()=>{
     const ing: Record<string,number> = {};      // payMonthKey -> $
     const toll: Record<string,number> = {};      // payMonthKey -> $
@@ -3957,19 +3996,22 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       const payD = new Date(prod.getFullYear(), prod.getMonth()+1, 1);
       addToMonth(toll, `${payD.getFullYear()}-${String(payD.getMonth()+1).padStart(2,"0")}`, amt);
     }
-    const keys = [...new Set([...Object.keys(ing),...Object.keys(toll)])].sort();
+    // Merge real payment months into meta
+    for (const [mk, lbl] of Object.entries(ipRealPayments.meta)) meta[mk] = lbl;
+    const keys = [...new Set([...Object.keys(ing),...Object.keys(toll),...Object.keys(ipRealPayments.byMonth)])].sort();
     return { ing, toll, meta, keys };
-  },[ipForecastPOs, plan, prodCosts]);
+  },[ipForecastPOs, plan, prodCosts, ipRealPayments]);
 
   // ── Auto-sync Payments → localStorage for Runway cashflow (instant, no RLS issues) ──
   useEffect(()=>{
     const rows = payments.keys.map(k=>({
       payment_month: k.length<=7 ? k+"-01" : k,
+      ingredient_purchases_real: ipRealPayments.byMonth[k]??0,
       ingredient_purchases: payments.ing[k]??0,
       heinlein_tolling: payments.toll[k]??0,
     }));
     try { window.localStorage.setItem("baris.runway.procPayments", JSON.stringify(rows)); } catch {}
-  },[payments]);
+  },[payments, ipRealPayments]);
 
 
   const totalByMonth = FORECAST_MONTHS_OPS.map((_,i)=>dynamicProcSkus.reduce((s,sku)=>s+(plan[sku]?.[i]??0),0));
@@ -4016,12 +4058,17 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   const ipStartForForecast = useMemo(() => {
     const out: Record<string, { qty: number; costPerUnit: number }> = {};
     for (const mat of allMaterialsList) {
-      const qty = parseInt(ingInv[mat]) || 0;
+      let qty = parseInt(ingInv[mat]) || 0;
       const price = ingPrices[mat] ?? 0;
+      // Adjust: subtract received purchases from Aug onward (they'll come through as POs)
+      qty -= (ipReceivedAdjust[mat] ?? 0);
+      // Adjust: add back consumption from Aug onward (it'll come through FIFO consumption)
+      qty += (ipConsumedAdjust[mat] ?? 0);
       if (qty > 0) out[mat] = { qty, costPerUnit: price };
+      else if (qty === 0) out[mat] = { qty: 0, costPerUnit: price };
     }
     return out;
-  }, [ingInv, ingPrices, allMaterialsList]);
+  }, [ingInv, ingPrices, allMaterialsList, ipReceivedAdjust, ipConsumedAdjust]);
 
   // Build FP starting stock: bySku (lot master stock) + WIP (in production now)
   // This matches what the Schedule uses as starting point: stock + WIP
@@ -4092,6 +4139,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   const tollingPerCase = (prodCosts.tolling_per_unit ?? 0) * UNITS_PER_CASE_BOM;
 
   // Build IP ordered items (not yet received) from IP movements with estimated receive dates
+  // IP movements that are ordered (In, not yet received) → become POs in FIFO
   const ipOrderedAsPOs = useMemo(() => {
     const items: IPForecastPO[] = [];
     let nextId = -1;
@@ -4116,14 +4164,85 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     return items;
   }, [ipMovements, ingPrices]);
 
-  // Combine all POs for FIFO simulation: ordered (real) + forecast
-  const allPOsForFifo = useMemo(() => [...ipOrderedAsPOs, ...ipForecastPOs], [ipOrderedAsPOs, ipForecastPOs]);
+  // IP movements that ARE received (In, received=true) from FIFO start month onward
+  // These are "real purchases" that need to appear as POs in the FIFO simulation
+  // so they show up as movements in the correct month (instead of being lumped into starting stock).
+  const FIFO_START_KEY = FORECAST_HORIZON_MONTHS[0]?.key ?? "2026-08";
+  const ipReceivedAsPOs = useMemo(() => {
+    const items: IPForecastPO[] = [];
+    let nextId = -10000;
+    for (const m of (ipMovements ?? [])) {
+      const proc = IP_TO_PROC_MAT[(m as any).material];
+      if (!proc) continue;
+      const received = (m as any).received ?? false;
+      if (m.type === "In" && received) {
+        const q = Number(m.quantity || 0);
+        if (q <= 0) continue;
+        const d = new Date(m.movement_date);
+        const mk = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+        if (mk < FIFO_START_KEY) continue; // only from Aug 2026 onward
+        const tp = Number((m as any).total_price || 0);
+        const sp = Number((m as any).shipping_price || 0);
+        const oc = Number((m as any).other_costs || 0);
+        const cost = (tp + sp + oc) > 0 ? (tp + sp + oc) : q * (ingPrices[proc] ?? 0);
+        items.push({
+          id: nextId--,
+          material: proc, qty: q,
+          matCost: cost, freight: 0,
+          mBuy: mk, mRecv: mk,
+          mPay: "9999-12",
+        });
+      }
+    }
+    return items;
+  }, [ipMovements, ingPrices]);
+
+  // Qty of received purchases from FIFO start onward per material — subtract from starting stock
+  // so we don't double-count (starting stock = current, which already includes these)
+  const ipReceivedAdjust = useMemo(() => {
+    const adj: Record<string, number> = {};
+    for (const po of ipReceivedAsPOs) {
+      adj[po.material] = (adj[po.material] ?? 0) + po.qty;
+    }
+    return adj;
+  }, [ipReceivedAsPOs]);
+
+  // Also extract real IP consumption from ip_movements (Out) from FIFO start month onward
+  // These represent actual production consumption that should appear in the FIFO
+  const ipRealConsumption = useMemo(() => {
+    const out: { material: string; qty: number; month: string }[] = [];
+    for (const m of (ipMovements ?? [])) {
+      const proc = IP_TO_PROC_MAT[(m as any).material];
+      if (!proc) continue;
+      if (m.type === "Out") {
+        const q = Number(m.quantity || 0);
+        if (q <= 0) continue;
+        const d = new Date(m.movement_date);
+        const mk = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+        if (mk < FIFO_START_KEY) continue;
+        out.push({ material: proc, qty: q, month: mk });
+      }
+    }
+    return out;
+  }, [ipMovements]);
+
+  // Net consumption adjustment: real consumption already happened, so subtract from starting stock too
+  const ipConsumedAdjust = useMemo(() => {
+    const adj: Record<string, number> = {};
+    for (const c of ipRealConsumption) {
+      adj[c.material] = (adj[c.material] ?? 0) + c.qty;
+    }
+    return adj;
+  }, [ipRealConsumption]);
+
+  // Combine all POs for FIFO simulation: received real + ordered (pending) + forecast
+  const allPOsForFifo = useMemo(() => [...ipReceivedAsPOs, ...ipOrderedAsPOs, ...ipForecastPOs], [ipReceivedAsPOs, ipOrderedAsPOs, ipForecastPOs]);
 
   const fifoResults = useMemo(() => runFifoForecast(
     ipStartForForecast, fpStartForForecast, allPOsForFifo,
     prodPlanForForecast, salesFcstForForecast, bomQty,
-    tollingPerCase, allMaterialsList, dynamicProcSkus,
-  ), [ipStartForForecast, fpStartForForecast, allPOsForFifo, prodPlanForForecast, salesFcstForForecast, bomQty, tollingPerCase, allMaterialsList, dynamicProcSkus]);
+    tollingPerCase, allMaterialsList, dynamicProcSkus, ipRealConsumption,
+  ), [ipStartForForecast, fpStartForForecast, allPOsForFifo, prodPlanForForecast, salesFcstForForecast, bomQty, tollingPerCase, allMaterialsList, dynamicProcSkus, ipRealConsumption]);
 
   // ─── Bridge: write FIFO inventory & payments to localStorage for Finance ───
   useEffect(() => {
@@ -4797,23 +4916,26 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
               <thead>
                 <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
                   <th className="px-4 py-2.5 text-left">Payment month</th>
-                  <th className="px-4 py-2.5 text-right">Ingredient purchases</th>
+                  <th className="px-4 py-2.5 text-right">Ingredient purchase real</th>
+                  <th className="px-4 py-2.5 text-right">Ingredient purchase plan</th>
                   <th className="px-4 py-2.5 text-right">Heinlein tolling</th>
                   <th className="px-4 py-2.5 text-right font-bold">Total cash out</th>
                 </tr>
               </thead>
               <tbody>
                 {payments.keys.length===0 && (
-                  <tr><td colSpan={4} className="px-4 py-6 text-center text-muted-foreground">No planned purchases or production yet.</td></tr>
+                  <tr><td colSpan={5} className="px-4 py-6 text-center text-muted-foreground">No planned purchases or production yet.</td></tr>
                 )}
                 {payments.keys.map(k=>{
+                  const realAmt=ipRealPayments.byMonth[k]??0;
                   const ingAmt=payments.ing[k]??0;
                   const tollAmt=payments.toll[k]??0;
-                  const total=ingAmt+tollAmt;
+                  const total=realAmt+ingAmt+tollAmt;
                   const past = k < monthKeyOf(new Date());
                   return (
                     <tr key={k} className="border-t border-border/60 hover:bg-muted/20">
                       <td className={`px-4 py-2 font-semibold ${past?"text-red-600":""}`}>{payments.meta[k]??k}{past?" ⚠":""}</td>
+                      <td className="px-4 py-2 text-right font-mono">{realAmt>0?`$${Math.round(realAmt).toLocaleString()}`:"—"}</td>
                       <td className="px-4 py-2 text-right font-mono">{ingAmt>0?`$${Math.round(ingAmt).toLocaleString()}`:"—"}</td>
                       <td className="px-4 py-2 text-right font-mono">{tollAmt>0?`$${Math.round(tollAmt).toLocaleString()}`:"—"}</td>
                       <td className="px-4 py-2 text-right font-mono font-bold" style={{color:"#A3224A"}}>${Math.round(total).toLocaleString()}</td>
@@ -4824,9 +4946,10 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
               <tfoot>
                 <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
                   <td className="px-4 py-2 font-semibold text-xs">TOTAL (horizon)</td>
+                  <td className="px-4 py-2 text-right font-mono">${Math.round(Object.values(ipRealPayments.byMonth).reduce((a,b)=>a+b,0)).toLocaleString()}</td>
                   <td className="px-4 py-2 text-right font-mono">${Math.round(Object.values(payments.ing).reduce((a,b)=>a+b,0)).toLocaleString()}</td>
                   <td className="px-4 py-2 text-right font-mono">${Math.round(Object.values(payments.toll).reduce((a,b)=>a+b,0)).toLocaleString()}</td>
-                  <td className="px-4 py-2 text-right font-mono font-bold text-emerald-400">${Math.round(Object.values(payments.ing).reduce((a,b)=>a+b,0)+Object.values(payments.toll).reduce((a,b)=>a+b,0)).toLocaleString()}</td>
+                  <td className="px-4 py-2 text-right font-mono font-bold text-emerald-400">${Math.round(Object.values(ipRealPayments.byMonth).reduce((a,b)=>a+b,0)+Object.values(payments.ing).reduce((a,b)=>a+b,0)+Object.values(payments.toll).reduce((a,b)=>a+b,0)).toLocaleString()}</td>
                 </tr>
               </tfoot>
             </table>
@@ -5366,7 +5489,22 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                     {allMaterialsList.map(g => (
                       <tr key={g} className="border-t border-border/60">
                         <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{g}</td>
-                        {FR.map(r => <td key={r.mk} className="px-3 py-1.5 text-right font-mono">${Math.round(r.ipStock[g]?.value ?? 0).toLocaleString()}</td>)}
+                        {FR.map(r => {
+                          const val = r.ipStock[g]?.value ?? 0;
+                          const consumed = r.ipConsumed[g] ?? 0;
+                          const received = r.ipReceived[g] ?? 0;
+                          const hasProduction = consumed > 0;
+                          const hasPurchase = received > 0;
+                          const qty = r.ipStock[g]?.qty ?? 0;
+                          const stockShort = hasProduction && qty < 0;
+                          let cellBg = "";
+                          let cellColor = "#000";
+                          if (stockShort) { cellBg = "#DC2626"; cellColor = "#fff"; }
+                          else if (hasPurchase) { cellBg = "#DCFCE7"; cellColor = hasProduction ? "#DC2626" : "#000"; }
+                          else if (hasProduction) { cellColor = "#DC2626"; }
+                          return <td key={r.mk} className="px-3 py-1.5 text-right font-mono font-semibold"
+                            style={{backgroundColor:cellBg||undefined, color:cellColor}}>${Math.round(val).toLocaleString()}</td>;
+                        })}
                       </tr>
                     ))}
                     <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
