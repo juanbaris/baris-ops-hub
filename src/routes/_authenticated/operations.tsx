@@ -4074,21 +4074,6 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
 
   // ─── FIFO Forecast simulation ───
   // Build IP starting stock from I&P Summary (on-hand) with average cost
-  const ipStartForForecast = useMemo(() => {
-    const out: Record<string, { qty: number; costPerUnit: number }> = {};
-    for (const mat of allMaterialsList) {
-      let qty = parseInt(ingInv[mat]) || 0;
-      const price = ingPrices[mat] ?? 0;
-      // Adjust: subtract received purchases from Aug onward (they'll come through as POs)
-      qty -= (ipReceivedAdjust[mat] ?? 0);
-      // Adjust: add back consumption from Aug onward (it'll come through FIFO consumption)
-      qty += (ipConsumedAdjust[mat] ?? 0);
-      if (qty > 0) out[mat] = { qty, costPerUnit: price };
-      else if (qty === 0) out[mat] = { qty: 0, costPerUnit: price };
-    }
-    return out;
-  }, [ingInv, ingPrices, allMaterialsList, ipReceivedAdjust, ipConsumedAdjust]);
-
   // Build FP starting stock: bySku (lot master stock) + WIP (in production now)
   // This matches what the Schedule uses as starting point: stock + WIP
   const fpStartForForecast = useMemo(() => {
@@ -4253,6 +4238,22 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     }
     return adj;
   }, [ipRealConsumption]);
+
+  // IP starting stock for FIFO: current stock adjusted back to end-of-July
+  const ipStartForForecast = useMemo(() => {
+    const out: Record<string, { qty: number; costPerUnit: number }> = {};
+    for (const mat of allMaterialsList) {
+      let qty = parseInt(ingInv[mat]) || 0;
+      const price = ingPrices[mat] ?? 0;
+      // Adjust: subtract received purchases from Aug onward (they'll come through as POs)
+      qty -= (ipReceivedAdjust[mat] ?? 0);
+      // Adjust: add back consumption from Aug onward (it'll come through FIFO consumption)
+      qty += (ipConsumedAdjust[mat] ?? 0);
+      if (qty > 0) out[mat] = { qty, costPerUnit: price };
+      else if (qty === 0) out[mat] = { qty: 0, costPerUnit: price };
+    }
+    return out;
+  }, [ingInv, ingPrices, allMaterialsList, ipReceivedAdjust, ipConsumedAdjust]);
 
   // Combine all POs for FIFO simulation: received real + ordered (pending) + forecast
   const allPOsForFifo = useMemo(() => [...ipReceivedAsPOs, ...ipOrderedAsPOs, ...ipForecastPOs], [ipReceivedAsPOs, ipOrderedAsPOs, ipForecastPOs]);
