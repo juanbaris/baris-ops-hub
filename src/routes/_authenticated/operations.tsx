@@ -6,6 +6,7 @@ import { PageHeader } from "@/components/app-shell";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import { useSalesForecast } from "@/hooks/use-sales-forecast";
+import { useInvoicedActuals } from "@/hooks/use-invoiced-actuals";
 import { calcForecast, skuForecastByMonthKey, forecastFromState, committedForecastFromState, productionRequirements, DEFAULT_VEL_CHAINS, NEW_RETAILERS, FORECAST_MONTHS, skuForecast as skuForecastFormula, DEFAULT_MIX_PCT, type Scenario as SalesScenario, type ForecastRow } from "@/lib/sales-forecast";
 import { buildLotMap, resolveCogs, type LotCard } from "@/lib/fp-shared";
 import { EXTENDED_SKUS, fetchSalesAccounts, fetchPromoCalendar, aggregatePromoCalendar, dbSkuByMonthFromAgg, mergeForecastWithDb, shiftPromoOneMonthEarlier, type SalesAccount, type PromoCalendarRow } from "@/lib/sales-database";
@@ -3830,6 +3831,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   const wipBySku = useMemo(()=>Object.fromEntries(SKUS.map(s=>[s,parseInt(wip[s]?.cases??"")||0])),[wip]);
   const salesForecastHook = useSalesForecast();
   const { bySkuMonthKey, production: salesProduction } = salesForecastHook;
+  const { byLabel: invoicedByLabel } = useInvoicedActuals();
   const [planScenario, setPlanScenario] = useState<SalesScenario>("Normal");
 
   // ── Promo Calendar: same data source as Sales → By SKU ──
@@ -4053,18 +4055,38 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   }, [plan]);
 
   // Build sales forecast map for FIFO
+  // Current-month adjustment: lot_master stock already reflects actual sales that
+  // happened this month, so subtracting the FULL forecast would double-count.
+  // Instead, for the current month only subtract the remaining forecast:
+  //   remaining = max(0, forecast − invoiced actuals from Real Monthly)
   const salesFcstForForecast = useMemo(() => {
     const out: Record<string, Record<string, number>> = {};
+    const now = new Date();
+    const cmk = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    const MO = ["","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    const cmLabel = `${MO[now.getMonth() + 1]} ${now.getFullYear()}`; // e.g. "Sep 2026"
+    const cmActual = invoicedByLabel[cmLabel];
+    const skuLower: Record<string, string> = {
+      XD: "xd", PW: "pw", HM: "hm", WM: "wm", WD: "wd", Matcha: "matcha",
+    };
     for (const sku of dynamicProcSkus) {
       out[sku] = {};
       for (let i = 0; i < FORECAST_KEYS_OPS.length; i++) {
         const fk = FORECAST_KEYS_OPS[i];
         const [y, m] = fk.split("-");
-        out[sku][`${y}-${m.padStart(2, "0")}`] = fcstOps[sku]?.[i] ?? 0;
+        const mk = `${y}-${m.padStart(2, "0")}`;
+        let cases = fcstOps[sku]?.[i] ?? 0;
+        // Current month: only subtract what hasn't been sold yet
+        if (mk === cmk && cmActual) {
+          const lk = skuLower[sku];
+          const sold = lk ? ((cmActual.sku as any)[lk] ?? 0) : 0;
+          cases = Math.max(0, cases - sold);
+        }
+        out[sku][mk] = cases;
       }
     }
     return out;
-  }, [fcstOps, dynamicProcSkus]);
+  }, [fcstOps, dynamicProcSkus, invoicedByLabel]);
 
   // Tolling per case
   const tollingPerCase = (prodCosts.tolling_per_unit ?? 0) * UNITS_PER_CASE_BOM;
