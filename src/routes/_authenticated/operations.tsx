@@ -2892,6 +2892,8 @@ type ForecastMonthResult = {
   ipStock: Record<string, { qty: number; value: number }>;
   ipReceived: Record<string, number>;
   ipConsumed: Record<string, number>;
+  ipReceivedValue: Record<string, number>;  // $ value of received materials
+  ipConsumedValue: Record<string, number>;  // $ value of consumed materials (FIFO cost)
   fpStock: Record<string, { cases: number; value: number }>;
   fpProduced: Record<string, number>;
   fpSold: Record<string, number>;
@@ -2940,7 +2942,7 @@ function runFifoForecast(
   return MONTHS.map((m) => {
     const r: ForecastMonthResult = {
       mk: m.key, ml: m.label,
-      ipStock: {}, ipReceived: {}, ipConsumed: {},
+      ipStock: {}, ipReceived: {}, ipConsumed: {}, ipReceivedValue: {}, ipConsumedValue: {},
       fpStock: {}, fpProduced: {}, fpSold: {}, fpCogs: {},
       ipPayments: 0, tollPayments: 0, totalPayments: 0,
       ipLots: {}, fpLots: {},
@@ -2953,6 +2955,7 @@ function runFifoForecast(
         if (!ipLots[po.material]) ipLots[po.material] = [];
         ipLots[po.material].push({ id: `PO${po.id}`, qty: po.qty, remaining: po.qty, costPerUnit: cpu, monthArrived: m.key, label: `PO#${po.id}` });
         r.ipReceived[po.material] = (r.ipReceived[po.material] ?? 0) + po.qty;
+        r.ipReceivedValue[po.material] = (r.ipReceivedValue[po.material] ?? 0) + (po.matCost + po.freight);
       }
     }
 
@@ -2961,13 +2964,16 @@ function runFifoForecast(
       for (const rc of realConsumption) {
         if (rc.month !== m.key || rc.qty <= 0) continue;
         let rem = rc.qty;
+        let consumedCost = 0;
         for (const lot of (ipLots[rc.material] ?? [])) {
           if (rem <= 0) break;
           const take = Math.min(lot.remaining, rem);
+          consumedCost += take * lot.costPerUnit;
           lot.remaining -= take;
           rem -= take;
         }
         r.ipConsumed[rc.material] = (r.ipConsumed[rc.material] ?? 0) + (rc.qty - rem);
+        r.ipConsumedValue[rc.material] = (r.ipConsumedValue[rc.material] ?? 0) + consumedCost;
       }
     }
 
@@ -2988,6 +2994,7 @@ function runFifoForecast(
           rem -= take;
         }
         r.ipConsumed[mat] = (r.ipConsumed[mat] ?? 0) + (totalNeed - rem);
+        r.ipConsumedValue[mat] = (r.ipConsumedValue[mat] ?? 0) + cost;
         ingredientCost += cost;
       }
       const cpc = (ingredientCost / pr.cases) + tollingPerCase;
@@ -4335,19 +4342,28 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       // Compute received and consumed for this specific month from movements
       const ipReceived: Record<string, number> = {};
       const ipConsumed: Record<string, number> = {};
+      const ipReceivedValue: Record<string, number> = {};
+      const ipConsumedValue: Record<string, number> = {};
       for (const mv of sorted) {
         const mo = mv.movement_date.slice(0, 7);
         if (mo !== pm.key) continue;
         const proc = resolveToProc((mv as any).material);
         const mat = proc ?? ((mv as any).material as string);
         const q = Number(mv.quantity || 0);
+        const cogs = Number((mv as any).cogs_per_unit || 0);
         const received = (mv as any).received ?? false;
-        if (mv.type === "In" && received) ipReceived[mat] = (ipReceived[mat] ?? 0) + q;
-        if (mv.type === "Out") ipConsumed[mat] = (ipConsumed[mat] ?? 0) + q;
+        if (mv.type === "In" && received) {
+          ipReceived[mat] = (ipReceived[mat] ?? 0) + q;
+          if (cogs) ipReceivedValue[mat] = (ipReceivedValue[mat] ?? 0) + q * cogs;
+        }
+        if (mv.type === "Out") {
+          ipConsumed[mat] = (ipConsumed[mat] ?? 0) + q;
+          if (cogs) ipConsumedValue[mat] = (ipConsumedValue[mat] ?? 0) + q * cogs;
+        }
       }
       results.push({
         mk: pm.key, ml: pm.label,
-        ipStock, ipReceived, ipConsumed,
+        ipStock, ipReceived, ipConsumed, ipReceivedValue, ipConsumedValue,
         fpStock: {}, fpProduced: {}, fpSold: {}, fpCogs: {},
         ipPayments: 0, tollPayments: 0, totalPayments: 0,
         ipLots: {}, fpLots: {},
@@ -5684,8 +5700,6 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                   </thead>
                   <tbody>
                     {allMaterialsList.map(g => {
-                      // For value view, we need the cost per unit from the FIFO lots or ingPrices
-                      const costPerUnit = ingPrices[g] ?? 0;
                       return (
                       <React.Fragment key={g}>
                         <tr className="border-t border-border/60">
@@ -5694,7 +5708,8 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                           {FR.map(r => {
                             const qty = r.ipReceived[g] ?? 0;
                             if (qty <= 0) return <td key={r.mk} className="px-3 py-1 text-right font-mono text-emerald-600">—</td>;
-                            const display = ipMovView === "value" ? `+$${Math.round(qty * costPerUnit).toLocaleString()}` : `+${Math.round(qty).toLocaleString()}`;
+                            const val = r.ipReceivedValue?.[g] ?? 0;
+                            const display = ipMovView === "value" ? `+$${Math.round(val).toLocaleString()}` : `+${Math.round(qty).toLocaleString()}`;
                             return <td key={r.mk} className="px-3 py-1 text-right font-mono text-emerald-600">{display}</td>;
                           })}
                         </tr>
@@ -5703,7 +5718,8 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                           {FR.map(r => {
                             const qty = r.ipConsumed[g] ?? 0;
                             if (qty <= 0) return <td key={r.mk} className="px-3 py-1 text-right font-mono text-red-600">—</td>;
-                            const display = ipMovView === "value" ? `−$${Math.round(qty * costPerUnit).toLocaleString()}` : `−${Math.round(qty).toLocaleString()}`;
+                            const val = r.ipConsumedValue?.[g] ?? 0;
+                            const display = ipMovView === "value" ? `−$${Math.round(val).toLocaleString()}` : `−${Math.round(qty).toLocaleString()}`;
                             return <td key={r.mk} className="px-3 py-1 text-right font-mono text-red-600">{display}</td>;
                           })}
                         </tr>
@@ -5717,9 +5733,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                       <td className="px-3 py-1.5 text-emerald-700 font-bold">+ Recv</td>
                       {FR.map(r => {
                         const total = allMaterialsList.reduce((s, g) => {
-                          const qty = r.ipReceived[g] ?? 0;
-                          const cpu = ingPrices[g] ?? 0;
-                          return s + (ipMovView === "value" ? qty * cpu : qty);
+                          return s + (ipMovView === "value" ? (r.ipReceivedValue?.[g] ?? 0) : (r.ipReceived[g] ?? 0));
                         }, 0);
                         return <td key={r.mk} className="px-3 py-1.5 text-right font-mono font-bold text-emerald-700">{total > 0 ? (ipMovView === "value" ? `+$${Math.round(total).toLocaleString()}` : `+${Math.round(total).toLocaleString()}`) : "—"}</td>;
                       })}
@@ -5729,9 +5743,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                       <td className="px-3 py-1.5 text-red-700 font-bold">− Used</td>
                       {FR.map(r => {
                         const total = allMaterialsList.reduce((s, g) => {
-                          const qty = r.ipConsumed[g] ?? 0;
-                          const cpu = ingPrices[g] ?? 0;
-                          return s + (ipMovView === "value" ? qty * cpu : qty);
+                          return s + (ipMovView === "value" ? (r.ipConsumedValue?.[g] ?? 0) : (r.ipConsumed[g] ?? 0));
                         }, 0);
                         return <td key={r.mk} className="px-3 py-1.5 text-right font-mono font-bold text-red-700">{total > 0 ? (ipMovView === "value" ? `−$${Math.round(total).toLocaleString()}` : `−${Math.round(total).toLocaleString()}`) : "—"}</td>;
                       })}
@@ -5741,14 +5753,10 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                       <td className="px-3 py-1.5 text-white font-bold">Δ</td>
                       {FR.map(r => {
                         const recv = allMaterialsList.reduce((s, g) => {
-                          const qty = r.ipReceived[g] ?? 0;
-                          const cpu = ingPrices[g] ?? 0;
-                          return s + (ipMovView === "value" ? qty * cpu : qty);
+                          return s + (ipMovView === "value" ? (r.ipReceivedValue?.[g] ?? 0) : (r.ipReceived[g] ?? 0));
                         }, 0);
                         const used = allMaterialsList.reduce((s, g) => {
-                          const qty = r.ipConsumed[g] ?? 0;
-                          const cpu = ingPrices[g] ?? 0;
-                          return s + (ipMovView === "value" ? qty * cpu : qty);
+                          return s + (ipMovView === "value" ? (r.ipConsumedValue?.[g] ?? 0) : (r.ipConsumed[g] ?? 0));
                         }, 0);
                         const net = recv - used;
                         const prefix = ipMovView === "value" ? "$" : "";
