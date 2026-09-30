@@ -4222,7 +4222,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   // IP movements that ARE received (In, received=true) from FIFO start month onward
   // These are "real purchases" that need to appear as POs in the FIFO simulation
   // so they show up as movements in the correct month (instead of being lumped into starting stock).
-  const FIFO_START_KEY = FORECAST_HORIZON_MONTHS[0]?.key ?? "2026-08";
+  const FIFO_START_KEY = NOW_MK; // FIFO simulation starts at current month; past months use historical data
   const ipReceivedAsPOs = useMemo(() => {
     const items: IPForecastPO[] = [];
     let nextId = -10000;
@@ -4271,44 +4271,110 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     return out;
   }, [ipMovements]);
 
-  // Compute starting stock from ip_movements directly (end of month BEFORE FIFO start)
-  // This is consistent across all users — no localStorage dependency
+  // ── Historical IP monthly stock from ip_movements (same logic as IP Summary) ──
+  // This gives exact past-month stock that matches IP Summary for all users.
+  const NOW_MK = monthKeyOf(new Date()); // e.g. "2026-09"
+  const ipHistoricalStock = useMemo(() => {
+    // Build per-material running balance from ip_movements, snapping monthly
+    const sorted = [...(ipMovements ?? [])].sort((a, b) => a.movement_date.localeCompare(b.movement_date));
+    const balance: Record<string, number> = {};
+    const valBalance: Record<string, number> = {};
+    const snaps: Record<string, { units: Record<string, number>; value: Record<string, number> }> = {};
+
+    // Group movements by month, accumulate running balance
+    let lastMo = "";
+    for (const mv of sorted) {
+      const proc = resolveToProc((mv as any).material);
+      const rawMat = (mv as any).material as string;
+      const mat = proc ?? rawMat; // use proc name if mapped, else raw
+      const mo = mv.movement_date.slice(0, 7);
+
+      // Snap previous month before moving to new month
+      if (mo !== lastMo && lastMo) {
+        snaps[lastMo] = { units: { ...balance }, value: { ...valBalance } };
+      }
+      lastMo = mo;
+
+      const q = Number(mv.quantity || 0);
+      const delta = mv.type === "In" ? q : -q;
+      const received = (mv as any).received ?? false;
+      // Only count received In movements (matches IP Summary "Received" view)
+      if (mv.type === "In" && !received) continue;
+      balance[mat] = (balance[mat] ?? 0) + delta;
+      const cogs = Number((mv as any).cogs_per_unit || 0);
+      if (cogs) valBalance[mat] = (valBalance[mat] ?? 0) + delta * cogs;
+    }
+    // Snap the last month
+    if (lastMo) snaps[lastMo] = { units: { ...balance }, value: { ...valBalance } };
+
+    // Now build ForecastMonthResult-shaped objects for past months
+    const pastMonths = FORECAST_HORIZON_MONTHS.filter(m => m.key < NOW_MK);
+    const results: ForecastMonthResult[] = [];
+    for (const pm of pastMonths) {
+      // Find the snap for this month (or the latest snap before it)
+      let snap = snaps[pm.key];
+      if (!snap) {
+        // Use the latest snap at or before this month
+        const snapKeys = Object.keys(snaps).filter(k => k <= pm.key).sort();
+        snap = snapKeys.length > 0 ? snaps[snapKeys[snapKeys.length - 1]] : { units: {}, value: {} };
+      }
+      const ipStock: Record<string, { qty: number; value: number }> = {};
+      for (const mat of allMaterialsList) {
+        ipStock[mat] = { qty: Math.round(snap.units[mat] ?? 0), value: Math.round(snap.value[mat] ?? 0) };
+      }
+      // Compute received and consumed for this specific month from movements
+      const ipReceived: Record<string, number> = {};
+      const ipConsumed: Record<string, number> = {};
+      for (const mv of sorted) {
+        const mo = mv.movement_date.slice(0, 7);
+        if (mo !== pm.key) continue;
+        const proc = resolveToProc((mv as any).material);
+        const mat = proc ?? ((mv as any).material as string);
+        const q = Number(mv.quantity || 0);
+        const received = (mv as any).received ?? false;
+        if (mv.type === "In" && received) ipReceived[mat] = (ipReceived[mat] ?? 0) + q;
+        if (mv.type === "Out") ipConsumed[mat] = (ipConsumed[mat] ?? 0) + q;
+      }
+      results.push({
+        mk: pm.key, ml: pm.label,
+        ipStock, ipReceived, ipConsumed,
+        fpStock: {}, fpProduced: {}, fpSold: {}, fpCogs: {},
+        ipPayments: 0, tollPayments: 0, totalPayments: 0,
+        ipLots: {}, fpLots: {},
+      });
+    }
+    return results;
+  }, [ipMovements, allMaterialsList]);
+
+  // ── Starting stock for FIFO = end of last past month from ip_movements ──
   const ipStartForForecast = useMemo(() => {
     const out: Record<string, { qty: number; costPerUnit: number }> = {};
-    // FIFO starts at Aug 2026, so starting stock = end of July 2026
-    // Sum all ip_movements before the FIFO start month
-    const cutoff = FIFO_START_KEY; // "2026-08"
-    const stock: Record<string, number> = {};
-    for (const m of (ipMovements ?? [])) {
-      const proc = resolveToProc((m as any).material);
-      if (!proc) continue;
-      const mk = monthKeyFromStr(m.movement_date);
-      if (mk >= cutoff) continue; // only movements BEFORE Aug 2026
-      const q = Number(m.quantity || 0);
-      if (m.type === "In") {
-        const received = (m as any).received ?? false;
-        if (received) stock[proc] = (stock[proc] ?? 0) + q;
-      } else {
-        stock[proc] = (stock[proc] ?? 0) - q;
-      }
-    }
+    // Use the last historical month's stock as starting point for FIFO
+    const lastHist = ipHistoricalStock.length > 0 ? ipHistoricalStock[ipHistoricalStock.length - 1] : null;
     for (const mat of allMaterialsList) {
-      const qty = Math.round(stock[mat] ?? 0);
+      const qty = lastHist?.ipStock[mat]?.qty ?? 0;
       const price = ingPrices[mat] ?? 0;
-      if (qty > 0) out[mat] = { qty, costPerUnit: price };
-      else out[mat] = { qty: Math.max(0, qty), costPerUnit: price };
+      out[mat] = { qty, costPerUnit: price };
     }
     return out;
-  }, [ipMovements, ingPrices, allMaterialsList]);
+  }, [ipHistoricalStock, ingPrices, allMaterialsList]);
 
   // Combine all POs for FIFO simulation: received real + ordered (pending) + forecast
   const allPOsForFifo = useMemo(() => [...ipReceivedAsPOs, ...ipOrderedAsPOs, ...ipForecastPOs], [ipReceivedAsPOs, ipOrderedAsPOs, ipForecastPOs]);
 
-  const fifoResults = useMemo(() => runFifoForecast(
+  // Run FIFO for the full horizon (it starts with ipStartForForecast = end-of-last-past-month)
+  const fifoRaw = useMemo(() => runFifoForecast(
     ipStartForForecast, fpStartForForecast, allPOsForFifo,
     prodPlanForForecast, salesFcstForForecast, bomQty,
     tollingPerCase, allMaterialsList, dynamicProcSkus, ipRealConsumption,
   ), [ipStartForForecast, fpStartForForecast, allPOsForFifo, prodPlanForForecast, salesFcstForForecast, bomQty, tollingPerCase, allMaterialsList, dynamicProcSkus, ipRealConsumption]);
+
+  // Merge: past months from historical data, current+future from FIFO
+  const fifoResults = useMemo(() => {
+    const pastKeys = new Set(ipHistoricalStock.map(r => r.mk));
+    const futureResults = fifoRaw.filter(r => !pastKeys.has(r.mk));
+    return [...ipHistoricalStock, ...futureResults];
+  }, [ipHistoricalStock, fifoRaw]);
 
   // ─── Bridge: write FIFO inventory & payments to localStorage for Finance ───
   useEffect(() => {
