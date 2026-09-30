@@ -8,6 +8,15 @@ import { fetchSalesAccounts, fetchPromoCalendar, aggregatePromoCalendar, shiftPr
 import { RunwayTab } from "@/components/runway/runway-tab";
 import { parseAccountfullyPdf } from "@/lib/accountfully-parser";
 
+// ─── Types ────────────────────────────────────────────────────────────────────
+type PendingPaymentItem = { id: string; name: string; amounts: Record<number, number> };
+function ppTotals(items: PendingPaymentItem[]): Record<number, number> {
+  const m: Record<number, number> = {};
+  for (const it of items) for (const [k, v] of Object.entries(it.amounts)) { m[Number(k)] = (m[Number(k)] ?? 0) + v; }
+  return m;
+}
+type PnlOverride = Record<string, Record<number, number>>; // lineId → { monthIdx → $K value }
+
 // ─── Data (values in $K) ──────────────────────────────────────────────────────
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'] as const;
 const PERIODS = ['2026-01','2026-02','2026-03','2026-04','2026-05','2026-06','2026-07','2026-08','2026-09','2026-10','2026-11','2026-12'];
@@ -388,7 +397,7 @@ function KPI({ icon, label, value, sub, subColor, onClick }: {
 }
 
 // ─── Dashboard Tab ────────────────────────────────────────────────────────────
-function DashboardTab({ period, refMonth, actuals, realMonths, actualOnly, paymentsPending, cfInputs }: { period: Period; refMonth: number; actuals: Record<string,any>; realMonths: number; actualOnly: boolean; paymentsPending: Record<number,number>; cfInputs: CfInputs }) {
+function DashboardTab({ period, refMonth, actuals, realMonths, actualOnly, paymentsPending, cfInputs, pnlOverrides }: { period: Period; refMonth: number; actuals: Record<string,any>; realMonths: number; actualOnly: boolean; paymentsPending: Record<number,number>; cfInputs: CfInputs; pnlOverrides: PnlOverride }) {
   const { effectiveForecast } = useSalesForecast();
   const { julyGrossSales } = useJulyRealFromFulfillment();
   const assumptions = useFinanceAssumptions();
@@ -399,8 +408,8 @@ function DashboardTab({ period, refMonth, actuals, realMonths, actualOnly, payme
 
   // Single source of truth: same series as P&L / Balance Sheet / Cash Flow (all in $K).
   const S = useMemo(
-    () => buildFinanceForecast(actuals, fcGrossByMonth, assumptions.get, {}, {}, {}, paymentsPending, cfInputs),
-    [actuals, assumptions.rows, effectiveForecast, julyGrossSales, paymentsPending, cfInputs]
+    () => buildFinanceForecast(actuals, fcGrossByMonth, assumptions.get, {}, {}, {}, paymentsPending, cfInputs, pnlOverrides),
+    [actuals, assumptions.rows, effectiveForecast, julyGrossSales, paymentsPending, cfInputs, pnlOverrides]
   );
 
   // Month range: Actual = only real P&L months (Jan–Jun); Forecast = full year (Jan–Dec).
@@ -704,7 +713,7 @@ function buildChildMap(rows: PLRow[]): Record<string,string[]> {
 }
 
 // ─── P&L Table ────────────────────────────────────────────────────────────────
-export function PNLTab({ realMonths, actuals, actualOnly }: { realMonths: number; actuals: Record<string, any>; actualOnly: boolean }) {
+export function PNLTab({ realMonths, actuals, actualOnly, pnlOverrides, onPnlOverridesSave }: { realMonths: number; actuals: Record<string, any>; actualOnly: boolean; pnlOverrides: PnlOverride; onPnlOverridesSave: (ov: PnlOverride) => void }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(
     new Set(["g-disc","g-facility","g-payroll","g-profsvcs","g-travel"])
   );
@@ -713,6 +722,8 @@ export function PNLTab({ realMonths, actuals, actualOnly }: { realMonths: number
   const [yearFilter, setYearFilter] = useState<'all'|2026|2027|2028>('all');
   const [expEditYear, setExpEditYear] = useState<number|null>(null);
   const [expDraft, setExpDraft] = useState<Record<string, number[]>|null>(null);
+  const [pnlEditMode, setPnlEditMode] = useState(false);
+  const [pnlDraft, setPnlDraft] = useState<PnlOverride>({});
   const childMap = useMemo(() => buildChildMap(PL_ROWS), []);
 
   const scenarioForecast = useFinanceScenarioForecast(scenario); // "2026-8" -> $ (not $K)
@@ -781,6 +792,12 @@ export function PNLTab({ realMonths, actuals, actualOnly }: { realMonths: number
     } else {
       const mat = (expEditYear === year && expDraft) ? expDraft : yearExpenseMatrix(year);
       fixedCostsK = Object.fromEntries(Object.keys(DEFAULT_EXPENSE_K).map(k => [k, (mat[k]?.[m0]) ?? 0]));
+    }
+
+    // Apply PNL overrides (from Supabase, shared) on top — live draft when editing
+    const activePnlOv = pnlEditMode ? pnlDraft : pnlOverrides;
+    for (const [lineId, byMonth] of Object.entries(activePnlOv)) {
+      if (byMonth[idx] != null) fixedCostsK[lineId] = byMonth[idx];
     }
 
     return { grossSales: grossSalesK, unitsSold, cogsPerUnit, cogsK, discountsK, dedByLine, logisticsPct, deductionPct, fixedCostsK };
@@ -944,6 +961,19 @@ export function PNLTab({ realMonths, actuals, actualOnly }: { realMonths: number
           className="rounded-full border border-border px-2 py-0.5 hover:bg-muted flex items-center gap-1">
           ⚙️ Assumptions
         </button>
+        {pnlEditMode ? (
+          <span className="flex items-center gap-1">
+            <button onClick={() => { onPnlOverridesSave(pnlDraft); setPnlEditMode(false); }}
+              className="rounded-full border border-emerald-300 bg-emerald-50 text-emerald-700 px-2 py-0.5 hover:bg-emerald-100">🔒 Congelar PNL</button>
+            <button onClick={() => setPnlEditMode(false)}
+              className="rounded-full border border-border px-2 py-0.5 hover:bg-muted">Cancelar</button>
+            <button onClick={() => setPnlDraft({})}
+              className="rounded-full border border-border px-2 py-0.5 hover:bg-muted text-muted-foreground">↺ Clear overrides</button>
+          </span>
+        ) : (
+          <button onClick={() => { setPnlEditMode(true); const d: PnlOverride = {}; for (const k in pnlOverrides) d[k] = { ...pnlOverrides[k] }; setPnlDraft(d); }}
+            className="rounded-full border border-blue-400 text-blue-600 px-2 py-0.5 hover:bg-blue-50">✏️ Editar forecast PNL</button>
+        )}
         <div className="flex items-center gap-1 ml-1">
           <span className="text-[10px] uppercase tracking-wide">Año:</span>
           {(['all', 2026, 2027, 2028] as const).map(y => (
@@ -1090,6 +1120,34 @@ export function PNLTab({ realMonths, actuals, actualOnly }: { realMonths: number
                         </td>
                       );
                     }
+                    // PNL edit mode: editable cells for expense items in forecast months
+                    if (pnlEditMode && !isRealIdx(i) && EXP_ITEM_IDS.has(row.id)) {
+                      const ov = pnlDraft[row.id]?.[i];
+                      const hasOverride = ov != null;
+                      const dv = hasOverride ? Math.abs(ov) : Math.abs(v ?? 0);
+                      return (
+                        <td key={k} className="px-1 py-0.5 text-right">
+                          <input type="number" step="0.1"
+                            value={hasOverride ? (dv === 0 ? "" : +dv.toFixed(1)) : ""}
+                            placeholder={dv === 0 ? "—" : `${+dv.toFixed(0)}`}
+                            onChange={e => {
+                              const raw = e.target.value;
+                              setPnlDraft(prev => {
+                                const d = { ...prev };
+                                if (raw === "" || raw === "0") {
+                                  // Clear override for this cell
+                                  if (d[row.id]) { const m = { ...d[row.id] }; delete m[i]; if (Object.keys(m).length === 0) delete d[row.id]; else d[row.id] = m; }
+                                  return d;
+                                }
+                                d[row.id] = { ...(d[row.id] ?? {}), [i]: -Math.abs(parseFloat(raw) || 0) };
+                                return d;
+                              });
+                            }}
+                            className={`w-14 rounded border px-1 py-0.5 text-[11px] text-right font-mono ${hasOverride ? "border-blue-400 bg-blue-50" : "border-border bg-transparent"} focus:outline-none focus:ring-1 focus:ring-blue-400`} />
+                        </td>
+                      );
+                    }
+                    const hasPnlOv = !pnlEditMode && pnlOverrides[row.id]?.[i] != null;
                     return (
                     <td key={k} className={`text-right px-2 py-1.5 font-mono tabular-nums`}
                       style={{
@@ -1097,8 +1155,10 @@ export function PNLTab({ realMonths, actuals, actualOnly }: { realMonths: number
                           : (v??0)<0 ? "#EF4444"
                           : isTotal && (v??0)>0 ? "#10B981"
                           : !isRealIdx(i) ? "#9CA3AF"
-                          : "#1C2340"
-                      }}>
+                          : "#1C2340",
+                        ...(hasPnlOv ? { backgroundColor: "#EFF6FF" } : {})
+                      }}
+                      title={hasPnlOv ? "Manual override" : undefined}>
                       {row.kind==="pct" ? fmtPct(v??0)
                         : (v==null || v===0) ? "—"
                         : (actualOnly && isRealIdx(i)) ? fmtExact(v)
@@ -1419,6 +1479,7 @@ function buildFinanceForecast(
   cogsByMonth: Record<number, number> = {}, // $K COGS from units×cogs.SKU (2027/2028)
   paymentsPendingMap: Record<number, number> = {}, // $K editable per month
   cfInputs?: CfInputs,                            // shared CF editable inputs
+  pnlOv: PnlOverride = {},                        // manual PNL expense overrides
 ): MonthFin[] {
   const bsAt = (i: number) => actuals[PERIODS36[i]]?.bs_detail as Record<string,number> | undefined;
   const pnlAt = (i: number) => actuals[PERIODS36[i]]?.pnl_detail as Record<string,number> | undefined;
@@ -1451,10 +1512,13 @@ function buildFinanceForecast(
   };
   const netIncomeFcst = (i: number): number => {
     const gsK = fcGrossByMonth[i] ?? 0;
+    const baseExp = fixedCostsForIdx(i);
+    // Apply PNL overrides
+    for (const [lid, byM] of Object.entries(pnlOv)) { if (byM[i] != null) baseExp[lid] = byM[i]; }
     const ctx: ForecastContext = {
       grossSales: gsK, unitsSold: gsK>0 ? Math.round(gsK*1000/37) : 0,
       cogsPerUnit: cogsPerCaseFor(yearOf(i), get), logisticsPct: get('logistics_pct_of_gross',9.8)/100,
-      deductionPct: dedPct, fixedCostsK: fixedCostsForIdx(i),
+      deductionPct: dedPct, fixedCostsK: baseExp,
     };
     if (discByMonth[i] != null) ctx.discountsK = discByMonth[i];   // Sales-breakdown discounts
     if (cogsByMonth[i] != null) ctx.cogsK = -cogsByMonth[i];       // per-SKU COGS
@@ -1845,7 +1909,7 @@ function AssumptionsModal({ assumptions, onClose }: { assumptions: ReturnType<ty
 
 
 // ─── Cash Flow Tab ────────────────────────────────────────────────────────────
-function CashFlowTab({ actuals, actualOnly, scenario, paymentsPending, cfInputs, onCfInputsChange }: { actuals: Record<string, any>; actualOnly: boolean; scenario: Scenario; paymentsPending: Record<number,number>; cfInputs: CfInputs; onCfInputsChange: (inp: CfInputs) => void }) {
+function CashFlowTab({ actuals, actualOnly, scenario, paymentsPending, cfInputs, onCfInputsChange, pnlOverrides }: { actuals: Record<string, any>; actualOnly: boolean; scenario: Scenario; paymentsPending: Record<number,number>; cfInputs: CfInputs; onCfInputsChange: (inp: CfInputs) => void; pnlOverrides: PnlOverride }) {
   const cashCanvas = useRef<HTMLCanvasElement>(null);
   const { julyGrossSales } = useJulyRealFromFulfillment();
   const scenarioForecast = useFinanceScenarioForecast(scenario); // "2026-8" -> $ (not $K)
@@ -1856,8 +1920,8 @@ function CashFlowTab({ actuals, actualOnly, scenario, paymentsPending, cfInputs,
 
   const eng = useFinanceEngineInputs(scenario);
   const S = useMemo(
-    () => buildFinanceForecast(actuals, eng.fcGrossByMonth, assumptions.get, eng.arByMonth, eng.discByMonth, eng.cogsByMonth, paymentsPending, cfInputs),
-    [actuals, assumptions.rows, eng, paymentsPending, cfInputs]
+    () => buildFinanceForecast(actuals, eng.fcGrossByMonth, assumptions.get, eng.arByMonth, eng.discByMonth, eng.cogsByMonth, paymentsPending, cfInputs, pnlOverrides),
+    [actuals, assumptions.rows, eng, paymentsPending, cfInputs, pnlOverrides]
   );
 
   const isReal = (i: number) => S[i].isBsReal || S[i].isPnlReal;
@@ -2158,7 +2222,7 @@ const BS_ROWS: BSNode[] = [
   {id:"t-liab-equity",label:"TOTAL LIABILITIES AND EQUITY",kind:"total",indent:0,forecastFn:(m,i)=>m.total_assets[i]},
 ];
 
-function BalanceTab({ realMonths, actuals, actualOnly, scenario, paymentsPending, bsOverrides, onBsFreeze, cfInputs }: { realMonths: number; actuals: Record<string,any>; actualOnly: boolean; scenario: Scenario; paymentsPending: Record<number,number>; bsOverrides: Record<number, { inv?: number, cash?: number }>; onBsFreeze: (pp: Record<number,number>, ov: Record<number, { inv?: number, cash?: number }>) => void; cfInputs: CfInputs }) {
+function BalanceTab({ realMonths, actuals, actualOnly, scenario, ppItems, paymentsPending, bsOverrides, onBsFreeze, cfInputs, pnlOverrides }: { realMonths: number; actuals: Record<string,any>; actualOnly: boolean; scenario: Scenario; ppItems: PendingPaymentItem[]; paymentsPending: Record<number,number>; bsOverrides: Record<number, { inv?: number, cash?: number }>; onBsFreeze: (items: PendingPaymentItem[], ov: Record<number, { inv?: number, cash?: number }>) => void; cfInputs: CfInputs; pnlOverrides: PnlOverride }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(
     new Set(["g-bank","g-ar","g-inv","g-fixed","g-cc","g-capital"])
   );
@@ -2168,6 +2232,8 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario, paymentsPending
   const [yearFilter, setYearFilter] = useState<'all'|2026|2027|2028>('all');
   const [bsEditMode, setBsEditMode] = useState(false);
   const [bsDraft, setBsDraft] = useState<Record<number, { pp?: number, inv?: number, cash?: number }> | null>(null);
+  const [ppDraft, setPpDraft] = useState<PendingPaymentItem[]>([]);
+  const [ppCollapsed, setPpCollapsed] = useState(true);
 
   // bs_detail per period (real, wherever Accountfully sent a balance sheet snapshot)
   const bsByPeriod = useMemo(() => {
@@ -2184,8 +2250,8 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario, paymentsPending
   // 2027/2028 sourced from the Sales breakdown (gross/discounts/COGS/AR).
   const eng = useFinanceEngineInputs(scenario);
   const S = useMemo(
-    () => buildFinanceForecast(actuals, eng.fcGrossByMonth, assumptions.get, eng.arByMonth, eng.discByMonth, eng.cogsByMonth, paymentsPending, cfInputs),
-    [actuals, assumptions.rows, eng, paymentsPending, cfInputs]
+    () => buildFinanceForecast(actuals, eng.fcGrossByMonth, assumptions.get, eng.arByMonth, eng.discByMonth, eng.cogsByMonth, paymentsPending, cfInputs, pnlOverrides),
+    [actuals, assumptions.rows, eng, paymentsPending, cfInputs, pnlOverrides]
   );
   // Adjustments are now baked into S by buildFinanceForecast — no separate adj() needed.
   const forecastAR = (idx: number) => S[idx].ar ?? 0;
@@ -2196,7 +2262,12 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario, paymentsPending
 
   // ── BS overrides: display-level adjustments with plug logic ──
   // Use draft values when editing, frozen values when not
-  const activeOv = bsEditMode ? (bsDraft ?? {}) : (() => {
+  const activePpTotals = bsEditMode ? ppTotals(ppDraft) : paymentsPending;
+  const activeOv = bsEditMode ? (() => {
+    const merged: Record<number, { pp?: number, inv?: number, cash?: number }> = { ...(bsDraft ?? {}) };
+    for (const [k, v] of Object.entries(activePpTotals)) { (merged[Number(k)] ??= {}).pp = v; }
+    return merged;
+  })() : (() => {
     // Merge bsOverrides (inv/cash) + paymentsPending into the same shape
     const merged: Record<number, { pp?: number, inv?: number, cash?: number }> = {};
     for (const [k, v] of Object.entries(bsOverrides)) { merged[Number(k)] = { ...v }; }
@@ -2390,16 +2461,15 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario, paymentsPending
         {bsEditMode ? (
           <span className="flex items-center gap-1">
             <button onClick={() => {
+              // Save ppDraft items + inv/cash overrides
+              const ov: Record<number, { inv?: number, cash?: number }> = {};
               if (bsDraft) {
-                const pp: Record<number,number> = {};
-                const ov: Record<number, { inv?: number, cash?: number }> = {};
                 for (const [k, v] of Object.entries(bsDraft)) {
                   const idx = Number(k);
-                  if (v.pp != null) pp[idx] = v.pp;
                   if (v.inv != null || v.cash != null) ov[idx] = { ...(v.inv != null ? { inv: v.inv } : {}), ...(v.cash != null ? { cash: v.cash } : {}) };
                 }
-                onBsFreeze(pp, ov);
               }
+              onBsFreeze(ppDraft.filter(it => it.name.trim() && Object.values(it.amounts).some(v => v)), ov);
               setBsEditMode(false); setBsDraft(null);
             }}
               className="rounded-full border border-emerald-300 bg-emerald-50 text-emerald-700 px-2 py-0.5 hover:bg-emerald-100">🔒 Congelar cambios</button>
@@ -2410,9 +2480,8 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario, paymentsPending
           <button onClick={() => {
             // Initialize draft from current frozen values
             const draft: Record<number, { pp?: number, inv?: number, cash?: number }> = {};
-            for (const [k, v] of Object.entries(paymentsPending)) { if (v) (draft[Number(k)] ??= {}).pp = v; }
             for (const [k, v] of Object.entries(bsOverrides)) { const d = (draft[Number(k)] ??= {}); if (v.inv != null) d.inv = v.inv; if (v.cash != null) d.cash = v.cash; }
-            setBsEditMode(true); setBsDraft(draft);
+            setBsEditMode(true); setBsDraft(draft); setPpDraft(ppItems.map(it => ({ ...it, amounts: { ...it.amounts } })));
           }}
             className="rounded-full border border-blue-400 text-blue-600 px-2 py-0.5 hover:bg-blue-50">✏️ Editar forecast BS</button>
         )}
@@ -2449,6 +2518,87 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario, paymentsPending
               const isOpen = !collapsed.has(row.id);
               const vals = visIdx.map((i) => getValue(row, i));
 
+              // ── Special: payments_pending → collapsible group with named items ──
+              if (row.id === "payments_pending") {
+                const activeItems = bsEditMode ? ppDraft : ppItems;
+                const totByMonth = ppTotals(activeItems);
+                const ppOpen = !ppCollapsed;
+                return (
+                  <Fragment key="pp-section">
+                    {/* Group header: "Payments Pending" with collapse toggle */}
+                    <tr className="border-t border-border/40 hover:bg-muted/20" style={{backgroundColor: activeItems.length ? "#FFFBEB" : undefined}}>
+                      <td className="px-4 py-1.5" style={{paddingLeft: `${16+indentPx[1]}px`, color:"#1C2340"}}>
+                        <span className="flex items-center gap-1.5">
+                          <button onClick={() => setPpCollapsed(p => !p)}
+                            className="text-muted-foreground hover:text-foreground w-4 text-center font-mono text-[10px]">
+                            {ppOpen ? "▾" : "▸"}
+                          </button>
+                          <span className="font-semibold text-[11px]">Total Pending Payments</span>
+                          {bsEditMode && (
+                            <button onClick={() => setPpDraft(prev => [...prev, { id: `pp-${Date.now()}`, name: "", amounts: {} }])}
+                              className="ml-2 rounded-full border border-blue-400 text-blue-600 px-1.5 py-0 text-[10px] font-bold hover:bg-blue-50"
+                              title="Add pending payment">＋</button>
+                          )}
+                        </span>
+                      </td>
+                      {visIdx.map(i => {
+                        const v = totByMonth[i] ?? 0;
+                        return (
+                          <td key={i} className="text-right px-2 py-1.5 font-mono tabular-nums font-semibold"
+                            style={{color: isRealMonth(i) ? "#1C2340" : "#9CA3AF"}}>
+                            {v === 0 ? "—" : fmt(v, 0)}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                    {/* Individual named items (visible when expanded) */}
+                    {ppOpen && activeItems.map((item, itemIdx) => (
+                      <tr key={item.id} className="border-t border-border/20 hover:bg-yellow-50/40" style={{backgroundColor:"#FFFEF5"}}>
+                        <td className="px-4 py-1" style={{paddingLeft: `${16+indentPx[2]}px`, color:"#1C2340"}}>
+                          <span className="flex items-center gap-1">
+                            <span className="w-4 inline-block"/>
+                            {bsEditMode ? (
+                              <span className="flex items-center gap-1">
+                                <input type="text" value={item.name} placeholder="Name…"
+                                  onChange={e => setPpDraft(prev => { const n = [...prev]; n[itemIdx] = { ...n[itemIdx], name: e.target.value }; return n; })}
+                                  className="w-32 rounded border border-blue-300 bg-blue-50 px-1 py-0.5 text-[10px] font-mono focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                                <button onClick={() => setPpDraft(prev => prev.filter((_, j) => j !== itemIdx))}
+                                  className="text-red-400 hover:text-red-600 text-[10px] font-bold px-1" title="Remove">✕</button>
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground text-[10px]">{item.name || "—"}</span>
+                            )}
+                          </span>
+                        </td>
+                        {visIdx.map(i => {
+                          const v = item.amounts[i] ?? 0;
+                          if (bsEditMode && S[i]?.isForecast) {
+                            return (
+                              <td key={i} className="text-right px-1 py-0.5">
+                                <input type="number" step={1} value={v === 0 ? "" : Math.round(v)}
+                                  onChange={e => {
+                                    const nv = Number(e.target.value) || 0;
+                                    setPpDraft(prev => {
+                                      const n = [...prev]; n[itemIdx] = { ...n[itemIdx], amounts: { ...n[itemIdx].amounts, [i]: nv } };
+                                      return n;
+                                    });
+                                  }}
+                                  className="w-16 rounded border border-blue-300 bg-blue-50 px-1 py-0.5 text-[10px] text-right font-mono focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                              </td>
+                            );
+                          }
+                          return (
+                            <td key={i} className="text-right px-2 py-1 font-mono tabular-nums text-muted-foreground text-[10px]">
+                              {v === 0 ? "—" : fmt(v, 0)}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </Fragment>
+                );
+              }
+
               const rows = [(
                 <tr key={row.id} className={`border-t border-border/40 hover:bg-muted/20 ${isTotal && row.indent === 0 ? "bg-muted/10 font-semibold" : ""}`}>
                   <td className="px-4 py-1.5" style={{paddingLeft: `${16+indentPx[row.indent]}px`, color:"#1C2340"}}>
@@ -2468,15 +2618,13 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario, paymentsPending
                   {vals.map((v, k) => {
                     const i = visIdx[k];
                     const isFc = S[i]?.isForecast;
-                    // Editable BS cells: Cash (bofa/t-bank), Inventory (t-inv), PP (payments_pending)
-                    const editableField = row.id === "payments_pending" ? "pp"
-                      : (row.id === "bofa" || row.id === "t-bank") ? "cash"
+                    // Editable BS cells: Cash (bofa/t-bank), Inventory (t-inv)
+                    const editableField = (row.id === "bofa" || row.id === "t-bank") ? "cash"
                       : row.id === "t-inv" ? "inv"
                       : null;
                     if (editableField && isFc && bsEditMode) {
                       const adj = bsAdj(i);
-                      const cur = editableField === "pp" ? (bsDraft?.[i]?.pp ?? adj.pp)
-                        : editableField === "cash" ? (bsDraft?.[i]?.cash ?? adj.cash)
+                      const cur = editableField === "cash" ? (bsDraft?.[i]?.cash ?? adj.cash)
                         : (bsDraft?.[i]?.inv ?? adj.inv);
                       return (
                         <td key={i} className="text-right px-1 py-1">
@@ -2722,8 +2870,10 @@ function FinancePage() {
 
   // ── Shared editable inputs (Supabase: finance_shared_inputs) ──
   const [cfInputs, setCfInputs] = useState<CfInputs>({ capital:{}, wcDraw:{}, fctDraw:{}, wcInt:{}, fctInt:{}, investInt:{} });
-  const [paymentsPending, setPaymentsPending] = useState<Record<number, number>>({});
+  const [ppItems, setPpItems] = useState<PendingPaymentItem[]>([]);
+  const paymentsPending = useMemo(() => ppTotals(ppItems), [ppItems]);
   const [bsOverrides, setBsOverrides] = useState<Record<number, { inv?: number, cash?: number }>>({});
+  const [pnlOverrides, setPnlOverrides] = useState<PnlOverride>({});
 
   // Load shared inputs from Supabase on mount
   useEffect(() => {
@@ -2732,8 +2882,16 @@ function FinancePage() {
       if (!data) return;
       const cf: any = { capital:{}, wcDraw:{}, fctDraw:{}, wcInt:{}, fctInt:{}, investInt:{} };
       for (const row of data) {
-        if (row.key === "paymentsPending") { setPaymentsPending((row.data ?? {}) as Record<number, number>); }
+        if (row.key === "pendingPaymentItems") { setPpItems((row.data ?? []) as PendingPaymentItem[]); }
+        else if (row.key === "paymentsPending" && !data.some(r => r.key === "pendingPaymentItems")) {
+          // Migrate old flat map to single unnamed item
+          const old = (row.data ?? {}) as Record<number, number>;
+          if (Object.values(old).some(v => v)) {
+            setPpItems([{ id: "migrated", name: "Legacy", amounts: old }]);
+          }
+        }
         else if (row.key === "bsOverrides") { setBsOverrides((row.data ?? {}) as Record<number, { inv?: number, cash?: number }>); }
+        else if (row.key === "pnlOverrides") { setPnlOverrides((row.data ?? {}) as PnlOverride); }
         else if (row.key.startsWith("cf.")) {
           const field = row.key.replace("cf.", "") as keyof CfInputs;
           if (CF_FIELDS.includes(field as any)) cf[field] = row.data ?? {};
@@ -2754,12 +2912,19 @@ function FinancePage() {
     for (const f of CF_FIELDS) { saveSharedInput(`cf.${f}`, inp[f] ?? {}); }
   };
 
-  // When BS forecast edits are frozen (PP + overrides)
-  const handleBsFreeze = (pp: Record<number,number>, overrides: Record<number, { inv?: number, cash?: number }>) => {
-    setPaymentsPending(pp);
+  // When BS forecast edits are frozen (PP items + overrides)
+  const handleBsFreeze = (items: PendingPaymentItem[], overrides: Record<number, { inv?: number, cash?: number }>) => {
+    setPpItems(items);
     setBsOverrides(overrides);
-    saveSharedInput("paymentsPending", pp);
+    saveSharedInput("pendingPaymentItems", items);
+    saveSharedInput("paymentsPending", ppTotals(items)); // keep backward-compat key
     saveSharedInput("bsOverrides", overrides);
+  };
+
+  // When PNL overrides are saved
+  const handlePnlOverridesSave = (ov: PnlOverride) => {
+    setPnlOverrides(ov);
+    saveSharedInput("pnlOverrides", ov);
   };
 
   // ── Actuals from Supabase ──
@@ -3077,8 +3242,8 @@ function FinancePage() {
         </div>
       )}
 
-      {tab === "dashboard" && <DashboardTab period={period} refMonth={refMonth} actuals={actuals} realMonths={realMonths} actualOnly={actualOnly} paymentsPending={paymentsPending} cfInputs={cfInputs} />}
-      {tab === "pnl"       && <PNLTab realMonths={realMonths} actuals={actuals} actualOnly={actualOnly} />}
+      {tab === "dashboard" && <DashboardTab period={period} refMonth={refMonth} actuals={actuals} realMonths={realMonths} actualOnly={actualOnly} paymentsPending={paymentsPending} cfInputs={cfInputs} pnlOverrides={pnlOverrides} />}
+      {tab === "pnl"       && <PNLTab realMonths={realMonths} actuals={actuals} actualOnly={actualOnly} pnlOverrides={pnlOverrides} onPnlOverridesSave={handlePnlOverridesSave} />}
 
       {/* ── PDF Upload Comparison: current app data vs incoming PDF, line by line ── */}
       {tab === "pnl" && uploadPreview && (() => {
@@ -3242,8 +3407,8 @@ function FinancePage() {
           </div>
         );
       })()}
-      {tab === "cashflow"  && <CashFlowTab actuals={actuals} actualOnly={actualOnly} scenario={projScenario} paymentsPending={paymentsPending} cfInputs={cfInputs} onCfInputsChange={handleCfInputsChange} />}
-      {tab === "balance"   && <BalanceTab realMonths={realMonths} actuals={actuals} actualOnly={actualOnly} scenario={projScenario} paymentsPending={paymentsPending} bsOverrides={bsOverrides} onBsFreeze={handleBsFreeze} cfInputs={cfInputs} />}
+      {tab === "cashflow"  && <CashFlowTab actuals={actuals} actualOnly={actualOnly} scenario={projScenario} paymentsPending={paymentsPending} cfInputs={cfInputs} onCfInputsChange={handleCfInputsChange} pnlOverrides={pnlOverrides} />}
+      {tab === "balance"   && <BalanceTab realMonths={realMonths} actuals={actuals} actualOnly={actualOnly} scenario={projScenario} ppItems={ppItems} paymentsPending={paymentsPending} bsOverrides={bsOverrides} onBsFreeze={handleBsFreeze} cfInputs={cfInputs} pnlOverrides={pnlOverrides} />}
       {tab === "runway"    && <RunwayTab />}
       {tab === "ebitda"    && <EBITDATab actuals={actuals} />}
     </div>
