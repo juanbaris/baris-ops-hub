@@ -6009,8 +6009,17 @@ function OperationsPage() {
     setLoadingFP(false);
   }
   async function loadIP() {
-    const { data } = await supabase.from("ip_movements").select("*").order("movement_date", { ascending: false });
-    setIpMovements(data ?? []);
+    const all: IPRow[] = [];
+    let from = 0;
+    const PAGE = 1000;
+    while (true) {
+      const { data } = await supabase.from("ip_movements").select("*").order("movement_date", { ascending: false }).range(from, from + PAGE - 1);
+      if (!data || data.length === 0) break;
+      all.push(...data);
+      if (data.length < PAGE) break;
+      from += PAGE;
+    }
+    setIpMovements(all);
     setLoadingIP(false);
   }
   async function loadOrders() {
