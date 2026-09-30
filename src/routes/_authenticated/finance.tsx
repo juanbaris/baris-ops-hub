@@ -2481,7 +2481,7 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario, ppItems, paymen
             // Initialize draft from current frozen values
             const draft: Record<number, { pp?: number, inv?: number, cash?: number }> = {};
             for (const [k, v] of Object.entries(bsOverrides)) { const d = (draft[Number(k)] ??= {}); if (v.inv != null) d.inv = v.inv; if (v.cash != null) d.cash = v.cash; }
-            setBsEditMode(true); setBsDraft(draft); setPpDraft(ppItems.map(it => ({ ...it, amounts: { ...it.amounts } })));
+            setBsEditMode(true); setBsDraft(draft); setPpDraft(ppItems.map(it => ({ ...it, amounts: { ...it.amounts } }))); setPpCollapsed(false);
           }}
             className="rounded-full border border-blue-400 text-blue-600 px-2 py-0.5 hover:bg-blue-50">✏️ Editar forecast BS</button>
         )}
@@ -2535,7 +2535,7 @@ function BalanceTab({ realMonths, actuals, actualOnly, scenario, ppItems, paymen
                           </button>
                           <span className="font-semibold text-[11px]">Total Pending Payments</span>
                           {bsEditMode && (
-                            <button onClick={() => setPpDraft(prev => [...prev, { id: `pp-${Date.now()}`, name: "", amounts: {} }])}
+                            <button onClick={() => { setPpDraft(prev => [...prev, { id: `pp-${Date.now()}`, name: "", amounts: {} }]); setPpCollapsed(false); }}
                               className="ml-2 rounded-full border border-blue-400 text-blue-600 px-1.5 py-0 text-[10px] font-bold hover:bg-blue-50"
                               title="Add pending payment">＋</button>
                           )}
