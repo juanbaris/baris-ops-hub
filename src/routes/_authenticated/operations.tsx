@@ -2914,13 +2914,15 @@ function runFifoForecast(
   allMaterials: string[],
   skuList: string[],
   realConsumption?: { material: string; qty: number; month: string }[],
+  monthsOverride?: { key: string; label: string }[],
 ): ForecastMonthResult[] {
+  const MONTHS = monthsOverride ?? FORECAST_HORIZON_MONTHS;
   // Initialize IP lots
   const ipLots: Record<string, FifoLot[]> = {};
   for (const mat of allMaterials) {
     const s = ipStartStock[mat];
     ipLots[mat] = (s && s.qty > 0)
-      ? [{ id: "s0", qty: s.qty, remaining: s.qty, costPerUnit: s.costPerUnit, monthArrived: FORECAST_HORIZON_MONTHS[0].key, label: "Starting" }]
+      ? [{ id: "s0", qty: s.qty, remaining: s.qty, costPerUnit: s.costPerUnit, monthArrived: MONTHS[0].key, label: "Starting" }]
       : [];
   }
   // Initialize FP lots
@@ -2929,13 +2931,13 @@ function runFifoForecast(
     const s = fpStartStock[sku];
     if (s && s.cases > 0) {
       const cpc = s.totalValue / s.cases;
-      fpLots[sku] = [{ id: "s0", qty: s.cases, remaining: s.cases, costPerUnit: cpc, monthArrived: FORECAST_HORIZON_MONTHS[0].key, label: "Starting" }];
+      fpLots[sku] = [{ id: "s0", qty: s.cases, remaining: s.cases, costPerUnit: cpc, monthArrived: MONTHS[0].key, label: "Starting" }];
     } else {
       fpLots[sku] = [];
     }
   }
 
-  return FORECAST_HORIZON_MONTHS.map((m) => {
+  return MONTHS.map((m) => {
     const r: ForecastMonthResult = {
       mk: m.key, ml: m.label,
       ipStock: {}, ipReceived: {}, ipConsumed: {},
@@ -3216,6 +3218,7 @@ function calcProdSchedule(
 }
 function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: { movements: FPRow[]; orders: any[]; baseline: BaselineRow[]; ipMovements: IPRow[]; onAdded: () => void }) {
   const [procTab, setProcTab] = useState<ProcSubTab>("schedule");
+  const [ipMovView, setIpMovView] = useState<"units"|"value">("units");
   const [safetyWoh,  setSafetyWoh]  = useState(()=>{
     try { const v = window.localStorage.getItem("baris.ops.safetyWoh.v1"); if (v) return Number(v); } catch {} return 6;
   });
@@ -4369,18 +4372,19 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   // Combine all POs for FIFO simulation: received real + ordered (pending) + forecast
   const allPOsForFifo = useMemo(() => [...ipReceivedAsPOs, ...ipOrderedAsPOs, ...ipForecastPOs], [ipReceivedAsPOs, ipOrderedAsPOs, ipForecastPOs]);
 
-  // Run FIFO for the full horizon (it starts with ipStartForForecast = end-of-last-past-month)
+  // Only process future months (Oct 2026+) in the FIFO — past/current use historical data
+  const futureMonths = useMemo(() => FORECAST_HORIZON_MONTHS.filter(m => m.key >= FIFO_START_KEY), []);
+
+  // Run FIFO only for future months, starting from end-of-current-month stock
   const fifoRaw = useMemo(() => runFifoForecast(
     ipStartForForecast, fpStartForForecast, allPOsForFifo,
     prodPlanForForecast, salesFcstForForecast, bomQty,
-    tollingPerCase, allMaterialsList, dynamicProcSkus, ipRealConsumption,
-  ), [ipStartForForecast, fpStartForForecast, allPOsForFifo, prodPlanForForecast, salesFcstForForecast, bomQty, tollingPerCase, allMaterialsList, dynamicProcSkus, ipRealConsumption]);
+    tollingPerCase, allMaterialsList, dynamicProcSkus, ipRealConsumption, futureMonths,
+  ), [ipStartForForecast, fpStartForForecast, allPOsForFifo, prodPlanForForecast, salesFcstForForecast, bomQty, tollingPerCase, allMaterialsList, dynamicProcSkus, ipRealConsumption, futureMonths]);
 
-  // Merge: past months from historical data, current+future from FIFO
+  // Merge: historical past/current months + FIFO future months
   const fifoResults = useMemo(() => {
-    const pastKeys = new Set(ipHistoricalStock.map(r => r.mk));
-    const futureResults = fifoRaw.filter(r => !pastKeys.has(r.mk));
-    return [...ipHistoricalStock, ...futureResults];
+    return [...ipHistoricalStock, ...fifoRaw];
   }, [ipHistoricalStock, fifoRaw]);
 
   // ─── Bridge: write FIFO inventory & payments to localStorage for Finance ───
@@ -5657,8 +5661,14 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
 
             {/* IP Movements */}
             <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
-              <div className="px-5 py-3 border-b border-border bg-muted/30">
+              <div className="px-5 py-3 border-b border-border bg-muted/30 flex items-center justify-between">
                 <p className="text-sm font-bold" style={{color:"#1C2340"}}>IP Monthly Movements</p>
+                <div className="flex rounded-lg overflow-hidden border border-border">
+                  <button onClick={() => setIpMovView("units")}
+                    className={`px-3 py-1 text-[10px] font-bold transition-colors ${ipMovView==="units" ? "bg-[#1C2340] text-white" : "bg-white text-muted-foreground hover:bg-muted/50"}`}>Units</button>
+                  <button onClick={() => setIpMovView("value")}
+                    className={`px-3 py-1 text-[10px] font-bold transition-colors ${ipMovView==="value" ? "bg-[#1C2340] text-white" : "bg-white text-muted-foreground hover:bg-muted/50"}`}>$ Value</button>
+                </div>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-xs min-w-max">
@@ -5670,19 +5680,33 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                     </tr>
                   </thead>
                   <tbody>
-                    {allMaterialsList.map(g => (
+                    {allMaterialsList.map(g => {
+                      // For value view, we need the cost per unit from the FIFO lots or ingPrices
+                      const costPerUnit = ingPrices[g] ?? 0;
+                      return (
                       <React.Fragment key={g}>
                         <tr className="border-t border-border/60">
                           <td className="px-4 py-1 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}} rowSpan={2}>{g}</td>
                           <td className="px-3 py-1 text-emerald-600 font-semibold">+ Recv</td>
-                          {FR.map(r => <td key={r.mk} className="px-3 py-1 text-right font-mono text-emerald-600">{(r.ipReceived[g] ?? 0) > 0 ? `+${Math.round(r.ipReceived[g]!).toLocaleString()}` : "—"}</td>)}
+                          {FR.map(r => {
+                            const qty = r.ipReceived[g] ?? 0;
+                            if (qty <= 0) return <td key={r.mk} className="px-3 py-1 text-right font-mono text-emerald-600">—</td>;
+                            const display = ipMovView === "value" ? `+$${Math.round(qty * costPerUnit).toLocaleString()}` : `+${Math.round(qty).toLocaleString()}`;
+                            return <td key={r.mk} className="px-3 py-1 text-right font-mono text-emerald-600">{display}</td>;
+                          })}
                         </tr>
                         <tr>
                           <td className="px-3 py-1 text-red-600 font-semibold">− Used</td>
-                          {FR.map(r => <td key={r.mk} className="px-3 py-1 text-right font-mono text-red-600">{(r.ipConsumed[g] ?? 0) > 0 ? `−${Math.round(r.ipConsumed[g]!).toLocaleString()}` : "—"}</td>)}
+                          {FR.map(r => {
+                            const qty = r.ipConsumed[g] ?? 0;
+                            if (qty <= 0) return <td key={r.mk} className="px-3 py-1 text-right font-mono text-red-600">—</td>;
+                            const display = ipMovView === "value" ? `−$${Math.round(qty * costPerUnit).toLocaleString()}` : `−${Math.round(qty).toLocaleString()}`;
+                            return <td key={r.mk} className="px-3 py-1 text-right font-mono text-red-600">{display}</td>;
+                          })}
                         </tr>
                       </React.Fragment>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
