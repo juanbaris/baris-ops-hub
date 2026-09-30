@@ -4292,55 +4292,71 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   }, [ipMovements]);
 
   // ── Historical IP monthly stock from ip_movements ──
-  // MUST match IP Summary ("Ordered" view) EXACTLY: same material names, same value logic.
-  // IP Summary uses: raw material name, cogs_per_unit only (no total_price fallback),
-  // "Ordered" view = counts ALL movements (In regardless of received status).
+  // Replicates IP Summary ("Ordered" view) logic EXACTLY, then maps results
+  // to procurement names so IP Stock Forecast tables can find them.
   const ipHistoricalStock = useMemo(() => {
     const sorted = [...(ipMovements ?? [])].sort((a, b) => a.movement_date.localeCompare(b.movement_date));
-    // Running balance using RAW material names (same as IP Summary)
+    const mList = [...new Set(sorted.map(m => m.movement_date.slice(0, 7)))].sort();
+    const allRawMats = [...new Set(sorted.map(r => r.material))];
+
+    // Running balance — raw names, same as IP Summary
     const balance: Record<string, number> = {};
-    const valBalance: Record<string, number> = {};
-    const snaps: Record<string, { units: Record<string, number>; value: Record<string, number> }> = {};
+    const valueBalance: Record<string, number> = {};
+    allRawMats.forEach(s => { balance[s] = 0; valueBalance[s] = 0; });
 
-    let lastMo = "";
+    // "Ordered" view: count everything (passes always returns true)
+    let mi = 0;
+    const snaps: { month: string; units: Record<string, number>; value: Record<string, number> }[] = [];
     for (const mv of sorted) {
-      const mat = (mv as any).material as string; // RAW name, no mapping
       const mo = mv.movement_date.slice(0, 7);
-      if (mo !== lastMo && lastMo) {
-        snaps[lastMo] = { units: { ...balance }, value: { ...valBalance } };
+      while (mi < mList.length && mList[mi] < mo) {
+        snaps.push({ month: mList[mi], units: { ...balance }, value: { ...valueBalance } });
+        mi++;
       }
-      lastMo = mo;
-      const q = Number(mv.quantity || 0);
-      const delta = mv.type === "In" ? q : -q;
-      // "Ordered" view: count ALL In movements (received or not), same as IP Summary default
-      balance[mat] = (balance[mat] ?? 0) + delta;
-      const cogs = Number((mv as any).cogs_per_unit || 0);
-      if (cogs) valBalance[mat] = (valBalance[mat] ?? 0) + delta * cogs;
+      const delta = mv.type === "In" ? Number(mv.quantity) : -Number(mv.quantity);
+      balance[mv.material] = (balance[mv.material] || 0) + delta;
+      const cogs = (mv as any).cogs_per_unit;
+      if (cogs) valueBalance[mv.material] = (valueBalance[mv.material] || 0) + delta * cogs;
     }
-    if (lastMo) snaps[lastMo] = { units: { ...balance }, value: { ...valBalance } };
+    while (mi < mList.length) {
+      snaps.push({ month: mList[mi], units: { ...balance }, value: { ...valueBalance } });
+      mi++;
+    }
 
-    // Build results for past months
+    // Now map snaps to ForecastMonthResult for past months
     const pastMonths = FORECAST_HORIZON_MONTHS.filter(m => m.key <= NOW_MK);
     const results: ForecastMonthResult[] = [];
-    // Collect ALL material names from ip_movements (not just allMaterialsList)
-    const allIpMats = [...new Set((ipMovements ?? []).map(m => (m as any).material as string))].sort();
-
     for (const pm of pastMonths) {
-      let snap = snaps[pm.key];
-      if (!snap) {
-        const snapKeys = Object.keys(snaps).filter(k => k <= pm.key).sort();
-        snap = snapKeys.length > 0 ? snaps[snapKeys[snapKeys.length - 1]] : { units: {}, value: {} };
+      // Find the latest snap at or before this month
+      let snap: (typeof snaps)[0] | null = null;
+      for (let i = snaps.length - 1; i >= 0; i--) {
+        if (snaps[i].month <= pm.key) { snap = snaps[i]; break; }
       }
+      if (!snap) snap = { month: pm.key, units: {}, value: {} };
+
+      // Map raw names → procurement names for display
       const ipStock: Record<string, { qty: number; value: number }> = {};
-      // Use ALL materials (both procurement names and raw IP names)
-      const allNames = [...new Set([...allMaterialsList, ...allIpMats])];
-      for (const mat of allNames) {
-        const qty = Math.max(0, Math.round(snap.units[mat] ?? 0));
-        const val = Math.max(0, Math.round(snap.value[mat] ?? 0));
-        ipStock[mat] = { qty, value: val };
+      for (const rawMat of allRawMats) {
+        const proc = resolveToProc(rawMat);
+        const displayName = proc ?? rawMat;
+        const qty = Math.round(snap.units[rawMat] ?? 0);
+        const val = Math.round(snap.value[rawMat] ?? 0);
+        // Accumulate (multiple raw names might map to same proc name)
+        const existing = ipStock[displayName];
+        if (existing) {
+          existing.qty += qty;
+          existing.value += val;
+        } else {
+          ipStock[displayName] = { qty: Math.max(0, qty), value: Math.max(0, val) };
+        }
+      }
+      // Clamp after accumulation
+      for (const k of Object.keys(ipStock)) {
+        ipStock[k].qty = Math.max(0, ipStock[k].qty);
+        ipStock[k].value = Math.max(0, ipStock[k].value);
       }
 
-      // Monthly movements for this month
+      // Monthly recv/consumed from movements this month
       const ipReceived: Record<string, number> = {};
       const ipConsumed: Record<string, number> = {};
       const ipReceivedValue: Record<string, number> = {};
@@ -4348,7 +4364,8 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       for (const mv of sorted) {
         const mo = mv.movement_date.slice(0, 7);
         if (mo !== pm.key) continue;
-        const mat = (mv as any).material as string;
+        const proc = resolveToProc(mv.material);
+        const mat = proc ?? mv.material;
         const q = Number(mv.quantity || 0);
         const cogs = Number((mv as any).cogs_per_unit || 0);
         if (mv.type === "In") {
