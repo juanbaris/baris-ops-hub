@@ -4363,8 +4363,11 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     const lastHist = ipHistoricalStock.length > 0 ? ipHistoricalStock[ipHistoricalStock.length - 1] : null;
     for (const mat of allMaterialsList) {
       const qty = lastHist?.ipStock[mat]?.qty ?? 0;
-      const price = ingPrices[mat] ?? 0;
-      out[mat] = { qty, costPerUnit: price };
+      const histValue = lastHist?.ipStock[mat]?.value ?? 0;
+      // Use actual historical value per unit (weighted avg from ip_movements cogs_per_unit)
+      // Fall back to ingPrices only if no historical value exists
+      const costPerUnit = qty > 0 && histValue !== 0 ? histValue / qty : (ingPrices[mat] ?? 0);
+      out[mat] = { qty, costPerUnit };
     }
     return out;
   }, [ipHistoricalStock, ingPrices, allMaterialsList]);
