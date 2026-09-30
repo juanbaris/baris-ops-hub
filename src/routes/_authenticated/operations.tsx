@@ -5711,6 +5711,53 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                       );
                     })}
                   </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-border" style={{backgroundColor:"#f0fdf4"}}>
+                      <td className="px-4 py-1.5 font-bold sticky left-0" style={{color:"#059669",backgroundColor:"#f0fdf4"}} rowSpan={1}>TOTAL</td>
+                      <td className="px-3 py-1.5 text-emerald-700 font-bold">+ Recv</td>
+                      {FR.map(r => {
+                        const total = allMaterialsList.reduce((s, g) => {
+                          const qty = r.ipReceived[g] ?? 0;
+                          const cpu = ingPrices[g] ?? 0;
+                          return s + (ipMovView === "value" ? qty * cpu : qty);
+                        }, 0);
+                        return <td key={r.mk} className="px-3 py-1.5 text-right font-mono font-bold text-emerald-700">{total > 0 ? (ipMovView === "value" ? `+$${Math.round(total).toLocaleString()}` : `+${Math.round(total).toLocaleString()}`) : "—"}</td>;
+                      })}
+                    </tr>
+                    <tr style={{backgroundColor:"#fef2f2"}}>
+                      <td className="px-4 py-1.5 font-bold sticky left-0" style={{backgroundColor:"#fef2f2"}}></td>
+                      <td className="px-3 py-1.5 text-red-700 font-bold">− Used</td>
+                      {FR.map(r => {
+                        const total = allMaterialsList.reduce((s, g) => {
+                          const qty = r.ipConsumed[g] ?? 0;
+                          const cpu = ingPrices[g] ?? 0;
+                          return s + (ipMovView === "value" ? qty * cpu : qty);
+                        }, 0);
+                        return <td key={r.mk} className="px-3 py-1.5 text-right font-mono font-bold text-red-700">{total > 0 ? (ipMovView === "value" ? `−$${Math.round(total).toLocaleString()}` : `−${Math.round(total).toLocaleString()}`) : "—"}</td>;
+                      })}
+                    </tr>
+                    <tr style={{backgroundColor:"#1C2340"}}>
+                      <td className="px-4 py-1.5 font-bold sticky left-0 text-white" style={{backgroundColor:"#1C2340"}}>NET</td>
+                      <td className="px-3 py-1.5 text-white font-bold">Δ</td>
+                      {FR.map(r => {
+                        const recv = allMaterialsList.reduce((s, g) => {
+                          const qty = r.ipReceived[g] ?? 0;
+                          const cpu = ingPrices[g] ?? 0;
+                          return s + (ipMovView === "value" ? qty * cpu : qty);
+                        }, 0);
+                        const used = allMaterialsList.reduce((s, g) => {
+                          const qty = r.ipConsumed[g] ?? 0;
+                          const cpu = ingPrices[g] ?? 0;
+                          return s + (ipMovView === "value" ? qty * cpu : qty);
+                        }, 0);
+                        const net = recv - used;
+                        const prefix = ipMovView === "value" ? "$" : "";
+                        return <td key={r.mk} className={`px-3 py-1.5 text-right font-mono font-bold ${net >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                          {net === 0 ? "—" : `${net > 0 ? "+" : "−"}${prefix}${Math.abs(Math.round(net)).toLocaleString()}`}
+                        </td>;
+                      })}
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
             </div>
