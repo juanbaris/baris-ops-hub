@@ -4223,7 +4223,14 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   // These are "real purchases" that need to appear as POs in the FIFO simulation
   // so they show up as movements in the correct month (instead of being lumped into starting stock).
   const NOW_MK = monthKeyOf(new Date()); // e.g. "2026-09"
-  const FIFO_START_KEY = NOW_MK; // FIFO simulation starts at current month; past months use historical data
+  // FIFO starts NEXT month; current + past months use historical ip_movements data
+  const NEXT_MK = (() => {
+    const [y, m] = NOW_MK.split("-").map(Number);
+    const nm = m === 12 ? 1 : m + 1;
+    const ny = m === 12 ? y + 1 : y;
+    return `${ny}-${String(nm).padStart(2, "0")}`;
+  })();
+  const FIFO_START_KEY = NEXT_MK;
   const ipReceivedAsPOs = useMemo(() => {
     const items: IPForecastPO[] = [];
     let nextId = -10000;
@@ -4308,7 +4315,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     if (lastMo) snaps[lastMo] = { units: { ...balance }, value: { ...valBalance } };
 
     // Now build ForecastMonthResult-shaped objects for past months
-    const pastMonths = FORECAST_HORIZON_MONTHS.filter(m => m.key < NOW_MK);
+    const pastMonths = FORECAST_HORIZON_MONTHS.filter(m => m.key <= NOW_MK);
     const results: ForecastMonthResult[] = [];
     for (const pm of pastMonths) {
       // Find the snap for this month (or the latest snap before it)
