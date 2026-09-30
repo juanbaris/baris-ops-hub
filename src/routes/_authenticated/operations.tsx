@@ -3030,7 +3030,9 @@ function runFifoForecast(
     // 5) Stock snapshots
     for (const mat of allMaterials) {
       const lots = ipLots[mat] ?? [];
-      r.ipStock[mat] = { qty: lots.reduce((s, l) => s + l.remaining, 0), value: lots.reduce((s, l) => s + l.remaining * l.costPerUnit, 0) };
+      const rawQ = lots.reduce((s, l) => s + l.remaining, 0);
+      const rawV = lots.reduce((s, l) => s + l.remaining * l.costPerUnit, 0);
+      r.ipStock[mat] = { qty: Math.max(0, Math.round(rawQ)), value: Math.max(0, Math.round(rawV)) };
     }
     for (const sku of skuList) {
       const lots = fpLots[sku] ?? [];
@@ -4337,7 +4339,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       }
       const ipStock: Record<string, { qty: number; value: number }> = {};
       for (const mat of allMaterialsList) {
-        ipStock[mat] = { qty: Math.round(snap.units[mat] ?? 0), value: Math.round(snap.value[mat] ?? 0) };
+        ipStock[mat] = { qty: Math.max(0, Math.round(snap.units[mat] ?? 0)), value: Math.max(0, Math.round(snap.value[mat] ?? 0)) };
       }
       // Compute received and consumed for this specific month from movements
       const ipReceived: Record<string, number> = {};
@@ -4375,18 +4377,20 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   // ── Starting stock for FIFO = end of last past month from ip_movements ──
   const ipStartForForecast = useMemo(() => {
     const out: Record<string, { qty: number; costPerUnit: number }> = {};
-    // Use the last historical month's stock as starting point for FIFO
     const lastHist = ipHistoricalStock.length > 0 ? ipHistoricalStock[ipHistoricalStock.length - 1] : null;
     for (const mat of allMaterialsList) {
-      const qty = lastHist?.ipStock[mat]?.qty ?? 0;
-      const histValue = lastHist?.ipStock[mat]?.value ?? 0;
-      // Use actual historical value per unit (weighted avg from ip_movements cogs_per_unit)
-      // Fall back to ingPrices only if no historical value exists
-      const costPerUnit = qty > 0 && histValue !== 0 ? histValue / qty : (ingPrices[mat] ?? 0);
+      const rawQty = lastHist?.ipStock[mat]?.qty ?? 0;
+      const rawValue = lastHist?.ipStock[mat]?.value ?? 0;
+      // Clamp to 0: negative inventory = 0 stock, $0 value
+      const qty = Math.max(0, rawQty);
+      const value = qty > 0 ? Math.max(0, rawValue) : 0;
+      // costPerUnit from historical value only — NO ingPrices fallback
+      // If historical value is $0, FIFO starts at $0. New POs will bring real costs.
+      const costPerUnit = qty > 0 ? value / qty : 0;
       out[mat] = { qty, costPerUnit };
     }
     return out;
-  }, [ipHistoricalStock, ingPrices, allMaterialsList]);
+  }, [ipHistoricalStock, allMaterialsList]);
 
   // Combine all POs for FIFO simulation: received real + ordered (pending) + forecast
   const allPOsForFifo = useMemo(() => [...ipReceivedAsPOs, ...ipOrderedAsPOs, ...ipForecastPOs], [ipReceivedAsPOs, ipOrderedAsPOs, ipForecastPOs]);
