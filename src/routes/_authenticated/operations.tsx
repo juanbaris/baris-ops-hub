@@ -4222,6 +4222,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   // IP movements that ARE received (In, received=true) from FIFO start month onward
   // These are "real purchases" that need to appear as POs in the FIFO simulation
   // so they show up as movements in the correct month (instead of being lumped into starting stock).
+  const NOW_MK = monthKeyOf(new Date()); // e.g. "2026-09"
   const FIFO_START_KEY = NOW_MK; // FIFO simulation starts at current month; past months use historical data
   const ipReceivedAsPOs = useMemo(() => {
     const items: IPForecastPO[] = [];
@@ -4273,7 +4274,6 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
 
   // ── Historical IP monthly stock from ip_movements (same logic as IP Summary) ──
   // This gives exact past-month stock that matches IP Summary for all users.
-  const NOW_MK = monthKeyOf(new Date()); // e.g. "2026-09"
   const ipHistoricalStock = useMemo(() => {
     // Build per-material running balance from ip_movements, snapping monthly
     const sorted = [...(ipMovements ?? [])].sort((a, b) => a.movement_date.localeCompare(b.movement_date));
