@@ -4291,62 +4291,56 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     return out;
   }, [ipMovements]);
 
-  // ── Historical IP monthly stock from ip_movements (same logic as IP Summary) ──
-  // This gives exact past-month stock that matches IP Summary for all users.
+  // ── Historical IP monthly stock from ip_movements ──
+  // MUST match IP Summary ("Ordered" view) EXACTLY: same material names, same value logic.
+  // IP Summary uses: raw material name, cogs_per_unit only (no total_price fallback),
+  // "Ordered" view = counts ALL movements (In regardless of received status).
   const ipHistoricalStock = useMemo(() => {
-    // Build per-material running balance from ip_movements, snapping monthly
     const sorted = [...(ipMovements ?? [])].sort((a, b) => a.movement_date.localeCompare(b.movement_date));
+    // Running balance using RAW material names (same as IP Summary)
     const balance: Record<string, number> = {};
     const valBalance: Record<string, number> = {};
     const snaps: Record<string, { units: Record<string, number>; value: Record<string, number> }> = {};
 
-    // Group movements by month, accumulate running balance
     let lastMo = "";
     for (const mv of sorted) {
-      const proc = resolveToProc((mv as any).material);
-      const rawMat = (mv as any).material as string;
-      const mat = proc ?? rawMat; // use proc name if mapped, else raw
+      const mat = (mv as any).material as string; // RAW name, no mapping
       const mo = mv.movement_date.slice(0, 7);
-
-      // Snap previous month before moving to new month
       if (mo !== lastMo && lastMo) {
         snaps[lastMo] = { units: { ...balance }, value: { ...valBalance } };
       }
       lastMo = mo;
-
       const q = Number(mv.quantity || 0);
       const delta = mv.type === "In" ? q : -q;
-      const received = (mv as any).received ?? false;
-      // Only count received In movements (matches IP Summary "Received" view)
-      if (mv.type === "In" && !received) continue;
+      // "Ordered" view: count ALL In movements (received or not), same as IP Summary default
       balance[mat] = (balance[mat] ?? 0) + delta;
-      // Value tracking: prefer cogs_per_unit, fall back to (total_price + shipping + other) / qty
       const cogs = Number((mv as any).cogs_per_unit || 0);
-      const tp = Number((mv as any).total_price || 0);
-      const sp = Number((mv as any).shipping_price || 0);
-      const oc = Number((mv as any).other_costs || 0);
-      const unitCost = cogs || (q > 0 ? (tp + sp + oc) / q : 0);
-      if (unitCost) valBalance[mat] = (valBalance[mat] ?? 0) + delta * unitCost;
+      if (cogs) valBalance[mat] = (valBalance[mat] ?? 0) + delta * cogs;
     }
-    // Snap the last month
     if (lastMo) snaps[lastMo] = { units: { ...balance }, value: { ...valBalance } };
 
-    // Now build ForecastMonthResult-shaped objects for past months
+    // Build results for past months
     const pastMonths = FORECAST_HORIZON_MONTHS.filter(m => m.key <= NOW_MK);
     const results: ForecastMonthResult[] = [];
+    // Collect ALL material names from ip_movements (not just allMaterialsList)
+    const allIpMats = [...new Set((ipMovements ?? []).map(m => (m as any).material as string))].sort();
+
     for (const pm of pastMonths) {
-      // Find the snap for this month (or the latest snap before it)
       let snap = snaps[pm.key];
       if (!snap) {
-        // Use the latest snap at or before this month
         const snapKeys = Object.keys(snaps).filter(k => k <= pm.key).sort();
         snap = snapKeys.length > 0 ? snaps[snapKeys[snapKeys.length - 1]] : { units: {}, value: {} };
       }
       const ipStock: Record<string, { qty: number; value: number }> = {};
-      for (const mat of allMaterialsList) {
-        ipStock[mat] = { qty: Math.max(0, Math.round(snap.units[mat] ?? 0)), value: Math.max(0, Math.round(snap.value[mat] ?? 0)) };
+      // Use ALL materials (both procurement names and raw IP names)
+      const allNames = [...new Set([...allMaterialsList, ...allIpMats])];
+      for (const mat of allNames) {
+        const qty = Math.max(0, Math.round(snap.units[mat] ?? 0));
+        const val = Math.max(0, Math.round(snap.value[mat] ?? 0));
+        ipStock[mat] = { qty, value: val };
       }
-      // Compute received and consumed for this specific month from movements
+
+      // Monthly movements for this month
       const ipReceived: Record<string, number> = {};
       const ipConsumed: Record<string, number> = {};
       const ipReceivedValue: Record<string, number> = {};
@@ -4354,22 +4348,16 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       for (const mv of sorted) {
         const mo = mv.movement_date.slice(0, 7);
         if (mo !== pm.key) continue;
-        const proc = resolveToProc((mv as any).material);
-        const mat = proc ?? ((mv as any).material as string);
+        const mat = (mv as any).material as string;
         const q = Number(mv.quantity || 0);
         const cogs = Number((mv as any).cogs_per_unit || 0);
-        const tp = Number((mv as any).total_price || 0);
-        const sp = Number((mv as any).shipping_price || 0);
-        const oc = Number((mv as any).other_costs || 0);
-        const unitCost = cogs || (q > 0 ? (tp + sp + oc) / q : 0);
-        const received = (mv as any).received ?? false;
-        if (mv.type === "In" && received) {
+        if (mv.type === "In") {
           ipReceived[mat] = (ipReceived[mat] ?? 0) + q;
-          if (unitCost) ipReceivedValue[mat] = (ipReceivedValue[mat] ?? 0) + q * unitCost;
+          if (cogs) ipReceivedValue[mat] = (ipReceivedValue[mat] ?? 0) + q * cogs;
         }
         if (mv.type === "Out") {
           ipConsumed[mat] = (ipConsumed[mat] ?? 0) + q;
-          if (unitCost) ipConsumedValue[mat] = (ipConsumedValue[mat] ?? 0) + q * unitCost;
+          if (cogs) ipConsumedValue[mat] = (ipConsumedValue[mat] ?? 0) + q * cogs;
         }
       }
       results.push({
@@ -4387,19 +4375,18 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   const ipStartForForecast = useMemo(() => {
     const out: Record<string, { qty: number; costPerUnit: number }> = {};
     const lastHist = ipHistoricalStock.length > 0 ? ipHistoricalStock[ipHistoricalStock.length - 1] : null;
-    for (const mat of allMaterialsList) {
-      const rawQty = lastHist?.ipStock[mat]?.qty ?? 0;
-      const rawValue = lastHist?.ipStock[mat]?.value ?? 0;
-      // Clamp to 0: negative inventory = 0 stock, $0 value
-      const qty = Math.max(0, rawQty);
-      const value = qty > 0 ? Math.max(0, rawValue) : 0;
-      // costPerUnit: historical value first, ingPrices as last resort
-      // (now that historical uses total_price fallback, most materials should have values)
-      const costPerUnit = qty > 0 ? (value > 0 ? value / qty : (ingPrices[mat] ?? 0)) : 0;
-      out[mat] = { qty, costPerUnit };
+    if (!lastHist) return out;
+    // Use ALL materials from the historical stock (raw IP names)
+    for (const [mat, data] of Object.entries(lastHist.ipStock)) {
+      const qty = data.qty; // already clamped to 0 in historical
+      const value = data.value;
+      // costPerUnit = exact historical value / qty. If value is $0, cost is $0.
+      // No ingPrices fallback — keeps FIFO consistent with IP Summary.
+      const costPerUnit = qty > 0 ? value / qty : 0;
+      if (qty > 0) out[mat] = { qty, costPerUnit };
     }
     return out;
-  }, [ipHistoricalStock, ingPrices, allMaterialsList]);
+  }, [ipHistoricalStock]);
 
   // Combine all POs for FIFO simulation: received real + ordered (pending) + forecast
   const allPOsForFifo = useMemo(() => [...ipReceivedAsPOs, ...ipOrderedAsPOs, ...ipForecastPOs], [ipReceivedAsPOs, ipOrderedAsPOs, ipForecastPOs]);
