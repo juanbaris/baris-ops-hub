@@ -4320,8 +4320,13 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       // Only count received In movements (matches IP Summary "Received" view)
       if (mv.type === "In" && !received) continue;
       balance[mat] = (balance[mat] ?? 0) + delta;
+      // Value tracking: prefer cogs_per_unit, fall back to (total_price + shipping + other) / qty
       const cogs = Number((mv as any).cogs_per_unit || 0);
-      if (cogs) valBalance[mat] = (valBalance[mat] ?? 0) + delta * cogs;
+      const tp = Number((mv as any).total_price || 0);
+      const sp = Number((mv as any).shipping_price || 0);
+      const oc = Number((mv as any).other_costs || 0);
+      const unitCost = cogs || (q > 0 ? (tp + sp + oc) / q : 0);
+      if (unitCost) valBalance[mat] = (valBalance[mat] ?? 0) + delta * unitCost;
     }
     // Snap the last month
     if (lastMo) snaps[lastMo] = { units: { ...balance }, value: { ...valBalance } };
@@ -4353,14 +4358,18 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
         const mat = proc ?? ((mv as any).material as string);
         const q = Number(mv.quantity || 0);
         const cogs = Number((mv as any).cogs_per_unit || 0);
+        const tp = Number((mv as any).total_price || 0);
+        const sp = Number((mv as any).shipping_price || 0);
+        const oc = Number((mv as any).other_costs || 0);
+        const unitCost = cogs || (q > 0 ? (tp + sp + oc) / q : 0);
         const received = (mv as any).received ?? false;
         if (mv.type === "In" && received) {
           ipReceived[mat] = (ipReceived[mat] ?? 0) + q;
-          if (cogs) ipReceivedValue[mat] = (ipReceivedValue[mat] ?? 0) + q * cogs;
+          if (unitCost) ipReceivedValue[mat] = (ipReceivedValue[mat] ?? 0) + q * unitCost;
         }
         if (mv.type === "Out") {
           ipConsumed[mat] = (ipConsumed[mat] ?? 0) + q;
-          if (cogs) ipConsumedValue[mat] = (ipConsumedValue[mat] ?? 0) + q * cogs;
+          if (unitCost) ipConsumedValue[mat] = (ipConsumedValue[mat] ?? 0) + q * unitCost;
         }
       }
       results.push({
@@ -4384,13 +4393,13 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       // Clamp to 0: negative inventory = 0 stock, $0 value
       const qty = Math.max(0, rawQty);
       const value = qty > 0 ? Math.max(0, rawValue) : 0;
-      // costPerUnit from historical value only — NO ingPrices fallback
-      // If historical value is $0, FIFO starts at $0. New POs will bring real costs.
-      const costPerUnit = qty > 0 ? value / qty : 0;
+      // costPerUnit: historical value first, ingPrices as last resort
+      // (now that historical uses total_price fallback, most materials should have values)
+      const costPerUnit = qty > 0 ? (value > 0 ? value / qty : (ingPrices[mat] ?? 0)) : 0;
       out[mat] = { qty, costPerUnit };
     }
     return out;
-  }, [ipHistoricalStock, allMaterialsList]);
+  }, [ipHistoricalStock, ingPrices, allMaterialsList]);
 
   // Combine all POs for FIFO simulation: received real + ordered (pending) + forecast
   const allPOsForFifo = useMemo(() => [...ipReceivedAsPOs, ...ipOrderedAsPOs, ...ipForecastPOs], [ipReceivedAsPOs, ipOrderedAsPOs, ipForecastPOs]);
