@@ -1243,9 +1243,6 @@ export function IPSummaryTab({ movements }: { movements: IPRow[] }) {
     ? inventory
     : inventory.filter(m => m.material === filterMaterial);
 
-  // Value at LOT cost (specific-lot) — consistent with the monthly history view
-  // and with how consumption (Out) is costed. Each lot at its own cogs; lots
-  // without a known cogs contribute 0 (shown as "—"), same as the per-lot rows.
   const lotValue = (m: { lots: Map<string, { qty: number; cogs: number | null; unit: string }> }) =>
     [...m.lots.values()].reduce((s, l) => s + (l.qty > 0 && l.cogs != null ? l.qty * l.cogs : 0), 0);
   const totalValue = shown.reduce((s, m) => s + lotValue(m), 0);
@@ -1293,12 +1290,9 @@ export function IPSummaryTab({ movements }: { movements: IPRow[] }) {
       {/* ── Payment tracking ── */}
       {(() => {
         const allMovs = movements as any[];
-        // Payment bucket date: paid → actual (fallback movement), pending → estimated (fallback movement)
         const payDate = (m:any): string =>
           (m.paid ? (m.actual_payment_date ?? m.movement_date) : (m.estimated_payment_date ?? m.movement_date)) ?? '';
-        // Only payments from 2026 onwards (older I&P history is kept in the DB but hidden here)
         const rr = allMovs.filter(m => payDate(m) >= '2026-01');
-        // Monthly paid vs pending (bucketed by payment date)
         const monthly: Record<string,{paid:number;pending:number}> = {};
         for (const m of rr) {
           const mon = payDate(m).slice(0,7);
@@ -1309,7 +1303,6 @@ export function IPSummaryTab({ movements }: { movements: IPRow[] }) {
           else monthly[mon].pending += cost;
         }
         const months = Object.keys(monthly).sort().reverse();
-        // Pending: unpaid with est. payment date
         const pending = rr
           .filter(m => !m.paid && m.estimated_payment_date)
           .sort((a,b) => a.estimated_payment_date.localeCompare(b.estimated_payment_date));
@@ -1419,54 +1412,51 @@ export function IPSummaryTab({ movements }: { movements: IPRow[] }) {
 
       <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
         <div className="px-5 py-3 border-b border-border bg-muted/30">
-          <p className="text-sm font-bold" style={{ color:"#1C2340" }}>I&P Inventory — current stock by material & lot</p>
-          <p className="text-xs text-muted-foreground">Net balance from all movements · COGS = lot cost (specific-lot)</p>
+          <p className="text-sm font-bold" style={{ color:"#1C2340" }}>Stock por material y lote</p>
+          <p className="text-xs text-muted-foreground">Saldo neto de todos los movimientos · solo lotes con unidades &gt; 0</p>
         </div>
         <table className="w-full text-xs min-w-max">
           <thead>
             <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
               <th className="px-4 py-2.5 text-left">Material</th>
-              <th className="px-4 py-2.5 text-left">Lot #</th>
-              <th className="px-4 py-2.5 text-right">Net qty</th>
-              <th className="px-4 py-2.5 text-left">Unit</th>
-              <th className="px-4 py-2.5 text-right">COGS / unit</th>
-              <th className="px-4 py-2.5 text-right">Inventory value</th>
+              <th className="px-4 py-2.5 text-left">Lote</th>
+              <th className="px-4 py-2.5 text-right">Cantidad</th>
+              <th className="px-4 py-2.5 text-right">Monetizado</th>
+              <th className="px-4 py-2.5 text-right">Precio / unidad</th>
             </tr>
           </thead>
           <tbody>
             {shown.length === 0 ? (
-              <tr><td colSpan={6} className="p-8 text-center text-muted-foreground">No stock data yet</td></tr>
+              <tr><td colSpan={5} className="p-8 text-center text-muted-foreground">No stock data yet</td></tr>
             ) : shown.map(m => {
-              const value   = lotValue(m);                         // sum of lots at their lot cost
-              const effCogs = m.netQty > 0 ? value / m.netQty : 0; // effective $/unit (lot-weighted)
+              const value   = lotValue(m);
+              const effCogs = m.netQty > 0 ? value / m.netQty : 0;
               const lots    = [...m.lots.entries()].filter(([, v]) => v.qty > 0);
               return (
                 <React.Fragment key={m.material}>
                   <tr className="border-t-2 border-border bg-muted/10 font-semibold">
                     <td className="px-4 py-2" style={{ color:"#1C2340" }}>{m.material}</td>
                     <td className="px-4 py-2 text-muted-foreground text-[10px]">
-                      {lots.length} lot{lots.length !== 1 ? "s" : ""}
+                      {lots.length} lote{lots.length !== 1 ? "s" : ""}
                     </td>
-                    <td className="px-4 py-2 text-right font-mono">{m.netQty.toLocaleString()}</td>
-                    <td className="px-4 py-2 text-muted-foreground">{m.unit}</td>
-                    <td className="px-4 py-2 text-right font-mono">
-                      {effCogs > 0 ? `$${effCogs.toFixed(4)}` : "—"}
-                    </td>
+                    <td className="px-4 py-2 text-right font-mono">{m.netQty.toLocaleString()} <span className="text-[10px] text-muted-foreground">{m.unit}</span></td>
                     <td className="px-4 py-2 text-right font-mono font-bold" style={{ color:"#A3224A" }}>
                       {value > 0 ? `$${Math.round(value).toLocaleString()}` : "—"}
+                    </td>
+                    <td className="px-4 py-2 text-right font-mono">
+                      {effCogs > 0 ? `$${effCogs.toFixed(4)}` : "—"}
                     </td>
                   </tr>
                   {lots.map(([lot, v]) => (
                     <tr key={`${m.material}|${lot}`} className="border-t border-border/40 hover:bg-muted/20">
                       <td className="px-4 py-1.5 text-muted-foreground pl-8 text-[10px]">↳</td>
                       <td className="px-4 py-1.5 font-mono" style={{ color:"#A3224A" }}>{lot}</td>
-                      <td className="px-4 py-1.5 text-right font-mono">{v.qty.toLocaleString()}</td>
-                      <td className="px-4 py-1.5 text-muted-foreground">{v.unit}</td>
-                      <td className="px-4 py-1.5 text-right font-mono text-muted-foreground">
-                        {v.cogs ? `$${v.cogs.toFixed(4)}` : "—"}
-                      </td>
+                      <td className="px-4 py-1.5 text-right font-mono">{v.qty.toLocaleString()} <span className="text-[10px] text-muted-foreground">{v.unit}</span></td>
                       <td className="px-4 py-1.5 text-right font-mono text-muted-foreground">
                         {v.cogs ? `$${Math.round(v.qty * v.cogs).toLocaleString()}` : "—"}
+                      </td>
+                      <td className="px-4 py-1.5 text-right font-mono text-muted-foreground">
+                        {v.cogs ? `$${v.cogs.toFixed(4)}` : "—"}
                       </td>
                     </tr>
                   ))}
@@ -1476,10 +1466,11 @@ export function IPSummaryTab({ movements }: { movements: IPRow[] }) {
           </tbody>
           <tfoot>
             <tr style={{ backgroundColor:"#1C2340", color:"#fff" }}>
-              <td className="px-4 py-2 font-semibold text-xs" colSpan={5}>TOTAL INVENTORY VALUE</td>
+              <td className="px-4 py-2 font-semibold text-xs" colSpan={3}>TOTAL INVENTORY VALUE</td>
               <td className="px-4 py-2 text-right font-mono font-bold text-emerald-400">
                 ${Math.round(totalValue).toLocaleString()}
               </td>
+              <td></td>
             </tr>
           </tfoot>
         </table>
