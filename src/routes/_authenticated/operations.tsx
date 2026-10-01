@@ -4323,9 +4323,9 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       if (snap) {
         for (const rawMat of Object.keys(snap.units)) {
           const procName = resolveToProc(rawMat) ?? rawMat;
-          const qty = Math.max(0, Math.round(snap.units[rawMat] ?? 0));
-          const val = Math.max(0, Math.round(snap.value[rawMat] ?? 0));
-          if (qty > 0 || val > 0) {
+          const qty = Math.round(snap.units[rawMat] ?? 0);
+          const val = Math.round(snap.value[rawMat] ?? 0);
+          if (qty !== 0 || val !== 0) {
             const ex = ipStock[procName];
             if (ex) { ex.qty += qty; ex.value += val; }
             else ipStock[procName] = { qty, value: val };
