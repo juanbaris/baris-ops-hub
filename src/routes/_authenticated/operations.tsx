@@ -4336,21 +4336,12 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
         }
       }
 
-      // Map raw names → procurement names, accumulate
+      // Use raw material names (identical to IP Summary)
       const ipStock: Record<string, { qty: number; value: number }> = {};
       for (const rawMat of Object.keys(snapU)) {
-        const proc = resolveToProc(rawMat);
-        const name = proc ?? rawMat;
-        const qty = Math.round(snapU[rawMat] ?? 0);
-        const val = Math.round(snapV[rawMat] ?? 0);
-        const ex = ipStock[name];
-        if (ex) { ex.qty += qty; ex.value += val; }
-        else ipStock[name] = { qty, value: val };
-      }
-      // Clamp negatives
-      for (const k of Object.keys(ipStock)) {
-        ipStock[k].qty = Math.max(0, ipStock[k].qty);
-        ipStock[k].value = Math.max(0, ipStock[k].value);
+        const qty = Math.max(0, Math.round(snapU[rawMat] ?? 0));
+        const val = Math.max(0, Math.round(snapV[rawMat] ?? 0));
+        ipStock[rawMat] = { qty, value: val };
       }
 
       // Monthly recv/consumed
@@ -4359,8 +4350,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       const ipReceivedValue: Record<string, number> = {};
       const ipConsumedValue: Record<string, number> = {};
       for (const mv of (byMonth[pm.key] ?? [])) {
-        const proc = resolveToProc(mv.material);
-        const mat = proc ?? mv.material;
+        const mat = mv.material; // raw name
         const q = Number(mv.quantity || 0);
         const cogs = Number((mv as any).cogs_per_unit || 0);
         if (mv.type === "In") {
@@ -4389,14 +4379,24 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     const out: Record<string, { qty: number; costPerUnit: number }> = {};
     const lastHist = ipHistoricalStock.length > 0 ? ipHistoricalStock[ipHistoricalStock.length - 1] : null;
     if (!lastHist) return out;
-    // Use ALL materials from the historical stock (raw IP names)
-    for (const [mat, data] of Object.entries(lastHist.ipStock)) {
-      const qty = data.qty; // already clamped to 0 in historical
+    // Map raw IP names → procurement names for FIFO (BOM uses proc names)
+    for (const [rawMat, data] of Object.entries(lastHist.ipStock)) {
+      const proc = resolveToProc(rawMat);
+      const mat = proc ?? rawMat;
+      const qty = data.qty;
       const value = data.value;
-      // costPerUnit = exact historical value / qty. If value is $0, cost is $0.
-      // No ingPrices fallback — keeps FIFO consistent with IP Summary.
       const costPerUnit = qty > 0 ? value / qty : 0;
-      if (qty > 0) out[mat] = { qty, costPerUnit };
+      if (qty > 0) {
+        const ex = out[mat];
+        if (ex) {
+          // Merge: weighted average cost
+          const totalVal = ex.qty * ex.costPerUnit + qty * costPerUnit;
+          ex.qty += qty;
+          ex.costPerUnit = ex.qty > 0 ? totalVal / ex.qty : 0;
+        } else {
+          out[mat] = { qty, costPerUnit };
+        }
+      }
     }
     return out;
   }, [ipHistoricalStock]);
@@ -5605,6 +5605,12 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       {procTab==="ip_stock_fcst" && (() => {
         const FR = fifoResults;
         const last = FR[FR.length - 1];
+        // Dynamic material list: all materials that have stock or movements in any month
+        const displayMats = [...new Set(FR.flatMap(r => [
+          ...Object.keys(r.ipStock).filter(k => r.ipStock[k]?.qty > 0 || r.ipStock[k]?.value > 0),
+          ...Object.keys(r.ipReceived).filter(k => (r.ipReceived[k] ?? 0) > 0),
+          ...Object.keys(r.ipConsumed).filter(k => (r.ipConsumed[k] ?? 0) > 0),
+        ]))].sort();
         return (
           <div className="space-y-4">
             <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
@@ -5621,7 +5627,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                     </tr>
                   </thead>
                   <tbody>
-                    {allMaterialsList.map(g => (
+                    {displayMats.map(g => (
                       <tr key={g} className="border-t border-border/60">
                         <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{g}</td>
                         {FR.map((r, ri) => {
@@ -5661,7 +5667,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                     </tr>
                   </thead>
                   <tbody>
-                    {allMaterialsList.map(g => (
+                    {displayMats.map(g => (
                       <tr key={g} className="border-t border-border/60">
                         <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{g}</td>
                         {FR.map(r => {
@@ -5712,7 +5718,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                     </tr>
                   </thead>
                   <tbody>
-                    {allMaterialsList.map(g => {
+                    {displayMats.map(g => {
                       return (
                       <React.Fragment key={g}>
                         <tr className="border-t border-border/60">
@@ -5800,7 +5806,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                   </tr>
                 </thead>
                 <tbody>
-                  {allMaterialsList.map(g => {
+                  {displayMats.map(g => {
                     const lots = last?.ipLots[g] ?? [];
                     if (lots.length === 0) return null;
                     return lots.map((l, i) => (
