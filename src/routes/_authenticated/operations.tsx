@@ -3671,6 +3671,9 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   });
   const [customScopeFrom, setCustomScopeFrom] = useState("");
   const [customScopeTo, setCustomScopeTo] = useState("");
+  // Payment tab date filters — default: Aug 2026 onward
+  const [payFrom, setPayFrom] = useState("2026-08");
+  const [payTo, setPayTo] = useState("");
   const [bomView, setBomView] = useState<"qty"|"pct">("qty");
   // ─── NEW: truck optimization ───
   const [optimizeTruck, setOptimizeTruck] = useState(()=>{
@@ -5072,10 +5075,41 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       )}
 
       {/* ── PAYMENTS ── */}
-      {procTab==="payments" && (
+      {procTab==="payments" && (() => {
+        // Build all month keys that exist in the system (payments + real) for the dropdown
+        const allPayKeys = [...new Set([...payments.keys, ...Object.keys(ipRealPayments.byMonth)])].sort();
+        // Filter keys by payFrom / payTo
+        const filteredPayKeys = payments.keys.filter(k => {
+          if (payFrom && k < payFrom) return false;
+          if (payTo && k > payTo) return false;
+          return true;
+        });
+        // Filtered totals
+        const fTotalReal = filteredPayKeys.reduce((s,k) => s + (ipRealPayments.byMonth[k]??0), 0);
+        const fTotalIng = filteredPayKeys.reduce((s,k) => s + (payments.ing[k]??0), 0);
+        const fTotalToll = filteredPayKeys.reduce((s,k) => s + (payments.toll[k]??0), 0);
+        const fmtMonth = (mk:string) => { const [y,m]=mk.split("-").map(Number); return new Date(y,m-1,1).toLocaleDateString("en",{month:"short",year:"2-digit"}); };
+        return (
         <div className="space-y-3">
           <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-700">
             💵 Cash-out forecast: ingredient purchases are timed by each material's <strong>lead time</strong> (you pay when you order — production month minus lead time), and Heinlein <strong>tolling</strong> is booked <strong>30 days after production</strong> ({UNITS_PER_CASE_BOM} units/case × ${(prodCosts.tolling_per_unit??0).toFixed(2)}/unit). Ingredient inventory on hand is netted against the earliest runs.
+          </div>
+          {/* Date range filter */}
+          <div className="flex flex-wrap items-center gap-2 px-1">
+            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Date range:</span>
+            <select value={payFrom} onChange={e=>setPayFrom(e.target.value)} className="rounded border text-[11px] px-2 py-1">
+              <option value="">All (start)</option>
+              {allPayKeys.map(k=><option key={k} value={k}>{fmtMonth(k)}</option>)}
+            </select>
+            <span className="text-[10px] text-muted-foreground">→</span>
+            <select value={payTo} onChange={e=>setPayTo(e.target.value)} className="rounded border text-[11px] px-2 py-1">
+              <option value="">All (end)</option>
+              {allPayKeys.map(k=><option key={k} value={k}>{fmtMonth(k)}</option>)}
+            </select>
+            {(payFrom || payTo) && (
+              <button onClick={()=>{setPayFrom("");setPayTo("");}} className="text-[10px] text-red-500 hover:underline ml-1">Clear</button>
+            )}
+            <span className="text-[10px] text-muted-foreground ml-1">{filteredPayKeys.length} months shown</span>
           </div>
           <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
             <table className="w-full text-sm">
@@ -5089,10 +5123,10 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                 </tr>
               </thead>
               <tbody>
-                {payments.keys.length===0 && (
-                  <tr><td colSpan={5} className="px-4 py-6 text-center text-muted-foreground">No planned purchases or production yet.</td></tr>
+                {filteredPayKeys.length===0 && (
+                  <tr><td colSpan={5} className="px-4 py-6 text-center text-muted-foreground">No payments in this date range.</td></tr>
                 )}
-                {payments.keys.map(k=>{
+                {filteredPayKeys.map(k=>{
                   const realAmt=ipRealPayments.byMonth[k]??0;
                   const ingAmt=payments.ing[k]??0;
                   const tollAmt=payments.toll[k]??0;
@@ -5111,11 +5145,11 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
               </tbody>
               <tfoot>
                 <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
-                  <td className="px-4 py-2 font-semibold text-xs">TOTAL (horizon)</td>
-                  <td className="px-4 py-2 text-right font-mono">${Math.round(Object.values(ipRealPayments.byMonth).reduce((a,b)=>a+b,0)).toLocaleString()}</td>
-                  <td className="px-4 py-2 text-right font-mono">${Math.round(Object.values(payments.ing).reduce((a,b)=>a+b,0)).toLocaleString()}</td>
-                  <td className="px-4 py-2 text-right font-mono">${Math.round(Object.values(payments.toll).reduce((a,b)=>a+b,0)).toLocaleString()}</td>
-                  <td className="px-4 py-2 text-right font-mono font-bold text-emerald-400">${Math.round(Object.values(ipRealPayments.byMonth).reduce((a,b)=>a+b,0)+Object.values(payments.ing).reduce((a,b)=>a+b,0)+Object.values(payments.toll).reduce((a,b)=>a+b,0)).toLocaleString()}</td>
+                  <td className="px-4 py-2 font-semibold text-xs">TOTAL ({payFrom || payTo ? "filtered" : "horizon"})</td>
+                  <td className="px-4 py-2 text-right font-mono">${Math.round(fTotalReal).toLocaleString()}</td>
+                  <td className="px-4 py-2 text-right font-mono">${Math.round(fTotalIng).toLocaleString()}</td>
+                  <td className="px-4 py-2 text-right font-mono">${Math.round(fTotalToll).toLocaleString()}</td>
+                  <td className="px-4 py-2 text-right font-mono font-bold text-emerald-400">${Math.round(fTotalReal+fTotalIng+fTotalToll).toLocaleString()}</td>
                 </tr>
               </tfoot>
             </table>
@@ -5165,7 +5199,8 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
             </div>
           )}
         </div>
-      )}
+        );
+      })()}
 
       {/* ── FORECAST DASHBOARD ── */}
       {procTab==="forecast_dash" && (() => {
@@ -5337,6 +5372,34 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
           }
         }
         const scopeCases = scopeRange ? totalByMonth.slice(scopeRange[0], scopeRange[1]+1).reduce((a,b)=>a+b,0) : 0;
+
+        // Scope-filtered: IP Ordered (not-received purchases with receive date in scope range)
+        const scopeKeyFrom = scopeRange ? FORECAST_KEYS_OPS[scopeRange[0]] : null;
+        const scopeKeyTo = scopeRange ? FORECAST_KEYS_OPS[scopeRange[1]] : null;
+        const ipOrderedFiltered: Record<string, number> = {};
+        for (const m of (ipMovements ?? [])) {
+          const proc = resolveToProc((m as any).material);
+          if (!proc) continue;
+          const received = (m as any).received ?? false;
+          if (m.type !== "In" || received) continue;
+          const q = Number(m.quantity || 0);
+          if (q <= 0) continue;
+          // Use estimated_receive_date if available, else movement_date
+          const recvDate = (m as any).estimated_receive_date || m.movement_date;
+          if (!recvDate) continue;
+          const mk = monthKeyFromStr(recvDate);
+          if (scopeKeyFrom && mk < scopeKeyFrom) continue;
+          if (scopeKeyTo && mk > scopeKeyTo) continue;
+          ipOrderedFiltered[proc] = (ipOrderedFiltered[proc] ?? 0) + q;
+        }
+        // Scope-filtered: PO Forecast (forecast POs with receive month in scope range)
+        const poForecastByMatFiltered: Record<string, number> = {};
+        for (const po of ipForecastPOs) {
+          if (scopeKeyFrom && po.mRecv < scopeKeyFrom) continue;
+          if (scopeKeyTo && po.mRecv > scopeKeyTo) continue;
+          poForecastByMatFiltered[po.material] = (poForecastByMatFiltered[po.material] ?? 0) + po.qty;
+        }
+
         // All raw materials to show (hardcoded + extras)
         const rawMatsToShow = allMaterialsList;
 
@@ -5391,8 +5454,8 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                   {rawMatsToShow.map(mat => {
                     const needed = Math.round(neededFiltered[mat] ?? 0);
                     const stock = parseInt(ingInv[mat]) || 0;
-                    const ordered = Math.round(ipOrdered[mat] ?? 0);
-                    const poFcst = Math.round(poForecastByMat[mat] ?? 0);
+                    const ordered = Math.round(ipOrderedFiltered[mat] ?? 0);
+                    const poFcst = Math.round(poForecastByMatFiltered[mat] ?? 0);
                     const have = stock + ordered + poFcst;
                     const balance = have - needed; // positive = surplus, negative = deficit
                     return (
