@@ -2898,6 +2898,16 @@ type IPForecastPO = {
 };
 const IP_FORECAST_KEY = "baris.ops.ipForecastPOs.v1";
 
+// ─── FP COGS clamp: floor/ceiling applied at display & bridge level ───
+const FP_COGS_MIN_CASE = 18;
+const FP_COGS_MAX_CASE = 24;
+function clampCogs(cases: number, rawValue: number): { cogs: number; value: number } {
+  if (cases <= 0) return { cogs: 0, value: 0 };
+  const raw = rawValue / cases;
+  const clamped = Math.max(FP_COGS_MIN_CASE, Math.min(FP_COGS_MAX_CASE, raw));
+  return { cogs: clamped, value: cases * clamped };
+}
+
 // ─── FIFO Forecast simulation engine ───
 // Generates month-by-month IP & FP stock with lot-level tracking.
 // 13-month horizon: current month + 12 forward.
@@ -4330,6 +4340,35 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     // Use the EXACT same function as IP Summary (computeIpMonthlyStock)
     const snaps = computeIpMonthlyStock(ipMovements ?? [], "ordered");
     const pastMonths = FORECAST_HORIZON_MONTHS.filter(m => m.key <= NOW_MK);
+
+    // ── FP running balance from fp_movements (accumulated inventory) ──
+    const fpSorted = [...(movements ?? [])].sort((a, b) => a.movement_date.localeCompare(b.movement_date));
+    const fpBalCases: Record<string, number> = {};
+    const fpBalValue: Record<string, number> = {};
+    const fpSnapshots: Record<string, Record<string, { cases: number; value: number }>> = {};
+    let fpIdx = 0;
+    for (const pm of pastMonths) {
+      // Accumulate all fp_movements up to end of this month
+      while (fpIdx < fpSorted.length) {
+        const mv = fpSorted[fpIdx];
+        const mo = mv.movement_date.slice(0, 7);
+        if (mo > pm.key) break; // this movement belongs to a future month
+        const signed = mv.type === "In" ? Number(mv.cases) : -Number(mv.cases);
+        const cogsPerPot = Number(mv.cogs_per_case) || 0;
+        fpBalCases[mv.sku] = (fpBalCases[mv.sku] ?? 0) + signed;
+        fpBalValue[mv.sku] = (fpBalValue[mv.sku] ?? 0) + signed * cogsPerPot * 8;
+        fpIdx++;
+      }
+      // Snapshot
+      const snap: Record<string, { cases: number; value: number }> = {};
+      for (const sku of dynamicProcSkus) {
+        const c = Math.max(0, Math.round(fpBalCases[sku] ?? 0));
+        const v = Math.max(0, fpBalValue[sku] ?? 0);
+        if (c > 0 || v > 0) snap[sku] = { cases: c, value: v };
+      }
+      fpSnapshots[pm.key] = snap;
+    }
+
     const results: ForecastMonthResult[] = [];
 
     for (const pm of pastMonths) {
@@ -4375,16 +4414,19 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
         }
       }
 
+      // FP stock from accumulated fp_movements
+      const fpStock = fpSnapshots[pm.key] ?? {};
+
       results.push({
         mk: pm.key, ml: pm.label,
         ipStock, ipReceived, ipConsumed, ipReceivedValue, ipConsumedValue,
-        fpStock: {}, fpProduced: {}, fpSold: {}, fpCogs: {},
+        fpStock, fpProduced: {}, fpSold: {}, fpCogs: {},
         ipPayments: 0, tollPayments: 0, totalPayments: 0,
         ipLots: {}, fpLots: {},
       });
     }
     return results;
-  }, [ipMovements]);
+  }, [ipMovements, movements, dynamicProcSkus]);
 
   // ── Starting stock for FIFO = end of last past month from ip_movements ──
   const ipStartForForecast = useMemo(() => {
@@ -4438,7 +4480,11 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       const pay: Record<string, { ipPurchases: number; tolling: number; total: number }> = {};
       for (const r of fifoResults) {
         const ipVal = allMaterialsList.reduce((s, g) => s + (r.ipStock[g]?.value ?? 0), 0);
-        const fpVal = SKUS.reduce((s, sk) => s + (r.fpStock[sk]?.value ?? 0), 0);
+        const fpVal = SKUS.reduce((s, sk) => {
+          const c = r.fpStock[sk]?.cases ?? 0;
+          const v = r.fpStock[sk]?.value ?? 0;
+          return s + clampCogs(c, v).value;
+        }, 0);
         inv[r.mk] = { ip: Math.round(ipVal), fp: Math.round(fpVal), total: Math.round(ipVal + fpVal) };
         pay[r.mk] = { ipPurchases: Math.round(r.ipPayments), tolling: Math.round(r.tollPayments), total: Math.round(r.totalPayments) };
       }
@@ -5225,7 +5271,11 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
         const FR = fifoResults;
         const last = FR[FR.length - 1];
         const tIPv = ALL_INGS.reduce((s, g) => s + (last?.ipStock[g]?.value ?? 0), 0);
-        const tFPv = dynamicProcSkus.reduce((s, sk) => s + (last?.fpStock[sk]?.value ?? 0), 0);
+        const tFPv = dynamicProcSkus.reduce((s, sk) => {
+          const c = last?.fpStock[sk]?.cases ?? 0;
+          const v = last?.fpStock[sk]?.value ?? 0;
+          return s + clampCogs(c, v).value;
+        }, 0);
         const tFPc = dynamicProcSkus.reduce((s, sk) => s + (last?.fpStock[sk]?.cases ?? 0), 0);
         const tPay = FR.reduce((s, r) => s + r.totalPayments, 0);
         return (
@@ -5948,10 +5998,11 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
               </div>
             </div>
 
-            {/* FP Value */}
+            {/* FP Value (clamped COGS) + COGS/case */}
             <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
               <div className="px-5 py-3 border-b border-border bg-muted/30">
                 <p className="text-sm font-bold" style={{color:"#1C2340"}}>FP Stock Value ($)</p>
+                <p className="text-xs text-muted-foreground">Value = Cases × COGS/case (clamped ${FP_COGS_MIN_CASE}–${FP_COGS_MAX_CASE} $/case)</p>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-xs min-w-max">
@@ -5965,13 +6016,65 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                     {dynamicProcSkus.map(sk => (
                       <tr key={sk} className="border-t border-border/60">
                         <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{sk}</td>
-                        {FR.map(r => <td key={r.mk} className="px-3 py-1.5 text-right font-mono">${Math.round(r.fpStock[sk]?.value ?? 0).toLocaleString()}</td>)}
+                        {FR.map(r => {
+                          const c = r.fpStock[sk]?.cases ?? 0;
+                          const v = r.fpStock[sk]?.value ?? 0;
+                          const cl = clampCogs(c, v);
+                          return <td key={r.mk} className="px-3 py-1.5 text-right font-mono">${Math.round(cl.value).toLocaleString()}</td>;
+                        })}
                       </tr>
                     ))}
                     <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
                       <td className="px-4 py-2 font-semibold text-xs sticky left-0" style={{backgroundColor:"#1C2340"}}>TOTAL</td>
-                      {FR.map(r => <td key={r.mk} className="px-3 py-2 text-right font-mono font-bold text-emerald-400">${Math.round(dynamicProcSkus.reduce((s,sk)=>s+(r.fpStock[sk]?.value??0),0)).toLocaleString()}</td>)}
+                      {FR.map(r => {
+                        const total = dynamicProcSkus.reduce((s, sk) => {
+                          const c = r.fpStock[sk]?.cases ?? 0;
+                          const v = r.fpStock[sk]?.value ?? 0;
+                          return s + clampCogs(c, v).value;
+                        }, 0);
+                        return <td key={r.mk} className="px-3 py-2 text-right font-mono font-bold text-emerald-400">${Math.round(total).toLocaleString()}</td>;
+                      })}
                     </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* COGS per case */}
+            <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+              <div className="px-5 py-3 border-b border-border bg-muted/30">
+                <p className="text-sm font-bold" style={{color:"#1C2340"}}>COGS / Case ($)</p>
+                <p className="text-xs text-muted-foreground">Raw FIFO cost per case · clamped to ${FP_COGS_MIN_CASE}–${FP_COGS_MAX_CASE} range (yellow = clamped)</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs min-w-max">
+                  <thead>
+                    <tr className="text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
+                      <th className="px-4 py-2 text-left sticky left-0 bg-muted/20">SKU</th>
+                      {FR.map(r => <th key={r.mk} className="px-3 py-2 text-right">{r.ml}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dynamicProcSkus.map(sk => (
+                      <tr key={sk} className="border-t border-border/60">
+                        <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{sk}</td>
+                        {FR.map(r => {
+                          const c = r.fpStock[sk]?.cases ?? 0;
+                          const v = r.fpStock[sk]?.value ?? 0;
+                          if (c <= 0) return <td key={r.mk} className="px-3 py-1.5 text-right font-mono text-muted-foreground">—</td>;
+                          const raw = v / c;
+                          const cl = clampCogs(c, v);
+                          const wasClamped = Math.abs(raw - cl.cogs) > 0.01;
+                          return (
+                            <td key={r.mk} className="px-3 py-1.5 text-right font-mono"
+                              style={{ backgroundColor: wasClamped ? "#FEF3C7" : undefined, color: wasClamped ? "#92400E" : "#1C2340" }}
+                              title={wasClamped ? `Raw: $${raw.toFixed(2)}` : undefined}>
+                              ${cl.cogs.toFixed(2)}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
