@@ -4318,17 +4318,22 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
         if (snaps[i].month <= pm.key) { snap = snaps[i]; break; }
       }
 
-      // Stock: use raw names from snap (identical to IP Summary)
+      // Stock: merge raw names → proc names so duplicates consolidate
       const ipStock: Record<string, { qty: number; value: number }> = {};
       if (snap) {
-        for (const mat of Object.keys(snap.units)) {
-          const qty = Math.max(0, Math.round(snap.units[mat] ?? 0));
-          const val = Math.max(0, Math.round(snap.value[mat] ?? 0));
-          if (qty > 0 || val > 0) ipStock[mat] = { qty, value: val };
+        for (const rawMat of Object.keys(snap.units)) {
+          const procName = resolveToProc(rawMat) ?? rawMat;
+          const qty = Math.max(0, Math.round(snap.units[rawMat] ?? 0));
+          const val = Math.max(0, Math.round(snap.value[rawMat] ?? 0));
+          if (qty > 0 || val > 0) {
+            const ex = ipStock[procName];
+            if (ex) { ex.qty += qty; ex.value += val; }
+            else ipStock[procName] = { qty, value: val };
+          }
         }
       }
 
-      // Monthly recv/consumed
+      // Monthly recv/consumed — also merge raw → proc names
       const ipReceived: Record<string, number> = {};
       const ipConsumed: Record<string, number> = {};
       const ipReceivedValue: Record<string, number> = {};
@@ -4336,7 +4341,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       for (const mv of (ipMovements ?? [])) {
         const mo = mv.movement_date.slice(0, 7);
         if (mo !== pm.key) continue;
-        const mat = mv.material;
+        const mat = resolveToProc(mv.material) ?? mv.material;
         const q = Number(mv.quantity || 0);
         const cogs = Number((mv as any).cogs_per_unit || 0);
         if (mv.type === "In") {
@@ -5592,11 +5597,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
         const FR = fifoResults;
         const last = FR[FR.length - 1];
         // Dynamic material list: all materials that have stock or movements in any month
-        const displayMats = [...new Set(FR.flatMap(r => [
-          ...Object.keys(r.ipStock).filter(k => r.ipStock[k]?.qty > 0 || r.ipStock[k]?.value > 0),
-          ...Object.keys(r.ipReceived).filter(k => (r.ipReceived[k] ?? 0) > 0),
-          ...Object.keys(r.ipConsumed).filter(k => (r.ipConsumed[k] ?? 0) > 0),
-        ]))].sort();
+        const displayMats = allMaterialsList;
         return (
           <div className="space-y-4">
             <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
