@@ -2898,14 +2898,18 @@ type IPForecastPO = {
 };
 const IP_FORECAST_KEY = "baris.ops.ipForecastPOs.v1";
 
-// ─── FP COGS clamp: floor/ceiling applied at display & bridge level ───
-const FP_COGS_MIN_CASE = 18;
-const FP_COGS_MAX_CASE = 24;
-function clampCogs(cases: number, rawValue: number): { cogs: number; value: number } {
-  if (cases <= 0) return { cogs: 0, value: 0 };
-  const raw = rawValue / cases;
-  const clamped = Math.max(FP_COGS_MIN_CASE, Math.min(FP_COGS_MAX_CASE, raw));
-  return { cogs: clamped, value: cases * clamped };
+// ─── FP COGS assumptions: fixed $/unit per SKU per quarter ───
+const UNITS_PER_CASE_COGS = 8;
+function monthToQuarter(mk: string): string {
+  const [y, m] = mk.split("-").map(Number);
+  const q = m <= 3 ? 1 : m <= 6 ? 2 : m <= 9 ? 3 : 4;
+  return `${y}-Q${q}`;
+}
+type CogsAssumption = { sku: string; quarter: string; cogs_per_unit: number };
+function lookupCogs(assumptions: CogsAssumption[], sku: string, mk: string): number {
+  const q = monthToQuarter(mk);
+  const row = assumptions.find(a => a.sku === sku && a.quarter === q);
+  return row ? row.cogs_per_unit * UNITS_PER_CASE_COGS : 0;
 }
 
 // ─── FIFO Forecast simulation engine ───
@@ -3268,6 +3272,27 @@ function calcProdSchedule(
 function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: { movements: FPRow[]; orders: any[]; baseline: BaselineRow[]; ipMovements: IPRow[]; onAdded: () => void }) {
   const [procTab, setProcTab] = useState<ProcSubTab>("schedule");
   const [ipMovView, setIpMovView] = useState<"units"|"value">("units");
+
+  // ─── FP COGS Assumptions: per SKU per quarter, stored in Supabase ───
+  const [cogsAssumptions, setCogsAssumptions] = useState<CogsAssumption[]>([]);
+  const [cogsLoading, setCogsLoading] = useState(true);
+  useEffect(() => {
+    supabase.from("fp_cogs_assumptions").select("sku,quarter,cogs_per_unit")
+      .then(({ data }) => { if (data) setCogsAssumptions(data); setCogsLoading(false); });
+  }, []);
+  const saveCogsAssumption = async (sku: string, quarter: string, val: number) => {
+    const rounded = Math.round(val * 100) / 100;
+    setCogsAssumptions(prev => {
+      const idx = prev.findIndex(a => a.sku === sku && a.quarter === quarter);
+      if (idx >= 0) { const next = [...prev]; next[idx] = { ...next[idx], cogs_per_unit: rounded }; return next; }
+      return [...prev, { sku, quarter, cogs_per_unit: rounded }];
+    });
+    await supabase.from("fp_cogs_assumptions").upsert(
+      { sku, quarter, cogs_per_unit: rounded, updated_at: new Date().toISOString() },
+      { onConflict: "sku,quarter" }
+    );
+  };
+
   const [safetyWoh,  setSafetyWoh]  = useState(()=>{
     try { const v = window.localStorage.getItem("baris.ops.safetyWoh.v1"); if (v) return Number(v); } catch {} return 6;
   });
@@ -4482,8 +4507,8 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
         const ipVal = allMaterialsList.reduce((s, g) => s + (r.ipStock[g]?.value ?? 0), 0);
         const fpVal = SKUS.reduce((s, sk) => {
           const c = r.fpStock[sk]?.cases ?? 0;
-          const v = r.fpStock[sk]?.value ?? 0;
-          return s + clampCogs(c, v).value;
+          const cogsCase = lookupCogs(cogsAssumptions, sk, r.mk);
+          return s + (c > 0 && cogsCase > 0 ? c * cogsCase : (r.fpStock[sk]?.value ?? 0));
         }, 0);
         inv[r.mk] = { ip: Math.round(ipVal), fp: Math.round(fpVal), total: Math.round(ipVal + fpVal) };
         pay[r.mk] = { ipPurchases: Math.round(r.ipPayments), tolling: Math.round(r.tollPayments), total: Math.round(r.totalPayments) };
@@ -4491,7 +4516,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       window.localStorage.setItem("baris.ops.fifoInventory.v1", JSON.stringify(inv));
       window.localStorage.setItem("baris.ops.fifoPayments.v1", JSON.stringify(pay));
     } catch { /* ignore */ }
-  }, [fifoResults, allMaterialsList]);
+  }, [fifoResults, allMaterialsList, cogsAssumptions]);
 
   // Shopping list: PO forecast totals per material
   const poForecastByMat = useMemo(() => {
@@ -5273,8 +5298,8 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
         const tIPv = ALL_INGS.reduce((s, g) => s + (last?.ipStock[g]?.value ?? 0), 0);
         const tFPv = dynamicProcSkus.reduce((s, sk) => {
           const c = last?.fpStock[sk]?.cases ?? 0;
-          const v = last?.fpStock[sk]?.value ?? 0;
-          return s + clampCogs(c, v).value;
+          const cogsCase = last ? lookupCogs(cogsAssumptions, sk, last.mk) : 0;
+          return s + (c > 0 && cogsCase > 0 ? c * cogsCase : (last?.fpStock[sk]?.value ?? 0));
         }, 0);
         const tFPc = dynamicProcSkus.reduce((s, sk) => s + (last?.fpStock[sk]?.cases ?? 0), 0);
         const tPay = FR.reduce((s, r) => s + r.totalPayments, 0);
@@ -5998,11 +6023,11 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
               </div>
             </div>
 
-            {/* FP Value (clamped COGS) + COGS/case */}
+            {/* FP Value (assumption-based COGS) */}
             <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
               <div className="px-5 py-3 border-b border-border bg-muted/30">
                 <p className="text-sm font-bold" style={{color:"#1C2340"}}>FP Stock Value ($)</p>
-                <p className="text-xs text-muted-foreground">Value = Cases × COGS/case (clamped ${FP_COGS_MIN_CASE}–${FP_COGS_MAX_CASE} $/case)</p>
+                <p className="text-xs text-muted-foreground">Value = Cases × COGS/case from quarterly assumptions</p>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-xs min-w-max">
@@ -6018,9 +6043,9 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                         <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{sk}</td>
                         {FR.map(r => {
                           const c = r.fpStock[sk]?.cases ?? 0;
-                          const v = r.fpStock[sk]?.value ?? 0;
-                          const cl = clampCogs(c, v);
-                          return <td key={r.mk} className="px-3 py-1.5 text-right font-mono">${Math.round(cl.value).toLocaleString()}</td>;
+                          const cogsCase = lookupCogs(cogsAssumptions, sk, r.mk);
+                          const val = c > 0 && cogsCase > 0 ? c * cogsCase : (r.fpStock[sk]?.value ?? 0);
+                          return <td key={r.mk} className="px-3 py-1.5 text-right font-mono">${Math.round(val).toLocaleString()}</td>;
                         })}
                       </tr>
                     ))}
@@ -6029,8 +6054,8 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                       {FR.map(r => {
                         const total = dynamicProcSkus.reduce((s, sk) => {
                           const c = r.fpStock[sk]?.cases ?? 0;
-                          const v = r.fpStock[sk]?.value ?? 0;
-                          return s + clampCogs(c, v).value;
+                          const cogsCase = lookupCogs(cogsAssumptions, sk, r.mk);
+                          return s + (c > 0 && cogsCase > 0 ? c * cogsCase : (r.fpStock[sk]?.value ?? 0));
                         }, 0);
                         return <td key={r.mk} className="px-3 py-2 text-right font-mono font-bold text-emerald-400">${Math.round(total).toLocaleString()}</td>;
                       })}
@@ -6040,11 +6065,11 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
               </div>
             </div>
 
-            {/* COGS per case */}
+            {/* COGS per case (from assumptions) */}
             <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
               <div className="px-5 py-3 border-b border-border bg-muted/30">
-                <p className="text-sm font-bold" style={{color:"#1C2340"}}>COGS / Case ($)</p>
-                <p className="text-xs text-muted-foreground">Raw FIFO cost per case · clamped to ${FP_COGS_MIN_CASE}–${FP_COGS_MAX_CASE} range (yellow = clamped)</p>
+                <p className="text-sm font-bold" style={{color:"#1C2340"}}>COGS / Case ($) — from assumptions</p>
+                <p className="text-xs text-muted-foreground">Quarterly assumption × 8 units/case · Edit below</p>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-xs min-w-max">
@@ -6059,19 +6084,9 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                       <tr key={sk} className="border-t border-border/60">
                         <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{sk}</td>
                         {FR.map(r => {
-                          const c = r.fpStock[sk]?.cases ?? 0;
-                          const v = r.fpStock[sk]?.value ?? 0;
-                          if (c <= 0) return <td key={r.mk} className="px-3 py-1.5 text-right font-mono text-muted-foreground">—</td>;
-                          const raw = v / c;
-                          const cl = clampCogs(c, v);
-                          const wasClamped = Math.abs(raw - cl.cogs) > 0.01;
-                          return (
-                            <td key={r.mk} className="px-3 py-1.5 text-right font-mono"
-                              style={{ backgroundColor: wasClamped ? "#FEF3C7" : undefined, color: wasClamped ? "#92400E" : "#1C2340" }}
-                              title={wasClamped ? `Raw: $${raw.toFixed(2)}` : undefined}>
-                              ${cl.cogs.toFixed(2)}
-                            </td>
-                          );
+                          const cogsCase = lookupCogs(cogsAssumptions, sk, r.mk);
+                          if (cogsCase <= 0) return <td key={r.mk} className="px-3 py-1.5 text-right font-mono text-muted-foreground">—</td>;
+                          return <td key={r.mk} className="px-3 py-1.5 text-right font-mono" style={{color:"#1C2340"}}>${cogsCase.toFixed(2)}</td>;
                         })}
                       </tr>
                     ))}
@@ -6079,6 +6094,56 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                 </table>
               </div>
             </div>
+
+            {/* Editable COGS Assumptions by Quarter */}
+            {(() => {
+              const quarters = [...new Set(FORECAST_HORIZON_MONTHS.map(m => monthToQuarter(m.key)))].sort();
+              const qLabels: Record<string,string> = {};
+              for (const q of quarters) { const [y, qn] = q.split("-"); qLabels[q] = `${qn} ${y.slice(-2)}`; }
+              return (
+                <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+                  <div className="px-5 py-3 border-b border-border bg-muted/30">
+                    <p className="text-sm font-bold" style={{color:"#1C2340"}}>COGS Assumptions ($/unit)</p>
+                    <p className="text-xs text-muted-foreground">Click any cell to edit · ×8 = $/case · Saved to Supabase</p>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs min-w-max">
+                      <thead>
+                        <tr className="text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
+                          <th className="px-4 py-2 text-left sticky left-0 bg-muted/20">SKU</th>
+                          {quarters.map(q => <th key={q} className="px-3 py-2 text-right">{qLabels[q]}</th>)}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[...SKUS].map(sk => (
+                          <tr key={sk} className="border-t border-border/60">
+                            <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{sk}</td>
+                            {quarters.map(q => {
+                              const row = cogsAssumptions.find(a => a.sku === sk && a.quarter === q);
+                              const val = row?.cogs_per_unit ?? 0;
+                              return (
+                                <td key={q} className="px-1 py-0.5 text-right">
+                                  <input
+                                    type="number" step="0.01" min="0"
+                                    className="w-16 text-right font-mono text-xs rounded border border-border bg-background px-1.5 py-1 focus:outline-none focus:ring-1 focus:ring-primary/30"
+                                    value={val || ""}
+                                    onChange={e => {
+                                      const n = parseFloat(e.target.value);
+                                      if (!isNaN(n) && n >= 0) saveCogsAssumption(sk, q, n);
+                                    }}
+                                    placeholder="—"
+                                  />
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* FP Movements */}
             <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
