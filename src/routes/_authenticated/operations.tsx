@@ -1203,15 +1203,26 @@ export function IPSummaryTab({ movements }: { movements: IPRow[] }) {
       material: string;
       inQty: number; outQty: number; inValue: number;
       unit: string;
-      lots: Map<string, { qty: number; cogs: number | null; unit: string }>;
+      lots: Map<string, { qty: number; value: number; unit: string }>;
     }>();
 
     for (const r of movements) {
       const rr = r as any;
       const qty   = Number(r.quantity);
       const delta = r.type === "In" ? qty : -qty;
-      const cogs: number | null = rr.cogs_per_unit ?? null;
+      const tp    = Math.abs(Number(rr.total_price ?? 0));
+      const cogs  = Math.abs(Number(rr.cogs_per_unit ?? 0));
       const lot = r.lot_number ?? "—";
+
+      // Actual $ flow: use total_price when available, fallback to qty*cogs
+      let valDelta: number;
+      if (tp > 0) {
+        valDelta = r.type === "In" ? tp : -tp;
+      } else if (cogs > 0) {
+        valDelta = delta * cogs;
+      } else {
+        valDelta = 0;
+      }
 
       if (!map.has(r.material)) {
         map.set(r.material, {
@@ -1222,14 +1233,14 @@ export function IPSummaryTab({ movements }: { movements: IPRow[] }) {
       const cur = map.get(r.material)!;
       if (r.type === "In") {
         cur.inQty += qty;
-        if (cogs) cur.inValue += qty * cogs;
+        cur.inValue += valDelta;
       } else {
         cur.outQty += qty;
       }
 
-      const lotCur = cur.lots.get(lot) ?? { qty: 0, cogs: null, unit: r.unit ?? "lbs" };
+      const lotCur = cur.lots.get(lot) ?? { qty: 0, value: 0, unit: r.unit ?? "lbs" };
       lotCur.qty += delta;
-      if (lotCur.cogs == null && cogs != null) lotCur.cogs = cogs;
+      lotCur.value += valDelta;
       cur.lots.set(lot, lotCur);
     }
 
@@ -1243,8 +1254,10 @@ export function IPSummaryTab({ movements }: { movements: IPRow[] }) {
     ? inventory
     : inventory.filter(m => m.material === filterMaterial);
 
-  const lotValue = (m: { lots: Map<string, { qty: number; cogs: number | null; unit: string }> }) =>
-    [...m.lots.values()].reduce((s, l) => s + (l.qty > 0 && l.cogs != null ? l.qty * l.cogs : 0), 0);
+  // Actual monetized value per lot: sum of real $ flows (In − Out), not qty × single price.
+  // Matches Excel logic: "$/unidad = $ en stock ÷ unidades en stock".
+  const lotValue = (m: { lots: Map<string, { qty: number; value: number; unit: string }> }) =>
+    [...m.lots.values()].reduce((s, l) => s + (l.qty > 0 ? l.value : 0), 0);
   const totalValue = shown.reduce((s, m) => s + lotValue(m), 0);
 
   const totalIn  = movements.filter(r => r.type === "In").length;
@@ -1290,9 +1303,12 @@ export function IPSummaryTab({ movements }: { movements: IPRow[] }) {
       {/* ── Payment tracking ── */}
       {(() => {
         const allMovs = movements as any[];
+        // Payment bucket date: paid → actual (fallback movement), pending → estimated (fallback movement)
         const payDate = (m:any): string =>
           (m.paid ? (m.actual_payment_date ?? m.movement_date) : (m.estimated_payment_date ?? m.movement_date)) ?? '';
+        // Only payments from 2026 onwards (older I&P history is kept in the DB but hidden here)
         const rr = allMovs.filter(m => payDate(m) >= '2026-01');
+        // Monthly paid vs pending (bucketed by payment date)
         const monthly: Record<string,{paid:number;pending:number}> = {};
         for (const m of rr) {
           const mon = payDate(m).slice(0,7);
@@ -1303,6 +1319,7 @@ export function IPSummaryTab({ movements }: { movements: IPRow[] }) {
           else monthly[mon].pending += cost;
         }
         const months = Object.keys(monthly).sort().reverse();
+        // Pending: unpaid with est. payment date
         const pending = rr
           .filter(m => !m.paid && m.estimated_payment_date)
           .sort((a,b) => a.estimated_payment_date.localeCompare(b.estimated_payment_date));
@@ -1447,19 +1464,22 @@ export function IPSummaryTab({ movements }: { movements: IPRow[] }) {
                       {effCogs > 0 ? `$${effCogs.toFixed(4)}` : "—"}
                     </td>
                   </tr>
-                  {lots.map(([lot, v]) => (
+                  {lots.map(([lot, v]) => {
+                    const ppu = v.qty > 0 ? v.value / v.qty : 0;
+                    return (
                     <tr key={`${m.material}|${lot}`} className="border-t border-border/40 hover:bg-muted/20">
                       <td className="px-4 py-1.5 text-muted-foreground pl-8 text-[10px]">↳</td>
                       <td className="px-4 py-1.5 font-mono" style={{ color:"#A3224A" }}>{lot}</td>
                       <td className="px-4 py-1.5 text-right font-mono">{v.qty.toLocaleString()} <span className="text-[10px] text-muted-foreground">{v.unit}</span></td>
                       <td className="px-4 py-1.5 text-right font-mono text-muted-foreground">
-                        {v.cogs ? `$${Math.round(v.qty * v.cogs).toLocaleString()}` : "—"}
+                        {v.value !== 0 ? `$${Math.round(v.value).toLocaleString()}` : "—"}
                       </td>
                       <td className="px-4 py-1.5 text-right font-mono text-muted-foreground">
-                        {v.cogs ? `$${v.cogs.toFixed(4)}` : "—"}
+                        {ppu > 0 ? `$${ppu.toFixed(4)}` : "—"}
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </React.Fragment>
               );
             })}
@@ -1626,10 +1646,17 @@ function computeIpMonthlyStock(
       mi++;
     }
     if (!passes(mv)) continue;
-    const delta = mv.type === "In" ? Number(mv.quantity) : -Number(mv.quantity);
+    const qty = Number(mv.quantity);
+    const delta = mv.type === "In" ? qty : -qty;
     balance[mv.material] = (balance[mv.material] || 0) + delta;
-    const cogs = (mv as any).cogs_per_unit;
-    if (cogs) valueBalance[mv.material] = (valueBalance[mv.material] || 0) + delta * cogs;
+    // Actual $ flow: prefer total_price, fallback to qty*cogs
+    const tp   = Math.abs(Number((mv as any).total_price ?? 0));
+    const cogs = Math.abs(Number((mv as any).cogs_per_unit ?? 0));
+    let valDelta: number;
+    if (tp > 0) { valDelta = mv.type === "In" ? tp : -tp; }
+    else if (cogs > 0) { valDelta = delta * cogs; }
+    else { valDelta = 0; }
+    valueBalance[mv.material] = (valueBalance[mv.material] || 0) + valDelta;
   }
   if (mi < mList.length) {
     snaps.push({ month: mList[mi] ?? "", units: { ...balance }, value: { ...valueBalance } });
