@@ -5546,21 +5546,22 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                 <tbody>
                   {rawMatsToShow.map(mat => {
                     const needed = Math.round(neededFiltered[mat] ?? 0);
-                    const stock = parseInt(ingInv[mat]) || 0;
+                    const stock = Math.round(ipOnHand[mat] ?? 0);  // live from IP Summary
                     const ordered = Math.round(ipOrderedFiltered[mat] ?? 0);
                     const poFcst = Math.round(poForecastByMatFiltered[mat] ?? 0);
                     const have = stock + ordered + poFcst;
-                    const balance = have - needed; // positive = surplus, negative = deficit
+                    const balance = needed - stock - ordered - poFcst; // positive = deficit (need to buy), negative = surplus
+                    const show = needed > 0 || have > 0; // show row values if material is relevant
                     return (
                       <tr key={mat} className="border-t border-blue-100">
                         <td className="px-3 py-1.5 font-semibold text-blue-900">{mat}</td>
                         <td className="px-3 py-1.5 text-right font-mono">{needed > 0 ? needed.toLocaleString() : "—"}</td>
-                        <td className="px-3 py-1.5 text-right font-mono">{stock > 0 ? stock.toLocaleString() : "—"}</td>
-                        <td className="px-3 py-1.5 text-right font-mono text-emerald-700">{ordered > 0 ? ordered.toLocaleString() : "—"}</td>
-                        <td className="px-3 py-1.5 text-right font-mono" style={{color:"#7C3AED"}}>{poFcst > 0 ? poFcst.toLocaleString() : "—"}</td>
-                        <td className="px-3 py-1.5 text-right font-mono">{have > 0 ? have.toLocaleString() : "—"}</td>
-                        <td className={`px-3 py-1.5 text-right font-mono font-bold ${needed === 0 ? "text-muted-foreground" : balance >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-                          {needed === 0 ? "—" : balance >= 0 ? `✓ (+${balance.toLocaleString()})` : balance.toLocaleString()}
+                        <td className="px-3 py-1.5 text-right font-mono">{show ? stock.toLocaleString() : "—"}</td>
+                        <td className="px-3 py-1.5 text-right font-mono text-emerald-700">{show ? ordered.toLocaleString() : "—"}</td>
+                        <td className="px-3 py-1.5 text-right font-mono" style={{color:"#7C3AED"}}>{show ? poFcst.toLocaleString() : "—"}</td>
+                        <td className="px-3 py-1.5 text-right font-mono">{show ? have.toLocaleString() : "—"}</td>
+                        <td className={`px-3 py-1.5 text-right font-mono font-bold ${!show ? "text-muted-foreground" : balance <= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                          {!show ? "—" : balance <= 0 ? `✓ (+${Math.abs(balance).toLocaleString()})` : `-${balance.toLocaleString()}`}
                         </td>
                       </tr>
                     );
