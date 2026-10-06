@@ -3,8 +3,11 @@ import { EXTENDED_SKUS } from "@/lib/sales-database";
 import { PRICE_PER_CASE, WEEKS_PER_MONTH, UNITS_PER_CASE, FORECAST_MONTHS } from "@/lib/sales-forecast";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-type SimStore = { name: string; skuVelocities: Record<string, number> };
-type SimAccount = { id: string; name: string; stores: SimStore[]; entryMonth: string; active: boolean };
+type SimAccount = {
+  id: string; name: string; storeCount: number;
+  skuVelocities: Record<string, number>; // units/store/week; 0 = SKU not selected
+  entryMonth: string; active: boolean;
+};
 type SimState = { accounts: SimAccount[] };
 
 const LS_KEY = "baris_sim_v1";
@@ -21,23 +24,40 @@ declare global { interface Window { Chart: any } }
 function uid() { return Math.random().toString(36).slice(2, 9); }
 
 function loadSim(): SimState {
-  try { const raw = localStorage.getItem(LS_KEY); return raw ? JSON.parse(raw) : { accounts: [] }; }
-  catch { return { accounts: [] }; }
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (!raw) return { accounts: [] };
+    const parsed = JSON.parse(raw);
+    // Migrate old format (stores[]) → new flat format
+    if (parsed.accounts) {
+      parsed.accounts = parsed.accounts.map((a: any) => {
+        if (a.storeCount !== undefined) return a; // already new format
+        // Old format had stores: SimStore[]
+        const firstStore = a.stores?.[0];
+        return {
+          id: a.id, name: a.name, entryMonth: a.entryMonth, active: a.active,
+          storeCount: 0,
+          skuVelocities: firstStore?.skuVelocities ?? Object.fromEntries(SKUS.map(s => [s, 0])),
+        };
+      });
+    }
+    return parsed;
+  } catch { return { accounts: [] }; }
 }
 function saveSim(s: SimState) { localStorage.setItem(LS_KEY, JSON.stringify(s)); }
 
-function blankStore(): SimStore {
-  const vels: Record<string, number> = {};
-  SKUS.forEach(s => vels[s] = 0);
-  return { name: "Store 1", skuVelocities: vels };
-}
 function blankAccount(): SimAccount {
-  return { id: uid(), name: "", stores: [blankStore()], entryMonth: MONTHS_LABELS[0], active: true };
+  return {
+    id: uid(), name: "", storeCount: 0,
+    skuVelocities: Object.fromEntries(SKUS.map(s => [s, 0])),
+    entryMonth: MONTHS_LABELS[0], active: true,
+  };
 }
 
-function storeCases(vel: number): number {
-  if (vel <= 0) return 0;
-  return Math.round(vel * WEEKS_PER_MONTH / UNITS_PER_CASE);
+// cases/month for one SKU = stores × vel(units/store/week) × weeks/month ÷ units/case
+function skuCasesPerMonth(stores: number, vel: number): number {
+  if (stores <= 0 || vel <= 0) return 0;
+  return Math.round(stores * vel * WEEKS_PER_MONTH / UNITS_PER_CASE);
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -51,7 +71,6 @@ export function SimulatorTab({ baseForecast, dbSkuByMonth }: {
   const revChartRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => { saveSim(sim); }, [sim]);
-
   const updateSim = useCallback((fn: (s: SimState) => SimState) => setSim(prev => fn(prev)), []);
 
   // ── Sim incremental cases by month × sku ──
@@ -61,32 +80,28 @@ export function SimulatorTab({ baseForecast, dbSkuByMonth }: {
     const totalByMonth = new Array(MONTHS_LABELS.length).fill(0);
 
     for (const acct of sim.accounts) {
-      if (!acct.active) continue;
+      if (!acct.active || acct.storeCount <= 0) continue;
       const entryIdx = MONTHS_LABELS.indexOf(acct.entryMonth);
       if (entryIdx < 0) continue;
-      for (const store of acct.stores) {
-        for (const sku of SKUS) {
-          const vel = store.skuVelocities[sku] ?? 0;
-          if (vel <= 0) continue;
-          const cases = storeCases(vel);
-          for (let mi = entryIdx; mi < MONTHS_LABELS.length; mi++) {
-            const monthsIn = mi - entryIdx;
-            const ramp = monthsIn === 0 ? 0.4 : monthsIn === 1 ? 0.7 : 1.0;
-            const adj = Math.round(cases * ramp);
-            bySkuMonth[sku][mi] += adj;
-            totalByMonth[mi] += adj;
-          }
+      for (const sku of SKUS) {
+        const vel = acct.skuVelocities[sku] ?? 0;
+        if (vel <= 0) continue;
+        const fullCases = skuCasesPerMonth(acct.storeCount, vel);
+        for (let mi = entryIdx; mi < MONTHS_LABELS.length; mi++) {
+          const monthsIn = mi - entryIdx;
+          const ramp = monthsIn === 0 ? 0.4 : monthsIn === 1 ? 0.7 : 1.0;
+          const adj = Math.round(fullCases * ramp);
+          bySkuMonth[sku][mi] += adj;
+          totalByMonth[mi] += adj;
         }
       }
     }
     return { simBySkuMonth: bySkuMonth, simTotalByMonth: totalByMonth };
   }, [sim]);
 
-  // ── Base by month ──
   const baseTotalByMonth = useMemo(() =>
     MONTHS_LABELS.map(label => baseForecast.find(f => f.label === label)?.totalCases ?? 0), [baseForecast]);
 
-  // ── Base by SKU by month (from promo calendar / formula) ──
   const baseBySkuMonth = useMemo(() => {
     const out: Record<string, number[]> = {};
     SKUS.forEach(sku => {
@@ -95,7 +110,6 @@ export function SimulatorTab({ baseForecast, dbSkuByMonth }: {
     return out;
   }, [dbSkuByMonth]);
 
-  // ── Combined (base + sim) by SKU by month ──
   const combinedBySkuMonth = useMemo(() => {
     const out: Record<string, number[]> = {};
     SKUS.forEach(sku => {
@@ -107,7 +121,6 @@ export function SimulatorTab({ baseForecast, dbSkuByMonth }: {
   const combinedTotalByMonth = useMemo(() =>
     baseTotalByMonth.map((b, i) => b + simTotalByMonth[i]), [baseTotalByMonth, simTotalByMonth]);
 
-  // Revenue
   const baseRevByMonth = useMemo(() => baseTotalByMonth.map(c => c * PRICE_PER_CASE), [baseTotalByMonth]);
   const combinedRevByMonth = useMemo(() => combinedTotalByMonth.map(c => c * PRICE_PER_CASE), [combinedTotalByMonth]);
   const simRevByMonth = useMemo(() => simTotalByMonth.map(c => c * PRICE_PER_CASE), [simTotalByMonth]);
@@ -124,8 +137,7 @@ export function SimulatorTab({ baseForecast, dbSkuByMonth }: {
       })),
     ];
     const chart = new window.Chart(skuChartRef.current, {
-      type: "bar",
-      data: { labels: SHORT_LABELS, datasets },
+      type: "bar", data: { labels: SHORT_LABELS, datasets },
       options: {
         responsive: true, maintainAspectRatio: false,
         plugins: { legend: { display: true, position: "bottom" as const, labels: { usePointStyle: true, pointStyle: "rectRounded", font: { size: 10 } } } },
@@ -172,7 +184,7 @@ export function SimulatorTab({ baseForecast, dbSkuByMonth }: {
   const totalCombinedCases = totalBaseCases + totalSimCases;
   const totalCombinedRev = totalCombinedCases * PRICE_PER_CASE;
 
-  // ── SKU table data ──
+  // ── SKU table ──
   const skuTableData = useMemo(() => SKUS.map(sku => {
     const months = combinedBySkuMonth[sku];
     const total = months.reduce((a, b) => a + b, 0);
@@ -181,23 +193,23 @@ export function SimulatorTab({ baseForecast, dbSkuByMonth }: {
   const grandTotal = combinedTotalByMonth.reduce((a, b) => a + b, 0);
   const hasSim = totalSimCases > 0;
 
-  // ── Account editor ──
+  // ── Account card ──
   function AccountCard({ acct }: { acct: SimAccount }) {
     const isEditing = editingId === acct.id;
+    const selectedSkus = SKUS.filter(s => (acct.skuVelocities[s] ?? 0) > 0);
+
     const totalAddedCases = useMemo(() => {
-      if (!acct.active) return 0;
+      if (!acct.active || acct.storeCount <= 0) return 0;
       const entryIdx = MONTHS_LABELS.indexOf(acct.entryMonth);
       if (entryIdx < 0) return 0;
       let total = 0;
-      for (const store of acct.stores) {
-        for (const sku of SKUS) {
-          const vel = store.skuVelocities[sku] ?? 0;
-          if (vel <= 0) continue;
-          const c = storeCases(vel);
-          for (let mi = entryIdx; mi < MONTHS_LABELS.length; mi++) {
-            const monthsIn = mi - entryIdx;
-            total += Math.round(c * (monthsIn === 0 ? 0.4 : monthsIn === 1 ? 0.7 : 1.0));
-          }
+      for (const sku of SKUS) {
+        const vel = acct.skuVelocities[sku] ?? 0;
+        if (vel <= 0) continue;
+        const full = skuCasesPerMonth(acct.storeCount, vel);
+        for (let mi = entryIdx; mi < MONTHS_LABELS.length; mi++) {
+          const monthsIn = mi - entryIdx;
+          total += Math.round(full * (monthsIn === 0 ? 0.4 : monthsIn === 1 ? 0.7 : 1.0));
         }
       }
       return total;
@@ -206,8 +218,17 @@ export function SimulatorTab({ baseForecast, dbSkuByMonth }: {
     const update = (fn: (a: SimAccount) => SimAccount) =>
       updateSim(s => ({ ...s, accounts: s.accounts.map(a => a.id === acct.id ? fn(a) : a) }));
 
+    const toggleSku = (sku: string) => {
+      update(a => {
+        const vels = { ...a.skuVelocities };
+        vels[sku] = vels[sku] > 0 ? 0 : 1; // toggle: off → default 1 u/s/w
+        return { ...a, skuVelocities: vels };
+      });
+    };
+
     return (
       <div className={`rounded-2xl border bg-card shadow-sm overflow-hidden transition-all ${acct.active ? "border-border" : "border-border/50 opacity-60"}`}>
+        {/* Header */}
         <div className="flex items-center gap-3 px-4 py-3 bg-muted/30 border-b border-border">
           <button onClick={() => update(a => ({ ...a, active: !a.active }))}
             className={`w-5 h-5 rounded flex items-center justify-center text-xs font-bold border transition-colors ${acct.active ? "bg-emerald-500 border-emerald-500 text-white" : "bg-white border-gray-300 text-transparent"}`}>
@@ -215,12 +236,13 @@ export function SimulatorTab({ baseForecast, dbSkuByMonth }: {
           </button>
           {isEditing ? (
             <input value={acct.name} onChange={e => update(a => ({ ...a, name: e.target.value }))}
-              className="flex-1 bg-white border border-border rounded px-2 py-1 text-sm font-semibold" placeholder="Account name" autoFocus />
+              className="flex-1 bg-white border border-border rounded px-2 py-1 text-sm font-semibold" placeholder="Account name (e.g. Publix)" autoFocus />
           ) : (
             <span className="flex-1 text-sm font-semibold" style={{ color: "#1C2340" }}>{acct.name || "New Account"}</span>
           )}
-          <span className="text-xs text-muted-foreground font-mono">+{totalAddedCases.toLocaleString()} cases</span>
-          <span className="text-xs text-muted-foreground font-mono">+${Math.round(totalAddedCases * PRICE_PER_CASE / 1000)}K</span>
+          <span className="text-xs text-muted-foreground">{acct.storeCount} stores</span>
+          <span className="text-xs font-mono" style={{ color: "#A3224A" }}>+{totalAddedCases.toLocaleString()} cases</span>
+          <span className="text-xs font-mono text-muted-foreground">+${Math.round(totalAddedCases * PRICE_PER_CASE / 1000)}K</span>
           <button onClick={() => setEditingId(isEditing ? null : acct.id)}
             className="text-xs px-2 py-1 rounded border border-border hover:bg-muted transition-colors">
             {isEditing ? "Done" : "Edit"}
@@ -228,50 +250,87 @@ export function SimulatorTab({ baseForecast, dbSkuByMonth }: {
           <button onClick={() => updateSim(s => ({ ...s, accounts: s.accounts.filter(a => a.id !== acct.id) }))}
             className="text-xs px-2 py-1 rounded border border-red-200 text-red-500 hover:bg-red-50 transition-colors">✕</button>
         </div>
+
+        {/* Collapsed summary */}
+        {!isEditing && selectedSkus.length > 0 && (
+          <div className="px-4 py-2 flex gap-2 flex-wrap">
+            {selectedSkus.map(sku => (
+              <span key={sku} className="inline-flex items-center gap-1 text-[10px] font-semibold rounded-full px-2 py-0.5 border border-border">
+                <span className="w-2 h-2 rounded-sm" style={{ backgroundColor: SKU_COLORS[sku] }} />
+                {sku}: {acct.skuVelocities[sku]} u/s/w → {skuCasesPerMonth(acct.storeCount, acct.skuVelocities[sku]).toLocaleString()} cases/mo
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* Editor */}
         {isEditing && (
           <div className="p-4 space-y-4">
-            <div className="flex items-center gap-4">
-              <label className="text-xs font-semibold text-muted-foreground">Entry month</label>
-              <select value={acct.entryMonth} onChange={e => update(a => ({ ...a, entryMonth: e.target.value }))}
-                className="text-xs border border-border rounded px-2 py-1 bg-white">
-                {MONTHS_LABELS.map(m => <option key={m} value={m}>{m}</option>)}
-              </select>
-            </div>
-            {acct.stores.map((store, si) => (
-              <div key={si} className="rounded-xl border border-border/60 p-3 space-y-2 bg-muted/10">
-                <div className="flex items-center gap-2">
-                  <input value={store.name} onChange={e => update(a => {
-                    const stores = [...a.stores]; stores[si] = { ...stores[si], name: e.target.value }; return { ...a, stores };
-                  })} className="text-xs font-semibold bg-white border border-border rounded px-2 py-1 w-40" placeholder="Store/chain name" />
-                  {acct.stores.length > 1 && (
-                    <button onClick={() => update(a => ({ ...a, stores: a.stores.filter((_, i) => i !== si) }))}
-                      className="text-xs text-red-400 hover:text-red-600">Remove</button>
-                  )}
-                </div>
-                <div className="grid grid-cols-6 gap-2">
-                  {SKUS.map(sku => (
-                    <div key={sku} className="flex flex-col items-center gap-0.5">
-                      <span className="text-[10px] font-semibold" style={{ color: SKU_COLORS[sku] }}>{sku}</span>
-                      <input type="number" step="0.1" min="0"
-                        value={store.skuVelocities[sku] ?? 0}
-                        onChange={e => update(a => {
-                          const stores = [...a.stores];
-                          const vels = { ...stores[si].skuVelocities, [sku]: parseFloat(e.target.value) || 0 };
-                          stores[si] = { ...stores[si], skuVelocities: vels };
-                          return { ...a, stores };
-                        })}
-                        className="w-full text-center text-xs font-mono border border-border rounded px-1 py-1 bg-white"
-                        title={`${sku} velocity (units/store/week)`} />
-                      <span className="text-[9px] text-muted-foreground">u/s/w</span>
-                    </div>
-                  ))}
-                </div>
+            <div className="flex items-center gap-6 flex-wrap">
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-semibold text-muted-foreground">Stores</label>
+                <input type="number" min="0" value={acct.storeCount}
+                  onChange={e => update(a => ({ ...a, storeCount: parseInt(e.target.value) || 0 }))}
+                  className="w-24 text-sm font-mono border border-border rounded px-2 py-1 bg-white" placeholder="100" />
               </div>
-            ))}
-            <button onClick={() => update(a => ({ ...a, stores: [...a.stores, blankStore()] }))}
-              className="text-xs px-3 py-1.5 rounded-lg border border-dashed border-border text-muted-foreground hover:border-primary hover:text-primary transition-colors">
-              + Add store / chain
-            </button>
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-semibold text-muted-foreground">Entry month</label>
+                <select value={acct.entryMonth} onChange={e => update(a => ({ ...a, entryMonth: e.target.value }))}
+                  className="text-xs border border-border rounded px-2 py-1 bg-white">
+                  {MONTHS_LABELS.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
+            </div>
+
+            {/* SKU selector + velocity */}
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground mb-2">SKUs & Velocity (units/store/week)</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                {SKUS.map(sku => {
+                  const vel = acct.skuVelocities[sku] ?? 0;
+                  const isOn = vel > 0;
+                  const casesMonth = skuCasesPerMonth(acct.storeCount, vel);
+                  return (
+                    <div key={sku}
+                      className={`flex items-center gap-2 rounded-lg border px-3 py-2 transition-colors ${isOn ? "border-border bg-white" : "border-border/40 bg-muted/20"}`}>
+                      <button onClick={() => toggleSku(sku)}
+                        className={`w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold border transition-colors ${isOn ? "text-white" : "bg-white border-gray-300 text-transparent"}`}
+                        style={isOn ? { backgroundColor: SKU_COLORS[sku], borderColor: SKU_COLORS[sku] } : {}}>
+                        ✓
+                      </button>
+                      <span className="text-xs font-bold w-12" style={{ color: SKU_COLORS[sku] }}>{sku}</span>
+                      {isOn ? (
+                        <div className="flex items-center gap-2 flex-1">
+                          <input type="number" step="0.1" min="0.1" value={vel}
+                            onChange={e => update(a => ({
+                              ...a, skuVelocities: { ...a.skuVelocities, [sku]: Math.max(0, parseFloat(e.target.value) || 0) }
+                            }))}
+                            className="w-16 text-center text-xs font-mono border border-border rounded px-1 py-1 bg-white" />
+                          <span className="text-[10px] text-muted-foreground">u/s/w</span>
+                          <span className="text-[10px] text-muted-foreground ml-auto">→</span>
+                          <span className="text-xs font-mono font-semibold" style={{ color: "#1C2340" }}>{casesMonth.toLocaleString()}</span>
+                          <span className="text-[10px] text-muted-foreground">cases/mo</span>
+                        </div>
+                      ) : (
+                        <span className="text-[10px] text-muted-foreground">off</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Quick totals */}
+            {selectedSkus.length > 0 && acct.storeCount > 0 && (
+              <div className="rounded-lg bg-muted/30 border border-border/50 px-4 py-2 text-xs">
+                <span className="font-semibold" style={{ color: "#1C2340" }}>
+                  Total at full ramp: {selectedSkus.reduce((s, sku) => s + skuCasesPerMonth(acct.storeCount, acct.skuVelocities[sku]), 0).toLocaleString()} cases/month
+                </span>
+                <span className="text-muted-foreground ml-3">
+                  ≈ ${Math.round(selectedSkus.reduce((s, sku) => s + skuCasesPerMonth(acct.storeCount, acct.skuVelocities[sku]), 0) * PRICE_PER_CASE / 1000)}K/mo revenue
+                </span>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -300,6 +359,33 @@ export function SimulatorTab({ baseForecast, dbSkuByMonth }: {
         <br />Velocity = units/store/week · Ramp: 40% M1, 70% M2, 100% M3+
       </div>
 
+      {/* Accounts list — ABOVE charts so you edit first, then see impact */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-bold" style={{ color: "#1C2340" }}>Simulated Accounts ({sim.accounts.length})</h3>
+          <div className="flex gap-2">
+            {sim.accounts.length > 0 && (
+              <button onClick={() => { if (confirm("Clear all simulated accounts?")) setSim({ accounts: [] }); }}
+                className="text-xs px-3 py-1.5 rounded-lg border border-red-200 text-red-500 hover:bg-red-50 transition-colors">
+                Clear all
+              </button>
+            )}
+            <button onClick={() => { const a = blankAccount(); updateSim(s => ({ ...s, accounts: [...s.accounts, a] })); setEditingId(a.id); }}
+              className="text-xs px-3 py-1.5 rounded-lg text-white font-semibold shadow-sm hover:opacity-90 transition-opacity"
+              style={{ backgroundColor: "#A3224A" }}>
+              + New Account
+            </button>
+          </div>
+        </div>
+        {sim.accounts.length === 0 && (
+          <div className="rounded-2xl border border-dashed border-border bg-muted/20 p-8 text-center">
+            <p className="text-sm text-muted-foreground">No simulated accounts yet.</p>
+            <p className="text-xs text-muted-foreground mt-1">Click <strong>+ New Account</strong> to model a new retail account.</p>
+          </div>
+        )}
+        {sim.accounts.map(acct => <AccountCard key={acct.id} acct={acct} />)}
+      </div>
+
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
@@ -312,7 +398,7 @@ export function SimulatorTab({ baseForecast, dbSkuByMonth }: {
         </div>
       </div>
 
-      {/* ── SKU × Month table (like By SKU tab) ── */}
+      {/* SKU × Month table */}
       <div className="rounded-2xl border border-border bg-card shadow-sm">
         <div className="px-5 py-3 border-b border-border flex items-center gap-3">
           <h3 className="text-sm font-bold" style={{ color: "#1C2340" }}>Combined Forecast by SKU</h3>
@@ -368,33 +454,6 @@ export function SimulatorTab({ baseForecast, dbSkuByMonth }: {
             </tbody>
           </table>
         </div>
-      </div>
-
-      {/* Accounts list */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-bold" style={{ color: "#1C2340" }}>Simulated Accounts ({sim.accounts.length})</h3>
-          <div className="flex gap-2">
-            {sim.accounts.length > 0 && (
-              <button onClick={() => { if (confirm("Clear all simulated accounts?")) setSim({ accounts: [] }); }}
-                className="text-xs px-3 py-1.5 rounded-lg border border-red-200 text-red-500 hover:bg-red-50 transition-colors">
-                Clear all
-              </button>
-            )}
-            <button onClick={() => updateSim(s => ({ ...s, accounts: [...s.accounts, blankAccount()] }))}
-              className="text-xs px-3 py-1.5 rounded-lg text-white font-semibold shadow-sm hover:opacity-90 transition-opacity"
-              style={{ backgroundColor: "#A3224A" }}>
-              + New Account
-            </button>
-          </div>
-        </div>
-        {sim.accounts.length === 0 && (
-          <div className="rounded-2xl border border-dashed border-border bg-muted/20 p-8 text-center">
-            <p className="text-sm text-muted-foreground">No simulated accounts yet.</p>
-            <p className="text-xs text-muted-foreground mt-1">Click <strong>+ New Account</strong> to model a new retail account entering the portfolio.</p>
-          </div>
-        )}
-        {sim.accounts.map(acct => <AccountCard key={acct.id} acct={acct} />)}
       </div>
     </div>
   );
