@@ -498,7 +498,7 @@ function SKUTab({forecast,newSkus,mixOverrides,mixOverrideActive,committedCount,
 }) {
   const SKU_COLORS: Record<string,string> = {
     XD:"#1C2340",PW:"#A3224A",HM:"#3B82F6",WM:"#10B981",WD:"#F59E0B",Matcha:"#8B5CF6",
-    DS:"#EC4899",CS:"#F97316",GR:"#14B8A6",GS:"#A855F7",
+    DS:"#EC4899",VS:"#FB7185",CS:"#F97316",GR:"#14B8A6",GS:"#A855F7",
   };
   const SKUS = [...EXTENDED_SKUS];
   const LEGACY_SKUS = new Set(["XD","PW","HM","WM","WD","Matcha"]);
