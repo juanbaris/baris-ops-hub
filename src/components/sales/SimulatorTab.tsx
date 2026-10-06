@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback, Fragment } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { EXTENDED_SKUS } from "@/lib/sales-database";
 import { PRICE_PER_CASE, WEEKS_PER_MONTH, UNITS_PER_CASE, FORECAST_MONTHS } from "@/lib/sales-forecast";
 
@@ -35,27 +35,26 @@ function blankAccount(): SimAccount {
   return { id: uid(), name: "", stores: [blankStore()], entryMonth: MONTHS_LABELS[0], active: true };
 }
 
-// Cases a single store adds per month for a sku
 function storeCases(vel: number): number {
   if (vel <= 0) return 0;
   return Math.round(vel * WEEKS_PER_MONTH / UNITS_PER_CASE);
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
-export function SimulatorTab({ baseForecast }: {
+export function SimulatorTab({ baseForecast, dbSkuByMonth }: {
   baseForecast: { label: string; totalCases: number }[];
+  dbSkuByMonth?: Record<string, Record<string, number>>;
 }) {
   const [sim, setSim] = useState<SimState>(loadSim);
   const [editingId, setEditingId] = useState<string | null>(null);
   const skuChartRef = useRef<HTMLCanvasElement>(null);
   const revChartRef = useRef<HTMLCanvasElement>(null);
 
-  // Persist on change
   useEffect(() => { saveSim(sim); }, [sim]);
 
   const updateSim = useCallback((fn: (s: SimState) => SimState) => setSim(prev => fn(prev)), []);
 
-  // ── Compute incremental cases by month × sku from sim accounts ──
+  // ── Sim incremental cases by month × sku ──
   const { simBySkuMonth, simTotalByMonth } = useMemo(() => {
     const bySkuMonth: Record<string, number[]> = {};
     SKUS.forEach(sku => bySkuMonth[sku] = new Array(MONTHS_LABELS.length).fill(0));
@@ -71,7 +70,6 @@ export function SimulatorTab({ baseForecast }: {
           if (vel <= 0) continue;
           const cases = storeCases(vel);
           for (let mi = entryIdx; mi < MONTHS_LABELS.length; mi++) {
-            // Ramp: 40% first month, 70% second, 100% after
             const monthsIn = mi - entryIdx;
             const ramp = monthsIn === 0 ? 0.4 : monthsIn === 1 ? 0.7 : 1.0;
             const adj = Math.round(cases * ramp);
@@ -84,18 +82,32 @@ export function SimulatorTab({ baseForecast }: {
     return { simBySkuMonth: bySkuMonth, simTotalByMonth: totalByMonth };
   }, [sim]);
 
-  // ── Base forecast by month (from the By SKU tab data) ──
+  // ── Base by month ──
   const baseTotalByMonth = useMemo(() =>
-    MONTHS_LABELS.map(label => {
-      const row = baseForecast.find(f => f.label === label);
-      return row?.totalCases ?? 0;
-    }), [baseForecast]);
+    MONTHS_LABELS.map(label => baseForecast.find(f => f.label === label)?.totalCases ?? 0), [baseForecast]);
 
-  // Combined totals
+  // ── Base by SKU by month (from promo calendar / formula) ──
+  const baseBySkuMonth = useMemo(() => {
+    const out: Record<string, number[]> = {};
+    SKUS.forEach(sku => {
+      out[sku] = MONTHS_LABELS.map(label => Math.round(dbSkuByMonth?.[label]?.[sku] ?? 0));
+    });
+    return out;
+  }, [dbSkuByMonth]);
+
+  // ── Combined (base + sim) by SKU by month ──
+  const combinedBySkuMonth = useMemo(() => {
+    const out: Record<string, number[]> = {};
+    SKUS.forEach(sku => {
+      out[sku] = MONTHS_LABELS.map((_, i) => (baseBySkuMonth[sku]?.[i] ?? 0) + (simBySkuMonth[sku]?.[i] ?? 0));
+    });
+    return out;
+  }, [baseBySkuMonth, simBySkuMonth]);
+
   const combinedTotalByMonth = useMemo(() =>
     baseTotalByMonth.map((b, i) => b + simTotalByMonth[i]), [baseTotalByMonth, simTotalByMonth]);
 
-  // Revenue = cases × PRICE_PER_CASE
+  // Revenue
   const baseRevByMonth = useMemo(() => baseTotalByMonth.map(c => c * PRICE_PER_CASE), [baseTotalByMonth]);
   const combinedRevByMonth = useMemo(() => combinedTotalByMonth.map(c => c * PRICE_PER_CASE), [combinedTotalByMonth]);
   const simRevByMonth = useMemo(() => simTotalByMonth.map(c => c * PRICE_PER_CASE), [simTotalByMonth]);
@@ -105,8 +117,6 @@ export function SimulatorTab({ baseForecast }: {
     if (!skuChartRef.current || !window.Chart) return;
     const existing = (skuChartRef.current as any)._chart;
     if (existing) existing.destroy();
-
-    // Stacked bar: base cases + sim delta by sku
     const datasets = [
       { label: "Base forecast", data: baseTotalByMonth, backgroundColor: "rgba(28,35,64,0.35)", stack: "main", borderRadius: 2 },
       ...SKUS.filter(sku => simBySkuMonth[sku].some(v => v > 0)).map(sku => ({
@@ -156,12 +166,20 @@ export function SimulatorTab({ baseForecast }: {
     return () => chart.destroy();
   }, [baseRevByMonth, simRevByMonth, combinedRevByMonth]);
 
-  // ── Totals for summary cards ──
+  // ── Summary totals ──
   const totalSimCases = simTotalByMonth.reduce((a, b) => a + b, 0);
-  const totalSimRev = totalSimCases * PRICE_PER_CASE;
   const totalBaseCases = baseTotalByMonth.reduce((a, b) => a + b, 0);
   const totalCombinedCases = totalBaseCases + totalSimCases;
   const totalCombinedRev = totalCombinedCases * PRICE_PER_CASE;
+
+  // ── SKU table data ──
+  const skuTableData = useMemo(() => SKUS.map(sku => {
+    const months = combinedBySkuMonth[sku];
+    const total = months.reduce((a, b) => a + b, 0);
+    return { sku, months, total };
+  }), [combinedBySkuMonth]);
+  const grandTotal = combinedTotalByMonth.reduce((a, b) => a + b, 0);
+  const hasSim = totalSimCases > 0;
 
   // ── Account editor ──
   function AccountCard({ acct }: { acct: SimAccount }) {
@@ -291,6 +309,64 @@ export function SimulatorTab({ baseForecast }: {
         <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
           <h3 className="text-sm font-bold mb-3" style={{ color: "#1C2340" }}>Monthly Revenue ($)</h3>
           <div style={{ height: 320 }}><canvas ref={revChartRef} /></div>
+        </div>
+      </div>
+
+      {/* ── SKU × Month table (like By SKU tab) ── */}
+      <div className="rounded-2xl border border-border bg-card shadow-sm">
+        <div className="px-5 py-3 border-b border-border flex items-center gap-3">
+          <h3 className="text-sm font-bold" style={{ color: "#1C2340" }}>Combined Forecast by SKU</h3>
+          {hasSim && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: "rgba(163,34,74,0.1)", color: "#A3224A" }}>includes sim Δ</span>}
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs min-w-max">
+            <thead>
+              <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/40 border-b border-border">
+                <th className="px-4 py-2.5 text-left sticky left-0 bg-muted/40 z-10">SKU</th>
+                <th className="px-4 py-2.5 text-center">Mix</th>
+                {MONTHS_LABELS.map(m => (
+                  <th key={m} className="px-3 py-2.5 text-right w-16">{m.slice(0, 3).toUpperCase()} {m.slice(-2)}</th>
+                ))}
+                <th className="px-4 py-2.5 text-right font-bold">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {skuTableData.map(s => {
+                const hasSimForSku = simBySkuMonth[s.sku]?.some(v => v > 0);
+                return (
+                  <tr key={s.sku} className="border-t border-border/60 hover:bg-muted/20">
+                    <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card z-10">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-sm" style={{ backgroundColor: SKU_COLORS[s.sku] }} />
+                        {s.sku}
+                        {hasSimForSku && <span className="text-[9px] text-amber-600">+sim</span>}
+                      </div>
+                    </td>
+                    <td className="px-4 py-1.5 text-center text-muted-foreground">{grandTotal > 0 ? Math.round(s.total / grandTotal * 100) : 0}%</td>
+                    {s.months.map((v, i) => {
+                      const simV = simBySkuMonth[s.sku]?.[i] ?? 0;
+                      return (
+                        <td key={i} className={`px-3 py-1.5 text-right font-mono ${simV > 0 ? "font-semibold" : ""}`}
+                          style={simV > 0 ? { color: "#A3224A" } : undefined}
+                          title={simV > 0 ? `Base: ${v - simV} + Sim: ${simV}` : undefined}>
+                          {v > 0 ? v.toLocaleString() : "0"}
+                        </td>
+                      );
+                    })}
+                    <td className="px-4 py-1.5 text-right font-mono font-bold">{s.total.toLocaleString()}</td>
+                  </tr>
+                );
+              })}
+              <tr className="border-t-2 border-border font-bold" style={{ backgroundColor: "#1C2340", color: "#fff" }}>
+                <td className="px-4 py-2 sticky left-0 z-10" style={{ backgroundColor: "#1C2340" }}>TOTAL</td>
+                <td className="px-4 py-2 text-center">100%</td>
+                {combinedTotalByMonth.map((v, i) => (
+                  <td key={i} className="px-3 py-2 text-right font-mono">{v.toLocaleString()}</td>
+                ))}
+                <td className="px-4 py-2 text-right font-mono">{grandTotal.toLocaleString()}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
 
