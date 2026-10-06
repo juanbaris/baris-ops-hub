@@ -29,6 +29,7 @@ import {
   type AccountPnLInputs, type PromoAnalyticsRow, type DiscountRow, type DeductionActual,
 } from "@/lib/sales-database";
 
+import { SimulatorTab } from "@/components/sales/SimulatorTab";
 const DEFAULT_MIX_PCT: Record<string,number> = {XD:30,PW:25,HM:18,WM:12,WD:8,Matcha:7};
 const MIX_SKUS = ["XD","PW","HM","WM","WD","Matcha"];
 const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -60,7 +61,7 @@ const ALL_MONTHS_REAL = [
   "Jul 2028","Aug 2028","Sep 2028","Oct 2028","Nov 2028","Dec 2028",
 ];
 
-type SalesTab = "real"|"resumen"|"detalle"|"sku"|"estacionalidad"|"accounts"|"promocal"|"breakdown";
+type SalesTab = "real"|"resumen"|"detalle"|"sku"|"estacionalidad"|"accounts"|"promocal"|"breakdown"|"simulator";
 declare global { interface Window { Chart: any } }
 
 // ─── Real Monthly Tab (derived from invoiced pipeline) ───────────────────────
@@ -2001,6 +2002,9 @@ function SalesPage() {
     {id:"promocal",label:"Promo Calendar"},
     {id:"breakdown",label:"Sales Breakdown"},
   ];
+  const TABS_TOOLS: {id:SalesTab;label:string}[] = [
+    {id:"simulator",label:"Simulator"},
+  ];
 
   // ── Updated scenario descriptions from Excel budget model (Aug 2026) ────────
   const SCENARIO_INFO = {
@@ -2043,9 +2047,17 @@ function SalesPage() {
             {t.label}
           </button>
         ))}
+        <div className="mx-2 h-5 w-px bg-border self-center flex-shrink-0"/>
+        {TABS_TOOLS.map(t=>(
+          <button key={t.id} onClick={()=>setTab(t.id)}
+            className={`px-4 py-2 text-sm font-semibold whitespace-nowrap border-b-2 transition-colors ${tab===t.id?"border-primary text-primary":"border-transparent text-muted-foreground hover:text-foreground"}`}
+            style={tab===t.id?{borderColor:"#F59E0B",color:"#F59E0B"}:{}}>
+            🧪 {t.label}
+          </button>
+        ))}
         <div className="ml-auto self-center pl-2">
           <ExportButton
-            filename={`BARIS_Sales_${([...TABS_OPERATIONAL, ...TABS_REFERENCE].find(t=>t.id===tab)?.label ?? "Sales").replace(/[^\w]+/g, "_")}`}
+            filename={`BARIS_Sales_${([...TABS_OPERATIONAL, ...TABS_REFERENCE, ...TABS_TOOLS].find(t=>t.id===tab)?.label ?? "Sales").replace(/[^\w]+/g, "_")}`}
             targetRef={contentRef}
           />
         </div>
@@ -2063,6 +2075,7 @@ function SalesPage() {
       {tab==="accounts"      && <AccountsTab accounts={dbAccounts} promoRows={dbPromo} assumptions={assumptions} onAssumptionChange={changeAssumption} loading={dbLoading} onUpdated={refreshAccount} onInserted={addAccounts} onDeleted={removeAccounts}/>}
       {tab==="promocal"      && <PromoCalendarTab rows={dbPromo} accounts={dbAccounts} byAccountMonth={byAccountMonth} loading={dbLoading} onUpdated={refreshPromoRow} onInserted={addPromoRows} onDeleted={removePromoRows}/>}
       {tab==="breakdown"     && <SalesBreakdownTab rows={displayPromo} rawRows={dbPromo} accounts={dbAccounts} assumptions={assumptions} actualBySku={actualBySku} actualByDist={actualByDist} onPromoUpdated={refreshPromoRow} deductionActuals={deductionActuals} onDeductionSaved={saveDeductionLocal} loading={dbLoading}/>}
+      {tab==="simulator"     && <SimulatorTab baseForecast={dbMergedForecast}/>}
       </div>
     </div>
   );
