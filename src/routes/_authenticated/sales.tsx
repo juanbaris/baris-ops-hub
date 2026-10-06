@@ -2075,7 +2075,7 @@ function SalesPage() {
       {tab==="accounts"      && <AccountsTab accounts={dbAccounts} promoRows={dbPromo} assumptions={assumptions} onAssumptionChange={changeAssumption} loading={dbLoading} onUpdated={refreshAccount} onInserted={addAccounts} onDeleted={removeAccounts}/>}
       {tab==="promocal"      && <PromoCalendarTab rows={dbPromo} accounts={dbAccounts} byAccountMonth={byAccountMonth} loading={dbLoading} onUpdated={refreshPromoRow} onInserted={addPromoRows} onDeleted={removePromoRows}/>}
       {tab==="breakdown"     && <SalesBreakdownTab rows={displayPromo} rawRows={dbPromo} accounts={dbAccounts} assumptions={assumptions} actualBySku={actualBySku} actualByDist={actualByDist} onPromoUpdated={refreshPromoRow} deductionActuals={deductionActuals} onDeductionSaved={saveDeductionLocal} loading={dbLoading}/>}
-      {tab==="simulator"     && <SimulatorTab baseForecast={dbMergedForecast}/>}
+      {tab==="simulator"     && <SimulatorTab baseForecast={dbMergedForecast} dbSkuByMonth={dbSkuByMonth}/>}
       </div>
     </div>
   );
