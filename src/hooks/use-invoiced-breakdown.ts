@@ -5,9 +5,9 @@ import { supabase } from "@/integrations/supabase/client";
 // month, broken down by SKU and by distributor. Cases-based (pipeline is in cases).
 // Used by Sales Breakdown to compare forecast vs real.
 
-const SKU_COLS = ["xd", "pw", "hm", "wm", "wd", "matcha", "ds", "cs", "gr", "gs"] as const;
+const SKU_COLS = ["xd", "pw", "hm", "wm", "wd", "matcha", "ds", "vs", "cs", "gr", "gs"] as const;
 const SKU_CODE: Record<string, string> = {
-  xd: "XD", pw: "PW", hm: "HM", wm: "WM", wd: "WD", matcha: "Matcha", ds: "DS", cs: "CS", gr: "GR", gs: "GS",
+  xd: "XD", pw: "PW", hm: "HM", wm: "WM", wd: "WD", matcha: "Matcha", ds: "DS", vs: "VS", cs: "CS", gr: "GR", gs: "GS",
 };
 
 export type ActualBreakdown = {
