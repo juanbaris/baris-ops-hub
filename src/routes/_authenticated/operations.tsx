@@ -5546,7 +5546,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                 <tbody>
                   {rawMatsToShow.map(mat => {
                     const needed = Math.round(neededFiltered[mat] ?? 0);
-                    const stock = Math.round(ipOnHand[mat] ?? 0);  // live from IP Summary
+                    const stock = Math.max(0, Math.round(ipOnHand[mat] ?? 0));  // live from IP Summary, floor 0
                     const ordered = Math.round(ipOrderedFiltered[mat] ?? 0);
                     const poFcst = Math.round(poForecastByMatFiltered[mat] ?? 0);
                     const have = stock + ordered + poFcst;
