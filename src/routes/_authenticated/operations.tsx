@@ -30,11 +30,11 @@ type MoveType = Database["public"]["Enums"]["movement_type"];
 
 // New flavors confirmed for launch — short codes match Sales → By SKU tab (DS, CS, GR, GS).
 // Default to 0 everywhere until real data (item numbers, BOM, movements) is entered.
-const NEW_FIXED_SKUS = ["DS","CS","GR","GS"] as const;
+const NEW_FIXED_SKUS = ["DS","VS","CS","GR","GS"] as const;
 const SKUS = ["XD","PW","HM","WM","WD","Matcha", ...NEW_FIXED_SKUS] as unknown as SKU[];
 const SKU_ITEMS: Record<string, string> = {
   XD:"88021", PW:"77670", HM:"77671", WM:"93562", WD:"23141", Matcha:"77672",
-  DS:"TBD", CS:"TBD", GR:"TBD", GS:"TBD",
+  DS:"TBD", VS:"TBD", CS:"TBD", GR:"TBD", GS:"TBD",
 };
 const WAREHOUSES: Warehouse[] = ["Lineage Newark","Lineage Linden","Cold Chain","Empire","Heinlein","OOE"];
 const FP_CONCEPTS: FPConcept[] = ["Production","Sale","Sample","Damage","Transfer","Free"];
@@ -118,13 +118,13 @@ function ymd(d = new Date()) { return d.toISOString().slice(0,10); }
 // any lookup safely resolves to 0 (Committed/Order-qty for them) until Fulfillment adds real support.
 const SKU_KEYS: Record<string, string> = {
   XD:"xd_cases", PW:"pw_cases", HM:"hm_cases", WM:"wm_cases", WD:"wd_cases", Matcha:"matcha_cases",
-  DS:"__unsupported_sku_col__", CS:"__unsupported_sku_col__",
+  DS:"__unsupported_sku_col__", VS:"__unsupported_sku_col__", CS:"__unsupported_sku_col__",
   GR:"__unsupported_sku_col__", GS:"__unsupported_sku_col__",
 };
 /** Fallback used only until the shared sales forecast is available. */
 const FORECAST_FALLBACK: Record<string, number> = {
   XD:1161, PW:967, HM:696, WM:464, WD:310, Matcha:271,
-  DS:0, CS:0, GR:0, GS:0,
+  DS:0, VS:0, CS:0, GR:0, GS:0,
 };
 
 function stockStatus(available: number, woh: number) {
@@ -2687,11 +2687,11 @@ const UNITS_PER_CASE_BOM = 8;
 const DEFAULT_PROD_COSTS = { tolling_per_unit:0.65, cup_per_unit:0.095, lid_per_unit:0.092, sealer_per_unit:0.030, case_per_case:0.36 };
 
 // ─── Procurement material master + BOM (quantities are PER CASE of 8 units) ───
-const PROC_SKUS: string[] = ["XD","PW","HM","WM","WD","Matcha","DS","CS","GR","GS"];
+const PROC_SKUS: string[] = ["XD","PW","HM","WM","WD","Matcha","DS","VS","CS","GR","GS"];
 const PROC_SKU_LABEL: Record<string,string> = {
   XD:"Extra Dark", PW:"Pistachio & White", HM:"Hazelnut & Milk",
   WM:"White & Milk", WD:"White & Dark", Matcha:"Matcha & White",
-  DS:"Strawberry Vainilla", CS:"Strawberry Caramel", GR:"Raspberry Yogurt", GS:"Strawberry Yogurt",
+  DS:"Strawberry Vainilla", VS:"VS (TBD)", CS:"Strawberry Caramel", GR:"Raspberry Yogurt", GS:"Strawberry Yogurt",
 };
 const RAW_MATS = [
   "IQF Raspberries","Choc Extra Dark (Revere 70%)","Choc Dark (Duluth)","Choc Milk (Valcour)",
@@ -2720,7 +2720,7 @@ const BOM_QTY: Record<string, Record<string, number>> = (()=>{
     Matcha: { "IQF Raspberries":1.159794, "Choc White (Corinthian)":1.363067, "Cocoa Butter":0.025773, "Matcha Powder":0.022680, "Sea Salt":0.003557, "Soy Lecithin":0.002448 },
     // Confirmed new flavors — recipe not finalized yet, starts at 0 (editable in BOM + COGS, or via
     // "Upload new BOM for everyone" once the real recipe is ready).
-    DS: {}, CS: {}, GR: {}, GS: {},
+    DS: {}, VS: {}, CS: {}, GR: {}, GS: {},
   };
   for (const s of PACK_SKUS) {
     b[s] = b[s] || {};
@@ -2778,7 +2778,7 @@ const ING_PACK_SIZES: Record<string,number> = (()=>{
   for (const m of PACK_MATS) o[m] = 1;
   return o;
 })();
-const SKU_MIX_PCT: Record<string,number> = {XD:0.27,PW:0.20,HM:0.19,WM:0.06,WD:0.05,Matcha:0.01,DS:0.08,CS:0.08,GR:0.02,GS:0.02};
+const SKU_MIX_PCT: Record<string,number> = {XD:0.27,PW:0.20,HM:0.19,WM:0.06,WD:0.05,Matcha:0.01,DS:0.08,VS:0.00,CS:0.08,GR:0.02,GS:0.02};
 
 // Maps an IP Summary material name → Procurement material name (to pull current stock from I&P).
 const IP_TO_PROC_MAT: Record<string,string> = {
@@ -3098,7 +3098,7 @@ const DEFAULT_LEAD_WEEKS = 4;
 
 const OPS_SKU_COLORS: Record<string,string> = {
   XD:"#1C2340",PW:"#A3224A",HM:"#3B82F6",WM:"#10B981",WD:"#F59E0B",Matcha:"#8B5CF6",
-  DS:"#EC4899",CS:"#F97316",GR:"#14B8A6",GS:"#A855F7",
+  DS:"#EC4899",VS:"#FB7185",CS:"#F97316",GR:"#14B8A6",GS:"#A855F7",
 };
 
 /** Forecast sales by SKU — mirrors the Sales → By SKU table exactly. */
