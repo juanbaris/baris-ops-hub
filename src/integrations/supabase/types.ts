@@ -164,6 +164,7 @@ export type Database = {
           ship_to_address: string | null
           status: Database["public"]["Enums"]["order_status"]
           updated_at: string
+          vs_cases: number | null
           wd_cases: number | null
           wm_cases: number | null
           xd_cases: number | null
@@ -195,6 +196,7 @@ export type Database = {
           ship_to_address?: string | null
           status?: Database["public"]["Enums"]["order_status"]
           updated_at?: string
+          vs_cases?: number | null
           wd_cases?: number | null
           wm_cases?: number | null
           xd_cases?: number | null
@@ -226,6 +228,7 @@ export type Database = {
           ship_to_address?: string | null
           status?: Database["public"]["Enums"]["order_status"]
           updated_at?: string
+          vs_cases?: number | null
           wd_cases?: number | null
           wm_cases?: number | null
           xd_cases?: number | null
@@ -472,6 +475,33 @@ export type Database = {
           data?: Json
           key?: string
           updated_at?: string
+        }
+        Relationships: []
+      }
+      fp_cogs_assumptions: {
+        Row: {
+          cogs_per_unit: number
+          created_at: string | null
+          id: number
+          quarter: string
+          sku: string
+          updated_at: string | null
+        }
+        Insert: {
+          cogs_per_unit: number
+          created_at?: string | null
+          id?: never
+          quarter: string
+          sku: string
+          updated_at?: string | null
+        }
+        Update: {
+          cogs_per_unit?: number
+          created_at?: string | null
+          id?: never
+          quarter?: string
+          sku?: string
+          updated_at?: string | null
         }
         Relationships: []
       }
