@@ -1294,6 +1294,7 @@ export type Database = {
           sku: Database["public"]["Enums"]["sku"]
           updated_at: string
           warehouse: Database["public"]["Enums"]["warehouse"]
+          wh_lot: string | null
         }
         Insert: {
           cases_produced: number
@@ -1309,6 +1310,7 @@ export type Database = {
           sku: Database["public"]["Enums"]["sku"]
           updated_at?: string
           warehouse?: Database["public"]["Enums"]["warehouse"]
+          wh_lot?: string | null
         }
         Update: {
           cases_produced?: number
@@ -1324,6 +1326,7 @@ export type Database = {
           sku?: Database["public"]["Enums"]["sku"]
           updated_at?: string
           warehouse?: Database["public"]["Enums"]["warehouse"]
+          wh_lot?: string | null
         }
         Relationships: []
       }

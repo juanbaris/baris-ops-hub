@@ -38,16 +38,18 @@ function AccountingPage() {
   const [actuals, setActuals] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
+  const [pnlOverrides, setPnlOverrides] = useState<Record<string, Record<number, number>>>({});
 
   useEffect(() => {
     (async () => {
-      const [fp, ord, bl, lots, ip, act] = await Promise.all([
+      const [fp, ord, bl, lots, ip, act, shared] = await Promise.all([
         supabase.from("fp_movements").select("*").limit(10000),
         supabase.from("customer_orders").select("*").limit(10000),
         supabase.from("fp_stock_baseline").select("*"),
         supabase.from("lot_master").select("*"),
         supabase.from("ip_movements").select("*").limit(10000),
         supabase.from("finance_actuals").select("*").order("period"),
+        supabase.from("finance_shared_inputs").select("key, data"),
       ]);
       setFpMovements(fp.data ?? []);
       setOrders(ord.data ?? []);
@@ -58,6 +60,8 @@ function AccountingPage() {
       const am: Record<string, any> = {};
       (act.data ?? []).forEach((r: any) => { am[r.period] = r; });
       setActuals(am);
+      const ovRow = (shared.data ?? []).find((r: any) => r.key === "pnlOverrides");
+      setPnlOverrides((ovRow?.data ?? {}) as Record<string, Record<number, number>>);
       setLoading(false);
     })();
   }, []);
@@ -205,7 +209,12 @@ function AccountingPage() {
       ) : (
         <>
           <Section title="P&L (Collapsed)" subtitle="Actual months · from Finance">
-            <PNLTab realMonths={realMonths} actuals={actuals} actualOnly={true} />
+            <PNLTab realMonths={realMonths} actuals={actuals} actualOnly={true}
+              pnlOverrides={pnlOverrides}
+              onPnlOverridesSave={(ov) => {
+                setPnlOverrides(ov);
+                supabase.from("finance_shared_inputs").upsert({ key: "pnlOverrides", data: ov, updated_at: new Date().toISOString() }, { onConflict: "key" });
+              }} />
           </Section>
 
           <Section title="FP Stock — actual" subtitle="Current finished-product stock · from Lot Master">
