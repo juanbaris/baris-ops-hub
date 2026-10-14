@@ -1,0 +1,1 @@
+alter table public.production_runs add column if not exists wh_lot text;

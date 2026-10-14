@@ -3204,7 +3204,7 @@ function calcCOGSFull(prices: Record<string,number>, costs: typeof DEFAULT_PROD_
       const factor=(()=>{const s=(matScrap[mat]??0)/100;const o=(matOverfill[mat]??0)/100;return (s<1?1/(1-s):1)*(1+o);})();
       const cost=qty*price*factor;   // per case
       if (isRawMat(mat) || !mat.startsWith("Cup") && !mat.startsWith("Lid") && !mat.startsWith("Sealer") && !mat.startsWith("Master")) {
-        if (mat==="IQF Raspberries") rasp+=cost;
+        if (mat === "IQF Raspberries" || mat === "Strawberry") rasp += cost;
         else if (mat.startsWith("Choc")) choc+=cost;
         else other+=cost;
       } else {
@@ -4803,7 +4803,15 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                           className={`${inp} w-20 text-right`}/>
                       </td>
                       <td className="px-4 py-1.5 text-right font-mono font-bold" style={{color:"#1C2340"}}>
-                        {(()=>{if(!raw) return "—"; const t=dynamicProcSkus.reduce((s,sku)=>s+(bomQty[sku]?.[mat]??0),0);return t>0?t.toFixed(3):"—";})()}
+                        {(()=>{
+                          const t = dynamicProcSkus.reduce((s, sku) => s + (bomQty[sku]?.[mat] ?? 0), 0);
+                          if (!t) return "—";
+                          if (!raw) {
+                            const cost = t * (ingPrices[mat] ?? 0);
+                            return cost > 0 ? `$${cost.toFixed(2)}` : "—";
+                          }
+                          return t.toFixed(3);
+                        })()}
                       </td>
                     </tr>
                   );
@@ -4855,7 +4863,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
               <thead>
                 <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
                   <th className="px-4 py-2.5 text-left">SKU</th>
-                  <th className="px-4 py-2.5 text-right">Rasp</th>
+                  <th className="px-4 py-2.5 text-right">Berry</th>
                   <th className="px-4 py-2.5 text-right">Choc/Flavor</th>
                   <th className="px-4 py-2.5 text-right">Otros ing.</th>
                   <th className="px-4 py-2.5 text-right">Packaging</th>
