@@ -654,16 +654,23 @@ function LineageModal({ order, onClose, onSent }: { order: Order; onClose: () =>
           📋 Before sending, attach the <strong>BARIS Packing Slip</strong> — open the PO detail (click PO# in Pipeline), go to Attachments, and find <strong>BARIS_PS_{order.po_number}</strong>. Open it and attach to the email.
         </div>
         <div className="flex gap-2">
-          <button onClick={copyAndMark} className="flex-1 rounded-lg py-2 text-sm font-semibold text-white" style={{ backgroundColor: "#A3224A" }}>
-            {copied ? "✓ Copiado — Status → Shipment" : "📋 Copy Email & Mark as Shipment"}
-          </button>
-          {copied && <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm font-semibold border border-border hover:bg-muted">
+          <a
+            href={gmailUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={markShipment}
+            className="flex-1 rounded-lg py-2 text-sm font-semibold text-white text-center"
+            style={{ backgroundColor: "#A3224A" }}
+          >
+            {sent ? "✓ Gmail abierto — Status → Shipment" : "✉️ Open Gmail & Mark as Shipment"}
+          </a>
+          {sent && <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm font-semibold border border-border hover:bg-muted">
             Cerrar
           </button>}
         </div>
-        {copied && (
+        {sent && (
           <p className="mt-2 text-[11px] text-center text-muted-foreground">
-            Abrí Gmail → Compose → pegá el email (Ctrl+V). Ya se copió To, CC, Subject y Body.
+            Se abrió Gmail en una pestaña nueva con To, CC, Subject y Body cargados. Adjuntá el Packing Slip y enviá.
           </p>
         )}
       </div>
