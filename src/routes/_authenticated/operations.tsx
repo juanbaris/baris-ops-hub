@@ -38,7 +38,7 @@ const SKU_ITEMS: Record<string, string> = {
 };
 const WAREHOUSES: Warehouse[] = ["Lineage Newark","Lineage Linden","Cold Chain","Empire","Heinlein","OOE"];
 const FP_CONCEPTS: FPConcept[] = ["Production","Sale","Sample","Damage","Transfer","Free"];
-const IP_CONCEPTS: IPConcept[] = ["Procurement","Consumption","Damage","Transfer"];
+const IP_CONCEPTS: IPConcept[] = ["Procurement","Consumption","Damage","Transfer","Inv Adjustment","Inventory","Work in Progress","Pistachio Production"];
 const FACILITIES: Facility[] = ["Heinlein","Empire","OOE"];
 const FULL_TRUCK = 6630;
 const LOT_BASELINE_DATE = "2000-01-01"; // Lot Master fixed as of this date; later FP movements adjust each lot
@@ -1061,10 +1061,10 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <button onClick={() => {
-          const head = ["Date","Type","Material","Qty","Unit","Vendor","Lot","MOC","Warehouse","Total ($)","Shipping ($)","Other ($)","COGS/unit","Comment","Received","Paid"];
+          const head = ["Date","Type","Concept","Material","Qty","Unit","Vendor","Lot","MOC","Warehouse","Total ($)","Shipping ($)","Other ($)","COGS/unit","Comment","Received","Paid"];
           const rows = filtered.map(r => {
             const rr = r as any;
-            return [r.movement_date, r.type, r.material, r.quantity, r.unit, r.vendor ?? "", r.lot_number ?? "", rr.moc ?? "", rr.warehouse ?? "", rr.total_price ?? "", rr.shipping_price ?? "", rr.other_costs ?? "", rr.cogs_per_unit ?? "", r.notes ?? "", rr.received ? "Yes" : "No", rr.paid ? "Yes" : "No"];
+            return [r.movement_date, r.type, r.concept ?? "", r.material, r.quantity, r.unit, r.vendor ?? "", r.lot_number ?? "", rr.moc ?? "", rr.warehouse ?? "", rr.total_price ?? "", rr.shipping_price ?? "", rr.other_costs ?? "", rr.cogs_per_unit ?? "", r.notes ?? "", rr.received ? "Yes" : "No", rr.paid ? "Yes" : "No"];
           });
           const csv = [head, ...rows].map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
           const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
@@ -1081,6 +1081,7 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
             <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
               <SortTh col="date" label="Date" />
               <th className="px-3 py-2.5 text-left">Type</th>
+              <th className="px-3 py-2.5 text-left">Concept</th>
               <SortTh col="material" label="Material" />
               <SortTh col="qty" label="Qty" />
               <th className="px-3 py-2.5 text-left">Unit</th>
@@ -1098,9 +1099,9 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
           </thead>
           <tbody>
             {loading
-              ? <tr><td colSpan={15} className="p-8 text-center text-muted-foreground">Loading…</td></tr>
+              ? <tr><td colSpan={16} className="p-8 text-center text-muted-foreground">Loading…</td></tr>
               : filtered.length === 0
-              ? <tr><td colSpan={15} className="p-8 text-center text-muted-foreground">No movements match filters</td></tr>
+              ? <tr><td colSpan={16} className="p-8 text-center text-muted-foreground">No movements match filters</td></tr>
               : filtered.map(r => {
                 const rr = r as any;
                 const recv = dateIndicator(rr.estimated_receive_date, rr.received ?? false, rr.actual_receive_date);
@@ -1114,6 +1115,7 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
                         {r.type}
                       </span>
                     </td>
+                    <td className="px-3 py-1.5 text-xs text-muted-foreground">{r.concept ?? "—"}</td>
                     <td className="px-3 py-1.5 font-semibold" style={{ color:"#1C2340" }}>{r.material}</td>
                     <td className="px-3 py-1.5 text-right font-mono">{Number(r.quantity).toLocaleString()}</td>
                     <td className="px-3 py-1.5 text-muted-foreground">{r.unit}</td>
@@ -1177,9 +1179,9 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
             return (
               <tfoot>
                 <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
-                  <td className="px-3 py-2 text-xs font-semibold" colSpan={8}>TOTAL ({filtered.length} mov.)</td>
+                  <td className="px-3 py-2 text-xs font-semibold" colSpan={9}>TOTAL ({filtered.length} mov.)</td>
                   <td className="px-3 py-2 text-right font-mono font-bold text-emerald-400">${Math.round(totCost).toLocaleString()}</td>
-                  <td colSpan={4}/>
+                  <td colSpan={5}/>
                 </tr>
               </tfoot>
             );
@@ -1208,6 +1210,8 @@ export function IPSummaryTab({ movements }: { movements: IPRow[] }) {
 
     for (const r of movements) {
       const rr = r as any;
+      // Only count movements that have been received (physically arrived)
+      if (!(rr.received)) continue;
       const qty   = Number(r.quantity);
       const delta = r.type === "In" ? qty : -qty;
       const tp    = Math.abs(Number(rr.total_price ?? 0));
@@ -1430,7 +1434,7 @@ export function IPSummaryTab({ movements }: { movements: IPRow[] }) {
       <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
         <div className="px-5 py-3 border-b border-border bg-muted/30">
           <p className="text-sm font-bold" style={{ color:"#1C2340" }}>Stock por material y lote</p>
-          <p className="text-xs text-muted-foreground">Saldo neto de todos los movimientos · solo lotes con unidades &gt; 0</p>
+          <p className="text-xs text-muted-foreground">Saldo neto de movimientos recibidos · solo lotes con unidades &gt; 0</p>
         </div>
         <table className="w-full text-xs min-w-max">
           <thead>
@@ -3367,7 +3371,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
       const received = (m as any).received ?? false;
       if (m.type === "In") {
         if (received) stock[proc] = (stock[proc] ?? 0) + q;   // arrived → counts as stock
-        else ordered[proc] = (ordered[proc] ?? 0) + q;        // on the way → "Pedido"
+        else if (m.concept === "Procurement") ordered[proc] = (ordered[proc] ?? 0) + q;  // only Procurement on the way counts as "Ordered"
       } else {
         stock[proc] = (stock[proc] ?? 0) - q;                 // consumption reduces stock
       }
@@ -5483,6 +5487,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
           if (!proc) continue;
           const received = (m as any).received ?? false;
           if (m.type !== "In" || received) continue;
+          if (m.concept !== "Procurement") continue;        // only Procurement counts as ordered
           const q = Number(m.quantity || 0);
           if (q <= 0) continue;
           // Use estimated_receive_date if available, else movement_date
