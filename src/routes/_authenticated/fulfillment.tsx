@@ -599,18 +599,19 @@ function LineageModal({ order, onClose, onSent }: { order: Order; onClose: () =>
     ? `Hi team,\n\nPlease see attached a new order for ${order.customer}\nKeHe will do the pickup at Lineage (FOB). Please prepare the order accordingly.\n\nThanks!\nJuan`
     : `Hi team,\n\nPlease see attached a new order for ${order.customer}\nWe would need Lineage to make the delivery.\n\nThanks!\nJuan`;
 
-  async function openMail() {
-    const mailtoUrl = `mailto:${to}?cc=${encodeURIComponent(cc)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    const a = document.createElement("a");
-    a.href = mailtoUrl;
-    a.target = "_blank";
-    a.rel = "noopener noreferrer";
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => document.body.removeChild(a), 100);
+  const [copied, setCopied] = useState(false);
+
+  async function copyAndMark() {
+    const fullEmail = `To: ${to}\nCC: ${cc}\nSubject: ${subject}\n\n${body}`;
+    try { await navigator.clipboard.writeText(fullEmail); } catch { /* fallback: select-copy */ }
+    setCopied(true);
     const { data, error } = await supabase.from("customer_orders").update({ status: "Shipment" }).eq("id", order.id).select().single();
-    if (!error && data) { onSent(data); toast.success("Status updated to Shipment"); }
-    onClose();
+    if (!error && data) { onSent(data); toast.success("Email copiado ✓ Status → Shipment"); }
+    else toast.success("Email copiado al clipboard ✓");
+  }
+
+  async function copyField(text: string) {
+    try { await navigator.clipboard.writeText(text); toast.success("Copiado ✓"); } catch { toast.error("No se pudo copiar"); }
   }
 
   return (
@@ -619,19 +620,43 @@ function LineageModal({ order, onClose, onSent }: { order: Order; onClose: () =>
         <button onClick={onClose} className="absolute right-4 top-4 text-muted-foreground hover:text-foreground">✕</button>
         <h2 className="text-base font-bold mb-1" style={{ color: "#1C2340" }}>Send to Lineage</h2>
         <p className="text-xs text-muted-foreground mb-4">PO #{order.po_number} · {order.customer}</p>
-        <div className="rounded-xl border border-border bg-muted/30 p-4 text-sm font-mono whitespace-pre-wrap mb-4 text-xs leading-relaxed">
-          <div className="text-muted-foreground mb-1"><span className="font-semibold">To:</span> {to}</div>
-          <div className="text-muted-foreground mb-1"><span className="font-semibold">CC:</span> {cc}</div>
-          <div className="text-muted-foreground mb-3"><span className="font-semibold">Subject:</span> {subject}</div>
-          <div className="text-foreground">{body}</div>
+        <div className="rounded-xl border border-border bg-muted/30 p-4 text-xs leading-relaxed mb-4 space-y-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-muted-foreground font-mono"><span className="font-semibold">To:</span> {to}</div>
+            <button onClick={() => copyField(to)} className="rounded px-2 py-0.5 text-[10px] font-semibold border border-border hover:bg-muted flex-shrink-0">Copy</button>
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-muted-foreground font-mono truncate"><span className="font-semibold">CC:</span> {cc}</div>
+            <button onClick={() => copyField(cc)} className="rounded px-2 py-0.5 text-[10px] font-semibold border border-border hover:bg-muted flex-shrink-0">Copy</button>
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-muted-foreground font-mono"><span className="font-semibold">Subject:</span> {subject}</div>
+            <button onClick={() => copyField(subject)} className="rounded px-2 py-0.5 text-[10px] font-semibold border border-border hover:bg-muted flex-shrink-0">Copy</button>
+          </div>
+          <div className="border-t border-border pt-2 mt-2">
+            <div className="flex items-start justify-between gap-2">
+              <div className="text-foreground font-mono whitespace-pre-wrap">{body}</div>
+              <button onClick={() => copyField(body)} className="rounded px-2 py-0.5 text-[10px] font-semibold border border-border hover:bg-muted flex-shrink-0 mt-0.5">Copy</button>
+            </div>
+          </div>
         </div>
         {isKehe && <div className="mb-3 rounded-lg bg-orange-50 border border-orange-200 px-3 py-2 text-xs text-orange-700 font-medium">KeHe → FOB pickup at Lineage</div>}
         <div className="mb-3 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-700">
           📋 Before sending, attach the <strong>BARIS Packing Slip</strong> — open the PO detail (click PO# in Pipeline), go to Attachments, and find <strong>BARIS_PS_{order.po_number}</strong>. Open it and attach to the email.
         </div>
-        <button onClick={openMail} className="w-full rounded-lg py-2 text-sm font-semibold text-white" style={{ backgroundColor: "#A3224A" }}>
-          Open in Mail & Mark as Shipment
-        </button>
+        <div className="flex gap-2">
+          <button onClick={copyAndMark} className="flex-1 rounded-lg py-2 text-sm font-semibold text-white" style={{ backgroundColor: "#A3224A" }}>
+            {copied ? "✓ Copiado — Status → Shipment" : "📋 Copy Email & Mark as Shipment"}
+          </button>
+          {copied && <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm font-semibold border border-border hover:bg-muted">
+            Cerrar
+          </button>}
+        </div>
+        {copied && (
+          <p className="mt-2 text-[11px] text-center text-muted-foreground">
+            Abrí Gmail → Compose → pegá el email (Ctrl+V). Ya se copió To, CC, Subject y Body.
+          </p>
+        )}
       </div>
     </div>
   );
