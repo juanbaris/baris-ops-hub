@@ -601,7 +601,13 @@ function LineageModal({ order, onClose, onSent }: { order: Order; onClose: () =>
 
   async function openMail() {
     const mailtoUrl = `mailto:${to}?cc=${encodeURIComponent(cc)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    window.location.href = mailtoUrl;
+    const a = document.createElement("a");
+    a.href = mailtoUrl;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => document.body.removeChild(a), 100);
     const { data, error } = await supabase.from("customer_orders").update({ status: "Shipment" }).eq("id", order.id).select().single();
     if (!error && data) { onSent(data); toast.success("Status updated to Shipment"); }
     onClose();
