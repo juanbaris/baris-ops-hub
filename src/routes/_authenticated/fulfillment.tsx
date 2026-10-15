@@ -599,15 +599,24 @@ function LineageModal({ order, onClose, onSent }: { order: Order; onClose: () =>
     ? `Hi team,\n\nPlease see attached a new order for ${order.customer}\nKeHe will do the pickup at Lineage (FOB). Please prepare the order accordingly.\n\nThanks!\nJuan`
     : `Hi team,\n\nPlease see attached a new order for ${order.customer}\nWe would need Lineage to make the delivery.\n\nThanks!\nJuan`;
 
-  const [copied, setCopied] = useState(false);
+  const [sent, setSent] = useState(false);
 
-  async function copyAndMark() {
-    const fullEmail = `To: ${to}\nCC: ${cc}\nSubject: ${subject}\n\n${body}`;
-    try { await navigator.clipboard.writeText(fullEmail); } catch { /* fallback: select-copy */ }
-    setCopied(true);
+  // Plain top-level navigation via a real <a target="_blank" rel="noopener"> —
+  // window.open()/programmatic clicks get blocked by Gmail's COOP headers and
+  // popup blockers; a user-initiated anchor navigation does not.
+  const gmailUrl =
+    "https://mail.google.com/mail/?view=cm&fs=1" +
+    `&to=${encodeURIComponent(to)}` +
+    `&cc=${encodeURIComponent(cc)}` +
+    `&su=${encodeURIComponent(subject)}` +
+    `&body=${encodeURIComponent(body)}`;
+
+  async function markShipment() {
+    if (sent) return;
+    setSent(true);
     const { data, error } = await supabase.from("customer_orders").update({ status: "Shipment" }).eq("id", order.id).select().single();
-    if (!error && data) { onSent(data); toast.success("Email copiado ✓ Status → Shipment"); }
-    else toast.success("Email copiado al clipboard ✓");
+    if (!error && data) { onSent(data); toast.success("Gmail abierto ✓ Status → Shipment"); }
+    else toast.success("Gmail abierto ✓");
   }
 
   async function copyField(text: string) {
