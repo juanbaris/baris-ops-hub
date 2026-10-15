@@ -599,15 +599,24 @@ function LineageModal({ order, onClose, onSent }: { order: Order; onClose: () =>
     ? `Hi team,\n\nPlease see attached a new order for ${order.customer}\nKeHe will do the pickup at Lineage (FOB). Please prepare the order accordingly.\n\nThanks!\nJuan`
     : `Hi team,\n\nPlease see attached a new order for ${order.customer}\nWe would need Lineage to make the delivery.\n\nThanks!\nJuan`;
 
-  const [copied, setCopied] = useState(false);
+  const [sent, setSent] = useState(false);
 
-  async function copyAndMark() {
-    const fullEmail = `To: ${to}\nCC: ${cc}\nSubject: ${subject}\n\n${body}`;
-    try { await navigator.clipboard.writeText(fullEmail); } catch { /* fallback: select-copy */ }
-    setCopied(true);
+  // Plain top-level navigation via a real <a target="_blank" rel="noopener"> —
+  // window.open()/programmatic clicks get blocked by Gmail's COOP headers and
+  // popup blockers; a user-initiated anchor navigation does not.
+  const gmailUrl =
+    "https://mail.google.com/mail/?view=cm&fs=1" +
+    `&to=${encodeURIComponent(to)}` +
+    `&cc=${encodeURIComponent(cc)}` +
+    `&su=${encodeURIComponent(subject)}` +
+    `&body=${encodeURIComponent(body)}`;
+
+  async function markShipment() {
+    if (sent) return;
+    setSent(true);
     const { data, error } = await supabase.from("customer_orders").update({ status: "Shipment" }).eq("id", order.id).select().single();
-    if (!error && data) { onSent(data); toast.success("Email copiado ✓ Status → Shipment"); }
-    else toast.success("Email copiado al clipboard ✓");
+    if (!error && data) { onSent(data); toast.success("Gmail abierto ✓ Status → Shipment"); }
+    else toast.success("Gmail abierto ✓");
   }
 
   async function copyField(text: string) {
@@ -645,16 +654,23 @@ function LineageModal({ order, onClose, onSent }: { order: Order; onClose: () =>
           📋 Before sending, attach the <strong>BARIS Packing Slip</strong> — open the PO detail (click PO# in Pipeline), go to Attachments, and find <strong>BARIS_PS_{order.po_number}</strong>. Open it and attach to the email.
         </div>
         <div className="flex gap-2">
-          <button onClick={copyAndMark} className="flex-1 rounded-lg py-2 text-sm font-semibold text-white" style={{ backgroundColor: "#A3224A" }}>
-            {copied ? "✓ Copiado — Status → Shipment" : "📋 Copy Email & Mark as Shipment"}
-          </button>
-          {copied && <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm font-semibold border border-border hover:bg-muted">
+          <a
+            href={gmailUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={markShipment}
+            className="flex-1 rounded-lg py-2 text-sm font-semibold text-white text-center"
+            style={{ backgroundColor: "#A3224A" }}
+          >
+            {sent ? "✓ Gmail abierto — Status → Shipment" : "✉️ Open Gmail & Mark as Shipment"}
+          </a>
+          {sent && <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm font-semibold border border-border hover:bg-muted">
             Cerrar
           </button>}
         </div>
-        {copied && (
+        {sent && (
           <p className="mt-2 text-[11px] text-center text-muted-foreground">
-            Abrí Gmail → Compose → pegá el email (Ctrl+V). Ya se copió To, CC, Subject y Body.
+            Se abrió Gmail en una pestaña nueva con To, CC, Subject y Body cargados. Adjuntá el Packing Slip y enviá.
           </p>
         )}
       </div>
