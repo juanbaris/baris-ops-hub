@@ -3197,14 +3197,14 @@ function calcCOGSFull(prices: Record<string,number>, costs: typeof DEFAULT_PROD_
   const skus = skuList ?? PROC_SKUS;
   return Object.fromEntries(skus.map(sku => {
     const bom = bomQty[sku]??{};
-    let rasp=0,choc=0,other=0,pkg=0;
+    let berries=0,choc=0,other=0,pkg=0;
     for (const [mat,qty] of Object.entries(bom)) {
       if (!qty) continue;
       const price=prices[mat]??0;
       const factor=(()=>{const s=(matScrap[mat]??0)/100;const o=(matOverfill[mat]??0)/100;return (s<1?1/(1-s):1)*(1+o);})();
       const cost=qty*price*factor;   // per case
       if (isRawMat(mat) || !mat.startsWith("Cup") && !mat.startsWith("Lid") && !mat.startsWith("Sealer") && !mat.startsWith("Master")) {
-        if (mat === "IQF Raspberries" || mat === "Strawberry") rasp += cost;
+        if (mat === "IQF Raspberries" || mat === "Strawberry") berries += cost;
         else if (mat.startsWith("Choc")) choc+=cost;
         else other+=cost;
       } else {
@@ -3212,9 +3212,9 @@ function calcCOGSFull(prices: Record<string,number>, costs: typeof DEFAULT_PROD_
       }
     }
     const tollingCase=(costs.tolling_per_unit??0)*UNITS_PER_CASE_BOM;
-    const per_case=rasp+choc+other+pkg+tollingCase;
+    const per_case=berries+choc+other+pkg+tollingCase;
     const per_unit=per_case/UNITS_PER_CASE_BOM;
-    return [sku,{rasp:rasp/UNITS_PER_CASE_BOM,choc:choc/UNITS_PER_CASE_BOM,other:other/UNITS_PER_CASE_BOM,pkg:pkg/UNITS_PER_CASE_BOM,tolling:costs.tolling_per_unit,per_unit,per_case}];
+    return [sku,{berries:berries/UNITS_PER_CASE_BOM,choc:choc/UNITS_PER_CASE_BOM,other:other/UNITS_PER_CASE_BOM,pkg:pkg/UNITS_PER_CASE_BOM,tolling:costs.tolling_per_unit,per_unit,per_case}];
   }));
 }
 
@@ -4878,7 +4878,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                   return (
                     <tr key={sku} className="border-t border-border/60 hover:bg-muted/20">
                       <td className="px-4 py-2 font-semibold" style={{color:"#1C2340"}}>{sku}</td>
-                      <td className="px-4 py-2 text-right font-mono text-xs">${c.rasp.toFixed(3)}</td>
+                      <td className="px-4 py-2 text-right font-mono text-xs">${c.berries.toFixed(3)}</td>
                       <td className="px-4 py-2 text-right font-mono text-xs">${c.choc.toFixed(3)}</td>
                       <td className="px-4 py-2 text-right font-mono text-xs">${c.other.toFixed(3)}</td>
                       <td className="px-4 py-2 text-right font-mono text-xs">${c.pkg.toFixed(3)}</td>
