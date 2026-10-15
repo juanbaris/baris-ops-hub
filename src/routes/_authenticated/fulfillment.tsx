@@ -600,8 +600,8 @@ function LineageModal({ order, onClose, onSent }: { order: Order; onClose: () =>
     : `Hi team,\n\nPlease see attached a new order for ${order.customer}\nWe would need Lineage to make the delivery.\n\nThanks!\nJuan`;
 
   async function openMail() {
-    const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(to)}&cc=${encodeURIComponent(cc)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    window.open(gmailUrl, "_blank");
+    const mailtoUrl = `mailto:${to}?cc=${encodeURIComponent(cc)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    window.location.href = mailtoUrl;
     const { data, error } = await supabase.from("customer_orders").update({ status: "Shipment" }).eq("id", order.id).select().single();
     if (!error && data) { onSent(data); toast.success("Status updated to Shipment"); }
     onClose();
