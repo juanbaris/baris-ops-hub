@@ -140,6 +140,7 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
     case_value: String((order as any).case_value ?? DIST_CASE_PRICE[order.distributor] ?? ""),
     gross_sales: String(order.gross_sales ?? ""),
     promo_discount: String(order.promo_discount ?? ""),
+    ship_from: (order as any).ship_from ?? "Lineage Newark",
   });
 
   // Always recalculate gross = total × case_value
@@ -167,6 +168,7 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
         case_value: String((order as any).case_value ?? DIST_CASE_PRICE[order.distributor] ?? ""),
         gross_sales: String(order.gross_sales ?? ""),
         promo_discount: String(order.promo_discount ?? ""),
+        ship_from: (order as any).ship_from ?? "Lineage Newark",
       });
     }
   }, [order, editing]);
@@ -248,6 +250,7 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
       gross_sales: gross || null,
       promo_discount: promo || null,
       net_sales: gross > 0 ? gross - promo : null,
+      ship_from: editData.ship_from || null,
     } as any;
     const { data, error } = await supabase.from("customer_orders").update(payload).eq("id", order.id).select().single();
     setEditSaving(false);
@@ -354,12 +357,22 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
                   onChange={e => setEditData(d => ({ ...d, invoice_date: e.target.value }))}
                   className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400" />
               </div>
+              <div className="flex flex-col gap-0.5">
+                <label className="text-[9px] uppercase tracking-wide text-muted-foreground font-semibold">Ship From</label>
+                <select value={editData.ship_from}
+                  onChange={e => setEditData(d => ({ ...d, ship_from: e.target.value }))}
+                  className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400">
+                  <option value="Lineage Newark">Lineage Newark</option>
+                  <option value="Lineage Linden">Lineage Linden</option>
+                </select>
+              </div>
             </div>
           ) : (
             <p className="text-sm text-muted-foreground mb-5">
               {order.distributor} · {order.customer} · PO Date: {order.po_date ?? "—"}
               {order.ship_est_date && <> · Ship: {order.ship_est_date}</>}
               {order.invoice_date && <> · Invoice: {order.invoice_date}</>}
+              {(order as any).ship_from && <> · 📦 {(order as any).ship_from}</>}
             </p>
           )}
 
@@ -591,19 +604,34 @@ function PODetailModal({ order, onClose, onUpdated, onDelete }: {
 
 // ─── Send to Lineage Modal ────────────────────────────────────────────────────
 function LineageModal({ order, onClose, onSent }: { order: Order; onClose: () => void; onSent: (o: Order) => void }) {
-  const isKehe = order.distributor === "KeHe";
-  const to = "a6orders@onelineage.com";
-  const cc = "pedro@everybaris.com,a6ship@onelineage.com,ltranssolutionseast@onelineage.com";
+  const shipFrom = (order as any).ship_from ?? "Lineage Newark";
+  const dist = order.distributor;
+
+  // TO: depends on ship_from
+  const to = shipFrom === "Lineage Linden"
+    ? "c1ship@onelineage.com,C1orders@onelineage.com"
+    : "a6orders@onelineage.com,a6ship@onelineage.com";
+
+  // CC: always pedro + arpflow; then distributor-specific
+  const ccParts = ["pedro@everybaris.com", "baris@arpflow.ai"];
+  if (dist === "KeHe") ccParts.push("renee.eisenhard@kehe.com");
+  if (dist === "UNFI") ccParts.push("ltranssolutionseast@onelineage.com");
+  if (dist === "Rainforest") ccParts.push("martincabrera@tql.com");
+  const cc = ccParts.join(",");
+
+  // Subject
   const subject = `PO #${order.po_number} - ${order.customer}`;
-  const body = isKehe
-    ? `Hi team,\n\nPlease see attached a new order for ${order.customer}\nKeHe will do the pickup at Lineage (FOB). Please prepare the order accordingly.\n\nThanks!\nJuan`
-    : `Hi team,\n\nPlease see attached a new order for ${order.customer}\nWe would need Lineage to make the delivery.\n\nThanks!\nJuan`;
+
+  // Body: distributor-specific
+  const bodyByDist: Record<string, string> = {
+    KeHe: `Hi team,\n\nPlease see attached a new order for KeHe "${order.customer}"\n@Renee Eisenhard (renee.eisenhard@kehe.com)  KeHe will do the pickup at Lineage (FOB). Please prepare the order accordingly.\n\nThanks!\nJuan`,
+    UNFI: `Hi team,\n\nPlease see attached a new order for UNFI "${order.customer}"\n@LTransSolutionsEast (ltranssolutionseast@onelineage.com) We would need Lineage to make the delivery.\n\nThanks!\nJuan`,
+    Rainforest: `Hi team,\n\nPlease see attached a new order for Rainforest\n@Martin Cabrera (martincabrera@tql.com)   TQL will handle the logistics and will coordinate the pickup day.\n\nThanks!\nJuan`,
+  };
+  const body = bodyByDist[dist] ?? `Hi team,\n\nPlease see attached a new order for ${order.customer}\n\nThanks!\nJuan`;
 
   const [sent, setSent] = useState(false);
 
-  // Plain top-level navigation via a real <a target="_blank" rel="noopener"> —
-  // window.open()/programmatic clicks get blocked by Gmail's COOP headers and
-  // popup blockers; a user-initiated anchor navigation does not.
   const gmailUrl =
     "https://mail.google.com/mail/?view=cm&fs=1" +
     `&to=${encodeURIComponent(to)}` +
@@ -623,20 +651,23 @@ function LineageModal({ order, onClose, onSent }: { order: Order; onClose: () =>
     try { await navigator.clipboard.writeText(text); toast.success("Copiado ✓"); } catch { toast.error("No se pudo copiar"); }
   }
 
+  const distLabel = dist === "KeHe" ? "KeHe → FOB pickup" : dist === "UNFI" ? "UNFI → Lineage delivery" : dist === "Rainforest" ? "Rainforest → TQL pickup" : dist;
+  const shipLabel = shipFrom === "Lineage Linden" ? "🏭 Linden (C1)" : "🏭 Newark (A6)";
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div className="relative w-full max-w-lg rounded-2xl bg-card shadow-2xl ring-1 ring-black/10 p-6" onClick={e => e.stopPropagation()}>
         <button onClick={onClose} className="absolute right-4 top-4 text-muted-foreground hover:text-foreground">✕</button>
         <h2 className="text-base font-bold mb-1" style={{ color: "#1C2340" }}>Send to Lineage</h2>
-        <p className="text-xs text-muted-foreground mb-4">PO #{order.po_number} · {order.customer}</p>
+        <p className="text-xs text-muted-foreground mb-4">PO #{order.po_number} · {order.customer} · {shipLabel}</p>
         <div className="rounded-xl border border-border bg-muted/30 p-4 text-xs leading-relaxed mb-4 space-y-1.5">
           <div className="flex items-center justify-between gap-2">
-            <div className="text-muted-foreground font-mono"><span className="font-semibold">To:</span> {to}</div>
-            <button onClick={() => copyField(to)} className="rounded px-2 py-0.5 text-[10px] font-semibold border border-border hover:bg-muted flex-shrink-0">Copy</button>
+            <div className="text-muted-foreground font-mono"><span className="font-semibold">To:</span> {to.replace(/,/g, "; ")}</div>
+            <button onClick={() => copyField(to.replace(/,/g, "; "))} className="rounded px-2 py-0.5 text-[10px] font-semibold border border-border hover:bg-muted flex-shrink-0">Copy</button>
           </div>
           <div className="flex items-center justify-between gap-2">
-            <div className="text-muted-foreground font-mono truncate"><span className="font-semibold">CC:</span> {cc}</div>
-            <button onClick={() => copyField(cc)} className="rounded px-2 py-0.5 text-[10px] font-semibold border border-border hover:bg-muted flex-shrink-0">Copy</button>
+            <div className="text-muted-foreground font-mono truncate"><span className="font-semibold">CC:</span> {cc.replace(/,/g, "; ")}</div>
+            <button onClick={() => copyField(cc.replace(/,/g, "; "))} className="rounded px-2 py-0.5 text-[10px] font-semibold border border-border hover:bg-muted flex-shrink-0">Copy</button>
           </div>
           <div className="flex items-center justify-between gap-2">
             <div className="text-muted-foreground font-mono"><span className="font-semibold">Subject:</span> {subject}</div>
@@ -649,7 +680,7 @@ function LineageModal({ order, onClose, onSent }: { order: Order; onClose: () =>
             </div>
           </div>
         </div>
-        {isKehe && <div className="mb-3 rounded-lg bg-orange-50 border border-orange-200 px-3 py-2 text-xs text-orange-700 font-medium">KeHe → FOB pickup at Lineage</div>}
+        <div className="mb-3 rounded-lg bg-indigo-50 border border-indigo-200 px-3 py-2 text-xs text-indigo-700 font-medium">{distLabel}</div>
         <div className="mb-3 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-700">
           📋 Before sending, attach the <strong>BARIS Packing Slip</strong> — open the PO detail (click PO# in Pipeline), go to Attachments, and find <strong>BARIS_PS_{order.po_number}</strong>. Open it and attach to the email.
         </div>
@@ -683,9 +714,9 @@ function LineageModal({ order, onClose, onSent }: { order: Order; onClose: () =>
 // SKU support shipments split across lots (e.g. XD 30 = 25 of lot A + 5 of lot B).
 // warehouse follows the lot (lot_master.warehouse) so the OUT movement subtracts
 // from the warehouse the stock actually left (Lineage Newark vs Linden, etc.).
-type LotAlloc = { mode: "pick" | "other"; lot: string; moc: string; warehouse: string; cases: number };
-type LotOption = { lot: string; moc: string; warehouse: string };
-const blankAlloc = (): LotAlloc => ({ mode: "pick", lot: "", moc: "", warehouse: "", cases: 0 });
+type LotAlloc = { mode: "pick" | "other"; lot: string; moc: string; warehouse: string; cases: number; cogs: number | null };
+type LotOption = { lot: string; moc: string; warehouse: string; cogs: number | null };
+const blankAlloc = (): LotAlloc => ({ mode: "pick", lot: "", moc: "", warehouse: "", cases: 0, cogs: null });
 const WAREHOUSES: Database["public"]["Enums"]["warehouse"][] = [
   "Lineage Newark", "Lineage Linden", "Cold Chain", "Empire", "Heinlein",
   "OOE", "FreezPak", "PermaFrost", "Pod Chicago", "Pod MidAtlantic", "Pod Texas",
@@ -720,22 +751,26 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
     setAllocs(emptyAllocs());
   }, [order]);
 
-  // Lot Master is the source of truth for lot ↔ MOC. Load once, group by SKU.
+  // Lot Master is the source of truth for lot ↔ MOC. Filter by ship_from warehouse.
+  const shipFrom = (order as any).ship_from ?? "Lineage Newark";
   useEffect(() => {
     (async () => {
-      const { data } = await supabase
+      let q = supabase
         .from("lot_master")
-        .select("lot_number, moc, sku, warehouse")
+        .select("lot_number, moc, sku, warehouse, cogs_per_case")
         .order("lot_number", { ascending: true });
+      // Filter to show only lots at the ship_from warehouse
+      if (shipFrom) q = q.eq("warehouse", shipFrom);
+      const { data } = await q;
       if (!data) return;
       const grouped: Record<string, LotOption[]> = {};
       for (const r of data) {
         const s = String(r.sku);
-        (grouped[s] ||= []).push({ lot: r.lot_number, moc: r.moc ?? "", warehouse: r.warehouse ?? "" });
+        (grouped[s] ||= []).push({ lot: r.lot_number, moc: r.moc ?? "", warehouse: r.warehouse ?? "", cogs: (r as any).cogs_per_case ?? null });
       }
       setLotsBySku(grouped);
     })();
-  }, []);
+  }, [shipFrom]);
 
   async function handleFile(file: File) {
     setProcessing(true);
@@ -809,13 +844,14 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
             type: "Out",
             sku: skuEnum,
             cases,
-            warehouse: isWarehouse(r.warehouse) ? r.warehouse : "Lineage Newark",
+            warehouse: isWarehouse(r.warehouse) ? r.warehouse : (shipFrom || "Lineage Newark"),
             lot_number: lotVal,
             moc: r.moc.trim() || null,
             concept: "Sale",
+            cogs_per_case: r.cogs ?? null,
             po_number_ref: order.po_number,
             notes: `BOL ${bolNumber || "—"} · PO ${order.po_number} · Fill ${fillRate}%`,
-          });
+          } as any);
         }
         if (!single && sum !== qty) {
           toast.error(`${sk.label}: los lotes suman ${sum} pero la BOL dice ${qty}`);
@@ -884,7 +920,7 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
       <div className="relative w-full max-w-lg rounded-2xl bg-card shadow-2xl ring-1 ring-black/10 p-6" onClick={e => e.stopPropagation()}>
         <button onClick={onClose} className="absolute right-4 top-4 text-muted-foreground hover:text-foreground">✕</button>
         <h2 className="text-base font-bold mb-1" style={{ color: "#1C2340" }}>Upload BOL</h2>
-        <p className="text-xs text-muted-foreground mb-4">PO #{order.po_number} · {order.customer}</p>
+        <p className="text-xs text-muted-foreground mb-4">PO #{order.po_number} · {order.customer} · 📦 {shipFrom}</p>
 
         {step === "upload" && (
           <div>
@@ -973,7 +1009,7 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
                                   if (!v) { setRow(i, { lot: "", moc: "", warehouse: "" }); return; }
                                   const [lot, wh = ""] = v.split("@@");
                                   const o = opts.find(o => o.lot === lot && (o.warehouse ?? "") === wh);
-                                  setRow(i, { lot, warehouse: wh, moc: o?.moc ?? "" });
+                                  setRow(i, { lot, warehouse: wh, moc: o?.moc ?? "", cogs: o?.cogs ?? null });
                                 }}
                                 className="flex-1 min-w-[160px] rounded-lg border border-border px-2 py-1 text-[11px] font-mono">
                                 <option value="">— elegir lote —</option>
@@ -1393,6 +1429,7 @@ function NewOrderModal({ onClose, onCreated, existingPONumbers }: {
   const [form, setForm] = useState({
     po_number: "", po_date: ymd(new Date()), ship_est_date: "", distributor: "UNFI" as Distributor,
     customer: "", ship_to_address: "", status: "Open" as unknown as Status,
+    ship_from: "Lineage Newark" as string,
     wm_cases: "", wd_cases: "", xd_cases: "", pw_cases: "", hm_cases: "", matcha_cases: "",
     case_value: String(DIST_CASE_PRICE["UNFI"]), gross_sales: "", promo_discount: "", net_sales: "", notes: "",
   });
@@ -1480,6 +1517,7 @@ function NewOrderModal({ onClose, onCreated, existingPONumbers }: {
     const { data, error } = await supabase.from("customer_orders").insert({
       po_number: form.po_number, po_date: form.po_date || new Date().toISOString().slice(0, 10), ship_est_date: form.ship_est_date || null,
       distributor: form.distributor, customer: form.customer, ship_to_address: form.ship_to_address || null, status: form.status,
+      ship_from: form.ship_from || null,
       wm_cases: parseInt(form.wm_cases) || null, wd_cases: parseInt(form.wd_cases) || null,
       xd_cases: parseInt(form.xd_cases) || null, pw_cases: parseInt(form.pw_cases) || null,
       hm_cases: parseInt(form.hm_cases) || null, matcha_cases: parseInt(form.matcha_cases) || null,
@@ -1563,6 +1601,14 @@ function NewOrderModal({ onClose, onCreated, existingPONumbers }: {
               </select></div>
             <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Customer</label>
               <input className={`${inp} mt-1`} value={form.customer} onChange={e => set("customer", e.target.value)} /></div>
+          </div>
+          <div className={row2}>
+            <div><label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Ship From</label>
+              <select className={`${inp} mt-1`} value={form.ship_from} onChange={e => set("ship_from", e.target.value)}>
+                <option value="Lineage Newark">Lineage Newark</option>
+                <option value="Lineage Linden">Lineage Linden</option>
+              </select></div>
+            <div />
           </div>
 
           <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2 mt-1">Cases per SKU</p>
