@@ -63,9 +63,12 @@ export const Route = createFileRoute("/api/process-po")({
                 content: [
                   { type: bolMediaType === "application/pdf" ? "document" : "image",
                     source: { type: "base64", media_type: bolMediaType, data: bolBase64 } },
-                  { type: "text", text: `Extract data from this Bill of Lading. Return ONLY valid JSON, no markdown:
+                  { type: "text", text: `Extract data from this Bill of Lading. Return ONLY valid JSON, no markdown.
+
+IMPORTANT: A single SKU item may be split across MULTIPLE lots with different quantities. Each lot line shows a sub-lot number (e.g. 97353L) and a MOC code (e.g. BA218261). Extract EVERY lot line separately.
+
 {
-  "bol_number": "string (BOL or PRO number, e.g. A6-247427)",
+  "bol_number": "string (BOL or PRO number, e.g. A6-247427 or C1-237108)",
   "ship_date": "YYYY-MM-DD",
   "wd_cases": 0,
   "pw_cases": 0,
@@ -73,19 +76,19 @@ export const Route = createFileRoute("/api/process-po")({
   "matcha_cases": 0,
   "xd_cases": 0,
   "wm_cases": 0,
-  "lot_numbers": {
-    "wd": "lot number for W&D if present",
-    "pw": "lot number for P&W if present",
-    "hm": "lot number for H&M if present",
-    "matcha": "lot number for Matcha if present",
-    "xd": "lot number for XD if present",
-    "wm": "lot number for W&M if present"
-  }
+  "lots": [
+    {"sku_key": "hm", "sub_lot": "97353L", "moc": "BA218261", "cases": 41},
+    {"sku_key": "xd", "sub_lot": "97344L", "moc": "BA212261", "cases": 35}
+  ]
 }
+
 SKU item numbers: WD=23141, PW=77670, HM=77671, Matcha=77672, XD=88021, WM=93562.
-Lot numbers are alphanumeric codes like A6155178 or C109980 — look for them near each product line.
-If a BOL has only one lot number, apply it to all SKUs present.
-Use 0 for cases not found. Use empty string for lot numbers not found.` }
+sku_key mapping: WD→"wd", PW→"pw", HM→"hm", Matcha→"matcha", XD→"xd", WM→"wm".
+
+The BOL structure is: a header line with total cases and item code (e.g. "45CS 77671 HAZELNUT AND MILK..."), followed by one or more lot lines (e.g. "41CS 97353L BA218261"). Each lot line has: quantity, sub-lot number (e.g. 97353L, 98281L), and MOC code (e.g. BA218261, BA212261).
+
+Extract ALL lot lines. The sub_lot is the alphanumeric code like 97353L. The moc is the BA-prefixed code like BA218261.
+Use 0 for cases not found. Return empty lots array if no lot detail is visible.` }
                 ]
               }]
             }),
