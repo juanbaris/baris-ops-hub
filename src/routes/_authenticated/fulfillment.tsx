@@ -793,8 +793,66 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
         });
         if (data.bol_number) setBolNumber(String(data.bol_number));
         if (data.ship_date && /^\d{4}-\d{2}-\d{2}$/.test(String(data.ship_date))) setShipDate(String(data.ship_date));
-        setAllocs(emptyAllocs());
-        toast.success("BOL extracted — revisá cantidades y asigná lotes");
+
+        // ─── Auto-match lots from BOL against lot_master ───────────────
+        const extractedLots: { sku_key: string; sub_lot: string; moc: string; cases: number }[] = data.lots ?? [];
+        if (extractedLots.length > 0) {
+          const newAllocs = emptyAllocs();
+          const skuEnumOf = (label: string) => label.replace("&", "").replace(" ", "");
+          const warnings: string[] = [];
+          // Group extracted lots by sku_key
+          const grouped: Record<string, typeof extractedLots> = {};
+          for (const el of extractedLots) {
+            const k = el.sku_key.toLowerCase();
+            (grouped[k] ||= []).push(el);
+          }
+          for (const [bolKey, lots] of Object.entries(grouped)) {
+            // Map bolKey (hm, xd, etc.) to SKU enum for lot_master lookup
+            const skLabel = SKU_ITEMS.find(s => s.key === `${bolKey}_cases`)?.label;
+            if (!skLabel) continue;
+            const skuEnum = skuEnumOf(skLabel);
+            const masterLots = lotsBySku[skuEnum] ?? [];
+            const multi = lots.length > 1;
+            const matched: LotAlloc[] = [];
+            for (const el of lots) {
+              // Try to match by sub_lot number against lot_master lot_number
+              const found = masterLots.find(m => m.lot === el.sub_lot);
+              if (found) {
+                matched.push({
+                  mode: "pick", lot: found.lot, moc: found.moc || el.moc || "",
+                  warehouse: found.warehouse || shipFrom, cases: el.cases,
+                  cogs: found.cogs ?? null,
+                });
+              } else {
+                // Try matching by MOC code (some lots use MOC as lot_number)
+                const foundByMoc = el.moc ? masterLots.find(m => m.lot === el.moc) : null;
+                if (foundByMoc) {
+                  matched.push({
+                    mode: "pick", lot: foundByMoc.lot, moc: foundByMoc.moc || el.moc || "",
+                    warehouse: foundByMoc.warehouse || shipFrom, cases: el.cases,
+                    cogs: foundByMoc.cogs ?? null,
+                  });
+                } else {
+                  // Not found — pre-fill as manual with warning
+                  matched.push({
+                    mode: "other", lot: el.sub_lot, moc: el.moc || "",
+                    warehouse: shipFrom, cases: el.cases, cogs: null,
+                  });
+                  warnings.push(`${skLabel}: lote ${el.sub_lot} no encontrado en Lot Master (${shipFrom})`);
+                }
+              }
+            }
+            if (matched.length > 0) newAllocs[bolKey] = matched;
+          }
+          setAllocs(newAllocs);
+          if (warnings.length > 0) {
+            toast.error(warnings.join(" · "), { duration: 8000 });
+          }
+          toast.success(`BOL extracted — ${extractedLots.length} lotes auto-matched ✓`);
+        } else {
+          setAllocs(emptyAllocs());
+          toast.success("BOL extracted — revisá cantidades y asigná lotes");
+        }
       } else {
         toast.error("Could not extract — review manually");
       }
