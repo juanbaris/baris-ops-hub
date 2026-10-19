@@ -766,17 +766,28 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
       .order("lot_number", { ascending: true });
 
     // 2) fp_movements — all lots ever referenced at this warehouse (includes "virtual" lots)
-    const { data: fpData } = await supabase
-      .from("fp_movements")
-      .select("lot_number, moc, sku, warehouse")
-      .eq("warehouse", shipFrom)
-      .not("lot_number", "is", null)
-      .order("lot_number", { ascending: true });
+    //    Paginate to bypass PostgREST 1000-row limit, same as lot-master-tab.tsx
+    const fpAll: { lot_number: string | null; moc: string | null; sku: string; warehouse: string; cogs_per_case: number | null }[] = [];
+    let fpFrom = 0;
+    const FP_PAGE = 1000;
+    while (true) {
+      const { data: page } = await supabase
+        .from("fp_movements")
+        .select("lot_number, moc, sku, warehouse, cogs_per_case")
+        .eq("warehouse", shipFrom)
+        .not("lot_number", "is", null)
+        .order("movement_date", { ascending: true })
+        .range(fpFrom, fpFrom + FP_PAGE - 1);
+      if (!page || page.length === 0) break;
+      fpAll.push(...(page as any));
+      if (page.length < FP_PAGE) break;
+      fpFrom += FP_PAGE;
+    }
 
     const grouped: Record<string, LotOption[]> = {};
     const seen = new Set<string>(); // "SKU|lot_number" dedup key
 
-    // lot_master first (takes priority — has COGS)
+    // lot_master first (takes priority — has confirmed COGS)
     for (const r of (masterData ?? [])) {
       const s = String(r.sku);
       const key = `${s}|${r.lot_number}`;
@@ -785,14 +796,28 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
       (grouped[s] ||= []).push({ lot: r.lot_number, moc: r.moc ?? "", warehouse: r.warehouse ?? "", cogs: (r as any).cogs_per_case ?? null });
     }
 
-    // fp_movements second — add lots not already in lot_master
-    for (const r of (fpData ?? [])) {
+    // fp_movements second — add lots not in lot_master, with COGS from first movement that has it
+    //    (mirrors lot-master-tab.tsx which takes cogs_per_case from the first movement for the lot)
+    const fpCogsByLot: Record<string, number | null> = {}; // "SKU|lot" → first non-null cogs
+    const fpMocByLot: Record<string, string> = {};
+    for (const r of fpAll) {
+      if (!r.lot_number) continue;
+      const s = String(r.sku);
+      const key = `${s}|${r.lot_number}`;
+      if (fpCogsByLot[key] === undefined) fpCogsByLot[key] = r.cogs_per_case;
+      else if (fpCogsByLot[key] == null && r.cogs_per_case != null) fpCogsByLot[key] = r.cogs_per_case;
+      if (!fpMocByLot[key] && r.moc) fpMocByLot[key] = r.moc;
+    }
+    for (const r of fpAll) {
       if (!r.lot_number) continue;
       const s = String(r.sku);
       const key = `${s}|${r.lot_number}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      (grouped[s] ||= []).push({ lot: r.lot_number, moc: r.moc ?? "", warehouse: r.warehouse ?? "", cogs: null });
+      (grouped[s] ||= []).push({
+        lot: r.lot_number, moc: fpMocByLot[key] ?? r.moc ?? "", warehouse: r.warehouse ?? "",
+        cogs: fpCogsByLot[key] ?? null,
+      });
     }
 
     return grouped;
