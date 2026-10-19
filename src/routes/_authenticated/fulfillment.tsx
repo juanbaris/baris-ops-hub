@@ -753,24 +753,56 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
     setAllocs(emptyAllocs());
   }, [order]);
 
-  // Lot Master is the source of truth for lot ↔ MOC. Filter by ship_from warehouse.
+  // Load lots from lot_master (confirmed, with COGS) + fp_movements (all referenced lots).
+  // This mirrors what the Lot Master tab shows: confirmed + "From FP movement" entries.
   const shipFrom = (order as any).ship_from ?? "Lineage Newark";
+
+  async function loadAllLots(): Promise<Record<string, LotOption[]>> {
+    // 1) lot_master — confirmed lots with COGS
+    const { data: masterData } = await supabase
+      .from("lot_master")
+      .select("lot_number, moc, sku, warehouse, cogs_per_case")
+      .eq("warehouse", shipFrom)
+      .order("lot_number", { ascending: true });
+
+    // 2) fp_movements — all lots ever referenced at this warehouse (includes "virtual" lots)
+    const { data: fpData } = await supabase
+      .from("fp_movements")
+      .select("lot_number, moc, sku, warehouse")
+      .eq("warehouse", shipFrom)
+      .not("lot_number", "is", null)
+      .order("lot_number", { ascending: true });
+
+    const grouped: Record<string, LotOption[]> = {};
+    const seen = new Set<string>(); // "SKU|lot_number" dedup key
+
+    // lot_master first (takes priority — has COGS)
+    for (const r of (masterData ?? [])) {
+      const s = String(r.sku);
+      const key = `${s}|${r.lot_number}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      (grouped[s] ||= []).push({ lot: r.lot_number, moc: r.moc ?? "", warehouse: r.warehouse ?? "", cogs: (r as any).cogs_per_case ?? null });
+    }
+
+    // fp_movements second — add lots not already in lot_master
+    for (const r of (fpData ?? [])) {
+      if (!r.lot_number) continue;
+      const s = String(r.sku);
+      const key = `${s}|${r.lot_number}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      (grouped[s] ||= []).push({ lot: r.lot_number, moc: r.moc ?? "", warehouse: r.warehouse ?? "", cogs: null });
+    }
+
+    return grouped;
+  }
+
   useEffect(() => {
     (async () => {
-      let q = supabase
-        .from("lot_master")
-        .select("lot_number, moc, sku, warehouse, cogs_per_case")
-        .order("lot_number", { ascending: true });
-      // Filter to show only lots at the ship_from warehouse
-      if (shipFrom) q = q.eq("warehouse", shipFrom);
-      const { data } = await q;
-      if (!data) return;
-      const grouped: Record<string, LotOption[]> = {};
-      for (const r of data) {
-        const s = String(r.sku);
-        (grouped[s] ||= []).push({ lot: r.lot_number, moc: r.moc ?? "", warehouse: r.warehouse ?? "", cogs: (r as any).cogs_per_case ?? null });
-      }
-      setLotsBySku(grouped);
+      const g = await loadAllLots();
+      setLotsBySku(g);
+      lotsBySkuRef.current = g;
     })();
   }, [shipFrom]);
 
@@ -799,20 +831,11 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
         // ─── Auto-match lots from BOL against lot_master ───────────────
         const extractedLots: { sku_key: string; sub_lot: string; moc: string; cases: number }[] = data.lots ?? [];
         if (extractedLots.length > 0) {
-          // Ensure lot_master is loaded — if ref is empty, re-fetch synchronously
-          if (Object.keys(lotsBySkuRef.current).length === 0) {
-            let q = supabase.from("lot_master").select("lot_number, moc, sku, warehouse, cogs_per_case").order("lot_number", { ascending: true });
-            if (shipFrom) q = q.eq("warehouse", shipFrom);
-            const { data: freshLots } = await q;
-            if (freshLots) {
-              const g: Record<string, LotOption[]> = {};
-              for (const r of freshLots) {
-                const s = String(r.sku);
-                (g[s] ||= []).push({ lot: r.lot_number, moc: r.moc ?? "", warehouse: r.warehouse ?? "", cogs: (r as any).cogs_per_case ?? null });
-              }
-              setLotsBySku(g);
-              lotsBySkuRef.current = g;
-            }
+          // Ensure lots are loaded — always re-fetch to get latest from lot_master + fp_movements
+          {
+            const fresh = await loadAllLots();
+            setLotsBySku(fresh);
+            lotsBySkuRef.current = fresh;
           }
           const newAllocs = emptyAllocs();
           const skuEnumOf = (label: string) => label.replace("&", "").replace(" ", "");
