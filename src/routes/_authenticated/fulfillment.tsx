@@ -731,6 +731,8 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
   const [shipDate, setShipDate] = useState(new Date().toISOString().slice(0, 10));
   const [allocs, setAllocs] = useState<Record<string, LotAlloc[]>>({});
   const [lotsBySku, setLotsBySku] = useState<Record<string, LotOption[]>>({});
+  const lotsBySkuRef = useRef<Record<string, LotOption[]>>({});
+  lotsBySkuRef.current = lotsBySku;
   const [processing, setProcessing] = useState(false);
   const [bolFile, setBolFile] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -797,6 +799,21 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
         // ─── Auto-match lots from BOL against lot_master ───────────────
         const extractedLots: { sku_key: string; sub_lot: string; moc: string; cases: number }[] = data.lots ?? [];
         if (extractedLots.length > 0) {
+          // Ensure lot_master is loaded — if ref is empty, re-fetch synchronously
+          if (Object.keys(lotsBySkuRef.current).length === 0) {
+            let q = supabase.from("lot_master").select("lot_number, moc, sku, warehouse, cogs_per_case").order("lot_number", { ascending: true });
+            if (shipFrom) q = q.eq("warehouse", shipFrom);
+            const { data: freshLots } = await q;
+            if (freshLots) {
+              const g: Record<string, LotOption[]> = {};
+              for (const r of freshLots) {
+                const s = String(r.sku);
+                (g[s] ||= []).push({ lot: r.lot_number, moc: r.moc ?? "", warehouse: r.warehouse ?? "", cogs: (r as any).cogs_per_case ?? null });
+              }
+              setLotsBySku(g);
+              lotsBySkuRef.current = g;
+            }
+          }
           const newAllocs = emptyAllocs();
           const skuEnumOf = (label: string) => label.replace("&", "").replace(" ", "");
           const warnings: string[] = [];
@@ -811,7 +828,7 @@ function BOLModal({ order, onClose, onConfirmed }: { order: Order; onClose: () =
             const skLabel = SKU_ITEMS.find(s => s.key === `${bolKey}_cases`)?.label;
             if (!skLabel) continue;
             const skuEnum = skuEnumOf(skLabel);
-            const masterLots = lotsBySku[skuEnum] ?? [];
+            const masterLots = lotsBySkuRef.current[skuEnum] ?? [];
             const multi = lots.length > 1;
             const matched: LotAlloc[] = [];
             for (const el of lots) {
