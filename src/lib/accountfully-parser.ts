@@ -104,7 +104,9 @@ const COST_KEYS = new Set([
 // ─── BS label → bs_detail key mapping ────────────────────────────────────────
 const BS_MAP: Record<string, string> = {
   "1001 BOFA x6854": "bofa_x6854",
+  "1001 Bofa x6854": "bofa_x6854",
   "BOFA x6854": "bofa_x6854",
+  "Bofa x6854": "bofa_x6854",
   "Citi Bank": "citi_bank",
   "Mercury Checking": "mercury_checking",
   "Mercury Treasury": "mercury_treasury",
@@ -125,6 +127,12 @@ const BS_MAP: Record<string, string> = {
   "Opening balance equity": "opening_balance_equity",
   "Retained Earnings": "retained_earnings",
   "Net Income": "net_income_equity",
+  "Personal Draws": "personal_draws",
+  "Mercury Credit": "mercury_credit",
+  "Pod Foods Clearing": "pod_foods_clearing",
+  "Inventory Asset": "inventory_asset",
+  "Prepaid expenses": "prepaid_expenses",
+  "Payments to deposit": "payments_to_deposit",
 };
 
 // Credit card labels → sum into combined keys
@@ -401,7 +409,7 @@ function buildBsSummary(bs: Record<string, number>) {
   const fixed = (bs.equipment ?? 0) + (bs.accumulated_depreciation ?? 0);
   const due = bs.due_from_shareholders ?? 0;
   const totalAssets = cash + ar + inv + loans + fixed + due;
-  const cc = (bs.boa_3724 ?? 0) + (bs.boa_7830 ?? 0) + (bs.boa_8781 ?? 0) + (bs.citi_credit ?? 0);
+  const cc = (bs.boa_3724 ?? 0) + (bs.boa_7830 ?? 0) + (bs.boa_8781 ?? 0) + (bs.citi_credit ?? 0) + (bs.mercury_credit ?? 0);
   const accrued = bs.accrued_liabilities ?? 0;
   const totalLiab = cc + accrued;
   const equity = (bs.capital_1st_round ?? 0) + (bs.capital_2nd_round ?? 0) + (bs.capital_3rd_round ?? 0)
@@ -431,7 +439,7 @@ export async function parseAccountfullyPdf(file: File): Promise<any[]> {
   for (const pg of pages) {
     const texts = pg.items.map(it => it.text).join(" ");
     if (texts.includes("Profit and Loss by Month")) { inPnlByMonth = true; inBs = false; }
-    if (texts.includes("Balance Sheet") && texts.includes("ASSETS")) { inBs = true; inPnlByMonth = false; }
+    if (/balance\s+sheet/i.test(texts) && /assets/i.test(texts)) { inBs = true; inPnlByMonth = false; }
     if (inPnlByMonth) pnlPages.push(pg);
     if (inBs) bsPages.push(pg);
   }
