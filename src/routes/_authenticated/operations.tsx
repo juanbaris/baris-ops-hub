@@ -1,5 +1,8 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ExportButton } from "@/components/export-button";
+import { ImportModal, type ImportMode } from "@/components/import-modal";
+import { downloadExcel, type Sheet } from "@/lib/excel-report";
+import type { ParsedRow } from "@/lib/excel-import";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/app-shell";
@@ -2899,8 +2902,26 @@ type IPForecastPO = {
   mBuy: string;            // YYYY-MM
   mRecv: string;           // YYYY-MM
   mPay: string;            // YYYY-MM
+  ordered: boolean;        // "Pedido?" — whether the PO has been ordered
 };
 const IP_FORECAST_KEY = "baris.ops.ipForecastPOs.v1";
+
+// Normalize month string: "Nov 2026" or "2026-11" → "2026-11"
+function normalizeMonth(v: string): string {
+  if (!v) return "";
+  // Already YYYY-MM
+  if (/^\d{4}-\d{2}$/.test(v)) return v;
+  // "Nov 2026" style
+  const mn = ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"];
+  const parts = v.trim().split(/\s+/);
+  if (parts.length === 2) {
+    const mi = mn.indexOf(parts[0].toLowerCase().slice(0,3));
+    if (mi >= 0 && /^\d{4}$/.test(parts[1])) return `${parts[1]}-${String(mi+1).padStart(2,"0")}`;
+    const mi2 = mn.indexOf(parts[1].toLowerCase().slice(0,3));
+    if (mi2 >= 0 && /^\d{4}$/.test(parts[0])) return `${parts[0]}-${String(mi2+1).padStart(2,"0")}`;
+  }
+  return v;
+}
 
 // ─── FP COGS assumptions: fixed $/unit per SKU per quarter ───
 const UNITS_PER_CASE_COGS = 8;
@@ -3843,6 +3864,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
           id: r.id, material: r.material, qty: Number(r.qty) || 0,
           matCost: Number(r.mat_cost) || 0, freight: Number(r.freight) || 0,
           mBuy: r.month_buy ?? "", mRecv: r.month_receive ?? "", mPay: r.month_pay ?? "",
+          ordered: !!r.ordered,
         })));
       } catch (e) { console.error("Failed to load forecast POs:", e); }
       setIpPoLoading(false);
@@ -3859,13 +3881,14 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     const payD = new Date(rcvD); payD.setMonth(payD.getMonth() + 1);
     const payKey = `${payD.getFullYear()}-${String(payD.getMonth()+1).padStart(2,"0")}`;
     const { data, error }: any = await (supabase.from("ops_forecast_po" as any) as any)
-      .insert({ material: firstRawMat, qty: 0, mat_cost: 0, freight: 0, month_buy: buyKey, month_receive: rcvKey, month_pay: payKey })
+      .insert({ material: firstRawMat, qty: 0, mat_cost: 0, freight: 0, month_buy: buyKey, month_receive: rcvKey, month_pay: payKey, ordered: false })
       .select().single();
     if (error) { toast.error("Failed to add PO: " + error.message); return; }
     setIpForecastPOs(prev => [...prev, {
       id: data.id, material: data.material, qty: Number(data.qty) || 0,
       matCost: Number(data.mat_cost) || 0, freight: Number(data.freight) || 0,
       mBuy: data.month_buy ?? "", mRecv: data.month_receive ?? "", mPay: data.month_pay ?? "",
+      ordered: false,
     }]);
     setEditingPOId(data.id);
   }
@@ -3880,6 +3903,10 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   const [poFilter, setPoFilter] = useState<{field:""|"mBuy"|"mRecv"|"mPay";month:string}>({field:"",month:""});
   const [editingPOId, setEditingPOId] = useState<number|null>(null);
   const [confirmSaving, setConfirmSaving] = useState(false);
+  // Sort state for IP Forecast PO table
+  const [poSort, setPoSort] = useState<{col:keyof IPForecastPO|"totalCost"|"cpu";dir:"asc"|"desc"}>({col:"id",dir:"asc"});
+  // Import modal state
+  const [ipPoImportOpen, setIpPoImportOpen] = useState(false);
   async function confirmIpForecastPO() {
     if (!confirmingPO) return;
     const po = confirmingPO;
@@ -3947,7 +3974,84 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
     supabase.from("ops_forecast_po" as any).update({
       material: merged.material, qty: merged.qty, mat_cost: merged.matCost,
       freight: merged.freight, month_buy: merged.mBuy, month_receive: merged.mRecv, month_pay: merged.mPay,
+      ordered: merged.ordered ?? false,
     }).eq("id", id).then(({ error }) => { if (error) console.error("PO save error:", error); });
+  }
+
+  // ─── IP PO Sort helper ───
+  function togglePoSort(col: typeof poSort.col) {
+    setPoSort(prev => prev.col === col ? { col, dir: prev.dir === "asc" ? "desc" : "asc" } : { col, dir: "asc" });
+  }
+  const sortedFilteredPOs = useMemo(() => {
+    const base = ipForecastPOs.filter(po => {
+      if (!poFilter.field || !poFilter.month) return true;
+      return po[poFilter.field] === poFilter.month;
+    });
+    return [...base].sort((a, b) => {
+      const { col, dir } = poSort;
+      let av: any, bv: any;
+      if (col === "totalCost") { av = a.matCost + a.freight; bv = b.matCost + b.freight; }
+      else if (col === "cpu") { av = a.qty > 0 ? (a.matCost + a.freight) / a.qty : 0; bv = b.qty > 0 ? (b.matCost + b.freight) / b.qty : 0; }
+      else { av = a[col]; bv = b[col]; }
+      if (typeof av === "string") { const cmp = av.localeCompare(bv as string); return dir === "asc" ? cmp : -cmp; }
+      if (typeof av === "boolean") { return dir === "asc" ? (av === bv ? 0 : av ? 1 : -1) : (av === bv ? 0 : av ? -1 : 1); }
+      return dir === "asc" ? (av as number) - (bv as number) : (bv as number) - (av as number);
+    });
+  }, [ipForecastPOs, poFilter, poSort]);
+
+  // ─── IP PO Export data builder ───
+  function buildIpPoExcel(pos: IPForecastPO[]): Sheet[] {
+    const fmtMonth = (v: string) => { if (!v) return ""; const [y, m] = v.split("-"); const mn = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]; return `${mn[+m]} ${y}`; };
+    const headers = ["Material", "Qty", "Mat. Cost", "Freight", "Total Cost", "$/unit", "Buy", "Receive", "Pay", "Ordered?"];
+    const rows = pos.map(po => {
+      const total = po.matCost + po.freight;
+      const cpu = po.qty > 0 ? total / po.qty : 0;
+      return [po.material, po.qty, po.matCost, po.freight, total, Math.round(cpu * 100) / 100, fmtMonth(po.mBuy), fmtMonth(po.mRecv), fmtMonth(po.mPay), po.ordered ? "Yes" : "No"] as (string | number)[];
+    });
+    return [{ name: "IP Purchase Orders", rows: [headers, ...rows] }];
+  }
+
+  // ─── IP PO Import handler ───
+  async function handleIpPoImport(rows: ParsedRow[], mode: ImportMode) {
+    // Column mapping: headers could be Material/material, Qty/qty, Mat. Cost/mat_cost, etc.
+    const mapCol = (r: ParsedRow, keys: string[]): any => { for (const k of keys) { if (r[k] != null && r[k] !== "") return r[k]; } return null; };
+    const parsed: Omit<IPForecastPO, "id">[] = rows.map(r => {
+      const material = String(mapCol(r, ["Material", "material"]) ?? "");
+      const qty = Number(mapCol(r, ["Qty", "qty", "Quantity", "quantity"]) ?? 0) || 0;
+      const matCost = Number(mapCol(r, ["Mat. Cost", "mat_cost", "MatCost", "Mat Cost", "material_cost"]) ?? 0) || 0;
+      const freight = Number(mapCol(r, ["Freight", "freight"]) ?? 0) || 0;
+      const mBuy = normalizeMonth(String(mapCol(r, ["Buy", "month_buy", "mBuy"]) ?? ""));
+      const mRecv = normalizeMonth(String(mapCol(r, ["Receive", "month_receive", "mRecv"]) ?? ""));
+      const mPay = normalizeMonth(String(mapCol(r, ["Pay", "month_pay", "mPay"]) ?? ""));
+      const orderedRaw = mapCol(r, ["Ordered?", "ordered", "Pedido?"]);
+      const ordered = orderedRaw === true || orderedRaw === 1 || String(orderedRaw ?? "").toLowerCase() === "yes" || String(orderedRaw ?? "").toLowerCase() === "si" || String(orderedRaw ?? "").toLowerCase() === "sí";
+      return { material, qty, matCost, freight, mBuy, mRecv, mPay, ordered };
+    }).filter(p => p.material);
+
+    if (!parsed.length) { toast.error("No valid rows to import"); return; }
+
+    if (mode === "replace") {
+      // Delete all existing POs
+      const { error: delErr } = await supabase.from("ops_forecast_po" as any).delete().gte("id", 0);
+      if (delErr) throw new Error("Failed to clear existing POs: " + delErr.message);
+    }
+
+    // Insert all rows
+    const inserts = parsed.map(p => ({
+      material: p.material, qty: p.qty, mat_cost: p.matCost, freight: p.freight,
+      month_buy: p.mBuy, month_receive: p.mRecv, month_pay: p.mPay, ordered: p.ordered,
+    }));
+    const { data, error } = await (supabase.from("ops_forecast_po" as any) as any).insert(inserts).select();
+    if (error) throw new Error("Failed to insert POs: " + error.message);
+    // Reload from Supabase
+    const { data: fresh } = await supabase.from("ops_forecast_po" as any).select("*").order("id");
+    if (fresh) setIpForecastPOs(fresh.map((r: any) => ({
+      id: r.id, material: r.material, qty: Number(r.qty) || 0,
+      matCost: Number(r.mat_cost) || 0, freight: Number(r.freight) || 0,
+      mBuy: r.month_buy ?? "", mRecv: r.month_receive ?? "", mPay: r.month_pay ?? "",
+      ordered: !!r.ordered,
+    })));
+    toast.success(`✅ Imported ${parsed.length} POs (${mode === "replace" ? "replaced all" : "added new"})`);
   }
 
   // ─── WIP "In production now" (Supabase: ops_wip) ───
@@ -4297,6 +4401,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
           matCost: q * (ingPrices[proc] ?? 0), freight: 0,
           mBuy: mk, mRecv: mk,
           mPay: "9999-12", // won't affect payments calculation
+          ordered: false,
         });
       }
     }
@@ -4337,6 +4442,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
           matCost: cost, freight: 0,
           mBuy: mk, mRecv: mk,
           mPay: "9999-12",
+          ordered: false,
         });
       }
     }
@@ -5586,12 +5692,12 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
 
           {/* IP Forecast POs table */}
           <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
-            <div className="px-5 py-3 border-b border-border bg-muted/30 flex items-center justify-between">
-              <div>
+            <div className="px-5 py-3 border-b border-border bg-muted/30 flex flex-wrap items-center gap-3 justify-between">
+              <div className="flex-1 min-w-0">
                 <p className="text-sm font-bold" style={{color:"#1C2340"}}>IP Purchase Orders — Forecast</p>
                 <p className="text-xs text-muted-foreground">Each PO creates a lot with its own $/unit. Lead time & payment terms auto-fill from Raw Materials settings.</p>
               </div>
-              <div className="flex flex-wrap items-center gap-2 px-5 py-2 border-b border-border bg-muted/10">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-[10px] font-semibold text-muted-foreground">Filter:</span>
                 <select value={poFilter.field} onChange={e=>setPoFilter(p=>({...p,field:e.target.value as any}))}
                   className="rounded border text-[10px] px-2 py-1">
@@ -5611,31 +5717,30 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                   <button onClick={()=>setPoFilter({field:"",month:""})} className="text-[10px] text-red-500 hover:underline">Clear</button>
                 )}
               </div>
-              <button onClick={addIpForecastPO} className="rounded-lg px-4 py-1.5 text-xs font-semibold text-white" style={{backgroundColor:"#A3224A"}}>+ Add Purchase</button>
+              <div className="flex items-center gap-2">
+                <ExportButton filename="IP_Purchase_Orders" excelData={() => buildIpPoExcel(sortedFilteredPOs)} excelAllData={() => buildIpPoExcel(ipForecastPOs)} excelLabel="Excel — Filtrado" excelAllLabel="Excel — Todo" />
+                <button onClick={() => setIpPoImportOpen(true)} className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{backgroundColor:"#1C2340"}}>📥 IMPORT</button>
+                <button onClick={addIpForecastPO} className="rounded-lg px-4 py-1.5 text-xs font-semibold text-white" style={{backgroundColor:"#A3224A"}}>+ Add Purchase</button>
+              </div>
             </div>
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/20 border-b border-border">
-                  <th className="px-3 py-2 text-left">Material</th>
-                  <th className="px-3 py-2 text-right">Qty</th>
-                  <th className="px-3 py-2 text-right">Mat. Cost</th>
-                  <th className="px-3 py-2 text-right">Freight</th>
-                  <th className="px-3 py-2 text-right font-bold" style={{color:"#DC2626"}}>Total Cost</th>
-                  <th className="px-3 py-2 text-right">$/unit</th>
-                  <th className="px-3 py-2 text-left">Buy</th>
-                  <th className="px-3 py-2 text-left">Receive</th>
-                  <th className="px-3 py-2 text-left">Pay</th>
+                  {([["material","Material","text-left"],["qty","Qty","text-right"],["matCost","Mat. Cost","text-right"],["freight","Freight","text-right"],["totalCost","Total Cost","text-right"],["cpu","$/unit","text-right"],["mBuy","Buy","text-left"],["mRecv","Receive","text-left"],["mPay","Pay","text-left"],["ordered","Pedido?","text-center"]] as [string,string,string][]).map(([col,label,align]) => (
+                    <th key={col} className={`px-3 py-2 ${align} cursor-pointer hover:text-foreground select-none ${col==="totalCost"?"font-bold":""}`}
+                      style={col==="totalCost"?{color:"#DC2626"}:undefined}
+                      onClick={() => togglePoSort(col as any)}>
+                      {label} {poSort.col === col ? (poSort.dir === "asc" ? "↑" : "↓") : ""}
+                    </th>
+                  ))}
                   <th className="px-3 py-2"></th>
                 </tr>
               </thead>
               <tbody>
                 {ipForecastPOs.length === 0 && (
-                  <tr><td colSpan={10} className="px-4 py-6 text-center text-muted-foreground">No forecast POs yet. Click "+ Add Purchase" to start planning.</td></tr>
+                  <tr><td colSpan={11} className="px-4 py-6 text-center text-muted-foreground">No forecast POs yet. Click "+ Add Purchase" to start planning.</td></tr>
                 )}
-                {ipForecastPOs.filter(po => {
-                  if (!poFilter.field || !poFilter.month) return true;
-                  return po[poFilter.field] === poFilter.month;
-                }).map(po => {
+                {sortedFilteredPOs.map(po => {
                   const cpu = po.qty > 0 ? (po.matCost + po.freight) / po.qty : 0;
                   const totalCost = po.matCost + po.freight;
                   const editing = editingPOId === po.id;
@@ -5656,6 +5761,9 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                         <td className="px-3 py-1.5"><input type="month" value={po.mBuy} onChange={e => updateIpForecastPO(po.id, "mBuy", e.target.value)} className={`${inp} w-36`} /></td>
                         <td className="px-3 py-1.5"><input type="month" value={po.mRecv} onChange={e => updateIpForecastPO(po.id, "mRecv", e.target.value)} className={`${inp} w-36`} /></td>
                         <td className="px-3 py-1.5"><input type="month" value={po.mPay} onChange={e => updateIpForecastPO(po.id, "mPay", e.target.value)} className={`${inp} w-36`} /></td>
+                        <td className="px-3 py-1.5 text-center">
+                          <button onClick={() => updateIpForecastPO(po.id, "ordered", !po.ordered)} className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${po.ordered ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>{po.ordered ? "Yes" : "No"}</button>
+                        </td>
                       </>) : (<>
                         <td className="px-3 py-1.5 font-medium">{po.material}</td>
                         <td className="px-3 py-1.5 text-right font-mono">{po.qty.toLocaleString()}</td>
@@ -5666,6 +5774,9 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                         <td className="px-3 py-1.5 text-[11px]">{fmtMonth(po.mBuy)}</td>
                         <td className="px-3 py-1.5 text-[11px]">{fmtMonth(po.mRecv)}</td>
                         <td className="px-3 py-1.5 text-[11px]">{fmtMonth(po.mPay)}</td>
+                        <td className="px-3 py-1.5 text-center">
+                          <button onClick={() => updateIpForecastPO(po.id, "ordered", !po.ordered)} className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${po.ordered ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>{po.ordered ? "Yes" : "No"}</button>
+                        </td>
                       </>)}
                       <td className="px-3 py-1.5">
                         <div className="flex gap-1">
@@ -5689,7 +5800,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                     <td className="px-3 py-2 text-right font-mono">${Math.round(ipForecastPOs.reduce((s,p)=>s+p.freight,0)).toLocaleString()}</td>
                     <td className="px-3 py-2 text-right font-mono font-bold" style={{color:"#FF6B6B"}}>${Math.round(ipForecastPOs.reduce((s,p)=>s+p.matCost+p.freight,0)).toLocaleString()}</td>
                     <td className="px-3 py-2"></td>
-                    <td colSpan={4}></td>
+                    <td colSpan={5}></td>
                   </tr>
                 </tfoot>
               )}
@@ -5697,6 +5808,16 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
           </div>
 
           {/* ── Confirm PO modal ── */}
+          <ImportModal
+            open={ipPoImportOpen}
+            onClose={() => setIpPoImportOpen(false)}
+            onImport={handleIpPoImport}
+            title="Import IP Purchase Orders"
+            partialLabel="Add new POs — keeps existing data"
+            replaceLabel="Replace all — overwrites all existing POs"
+            columnHints={["Material","Qty","Mat. Cost","Freight","Buy","Receive","Pay","Ordered?"]}
+          />
+
           {confirmingPO && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setConfirmingPO(null)}>
               <div className="rounded-2xl border border-border bg-card shadow-2xl w-[480px] max-w-[90vw]" onClick={e => e.stopPropagation()}>
