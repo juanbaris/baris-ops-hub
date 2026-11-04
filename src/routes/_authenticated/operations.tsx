@@ -372,7 +372,7 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
   const [sortDir, setSortDir] = useState<"asc"|"desc">("desc");
   const [fpImportOpen, setFpImportOpen] = useState(false);
 
-  async function handleFpImport(rows: ParsedRow[], mode: ImportMode) {
+  async function handleFpImport(rows: ParsedRow[], mode: ImportMode, _dateRange?: { min: string; max: string }) {
     const mapCol = (r: ParsedRow, keys: string[]): any => { for (const k of keys) { if (r[k] != null && r[k] !== "") return r[k]; } return null; };
     const parsed = rows.map(r => {
       const date = String(mapCol(r, ["Date", "date", "movement_date"]) ?? "");
@@ -389,7 +389,7 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
     }).filter(p => p.sku && p.date);
     if (!parsed.length) { toast.error("No valid rows to import"); return; }
     if (mode === "replace") {
-      const { error: delErr } = await supabase.from("fp_movements").delete().neq("id", 0);
+      const { error: delErr } = await supabase.from("fp_movements").delete().neq("id", "0");
       if (delErr) throw new Error("Failed to clear FP movements: " + delErr.message);
     }
     const inserts = parsed.map(p => ({
@@ -766,41 +766,81 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
   const [sortDir, setSortDir] = useState<"asc"|"desc">("desc");
   const [ipImportOpen, setIpImportOpen] = useState(false);
 
-  async function handleIpImport(rows: ParsedRow[], mode: ImportMode) {
+  async function handleIpImport(rows: ParsedRow[], mode: ImportMode, dateRange?: { min: string; max: string }) {
     const mapCol = (r: ParsedRow, keys: string[]): any => { for (const k of keys) { if (r[k] != null && r[k] !== "") return r[k]; } return null; };
     const parsed = rows.map(r => {
-      const date = String(mapCol(r, ["Date", "date", "movement_date"]) ?? "");
-      const type = String(mapCol(r, ["Type", "type"]) ?? "In");
-      const concept = String(mapCol(r, ["Concept", "concept"]) ?? "");
-      const material = String(mapCol(r, ["Material", "material"]) ?? "");
-      const qty = Number(mapCol(r, ["Qty", "qty", "Quantity", "quantity"]) ?? 0) || 0;
-      const unit = String(mapCol(r, ["Unit", "unit"]) ?? "");
-      const vendor = String(mapCol(r, ["Vendor", "vendor"]) ?? "");
-      const lot = String(mapCol(r, ["Lot", "lot", "lot_number"]) ?? "");
+      // Date: support "2026-06" (year-month) → append "-01"
+      let dateRaw = String(mapCol(r, ["Date", "date", "movement_date"]) ?? "");
+      if (/^\d{4}-\d{2}$/.test(dateRaw)) dateRaw += "-01";
+      // Type: support "In/Out" column from user's Excel
+      let typeRaw = String(mapCol(r, ["Type", "type", "In/Out"]) ?? "In");
+      if (typeRaw !== "In" && typeRaw !== "Out") {
+        typeRaw = typeRaw.toLowerCase().includes("out") ? "Out" : "In";
+      }
+      // Material: support "Item" column
+      const material = String(mapCol(r, ["Material", "material", "Item"]) ?? "");
+      // Quantity: support "Units" column, handle negatives
+      let qty = Number(mapCol(r, ["Qty", "qty", "Quantity", "quantity", "Units"]) ?? 0) || 0;
+      // If qty is negative and type wasn't explicitly set, treat as Out
+      if (qty < 0 && typeRaw === "In") { typeRaw = "Out"; qty = Math.abs(qty); }
+      if (qty < 0) qty = Math.abs(qty);
+      // Unit: support "Measure" column
+      const unit = String(mapCol(r, ["Unit", "unit", "Measure"]) ?? "");
+      // Vendor: support "Vendor/Supplier"
+      const vendor = String(mapCol(r, ["Vendor", "vendor", "Vendor/Supplier"]) ?? "");
+      // Lot: support "Lot#"
+      const lot = String(mapCol(r, ["Lot", "lot", "lot_number", "Lot#"]) ?? "");
       const moc = String(mapCol(r, ["MOC", "moc"]) ?? "");
       const warehouse = String(mapCol(r, ["Warehouse", "warehouse"]) ?? "");
-      const totalPrice = Number(mapCol(r, ["Total ($)", "total_price", "Total"]) ?? 0) || 0;
+      const concept = String(mapCol(r, ["Concept", "concept"]) ?? "");
+      // Pricing: support "Total Cost", "Cost per LB/Unit"
+      const totalPrice = Number(mapCol(r, ["Total ($)", "total_price", "Total", "Total Cost"]) ?? 0) || 0;
       const shippingPrice = Number(mapCol(r, ["Shipping ($)", "shipping_price", "Shipping"]) ?? 0) || 0;
       const otherCosts = Number(mapCol(r, ["Other ($)", "other_costs", "Other"]) ?? 0) || 0;
-      const cogsPerUnit = Number(mapCol(r, ["COGS/unit", "cogs_per_unit", "COGS"]) ?? 0) || 0;
+      const cogsPerUnit = Number(mapCol(r, ["COGS/unit", "cogs_per_unit", "COGS", "Cost per LB/Unit"]) ?? 0) || 0;
       const comment = String(mapCol(r, ["Comment", "comment", "notes", "Notes"]) ?? "");
-      const receivedRaw = mapCol(r, ["Received", "received"]);
-      const received = receivedRaw === true || receivedRaw === 1 || String(receivedRaw ?? "").toLowerCase() === "yes";
-      const paidRaw = mapCol(r, ["Paid", "paid"]);
-      const paid = paidRaw === true || paidRaw === 1 || String(paidRaw ?? "").toLowerCase() === "yes";
-      return { date, type, concept, material, qty, unit, vendor, lot, moc, warehouse, totalPrice, shippingPrice, otherCosts, cogsPerUnit, comment, received, paid };
+      // Monetization / Invoice
+      const monetization = Number(mapCol(r, ["Monetization"]) ?? 0) || 0;
+      const invoice = String(mapCol(r, ["Invoice"]) ?? "");
+      // Received / Paid: support various formats (Yes/No, true/false, date strings)
+      const receivedRaw = mapCol(r, ["Received", "received", "Delivered (date)"]);
+      const received = receivedRaw === true || receivedRaw === 1 || (typeof receivedRaw === "string" && receivedRaw !== "" && receivedRaw.toLowerCase() !== "no" && receivedRaw.toLowerCase() !== "false");
+      const paidRaw = mapCol(r, ["Paid", "paid", "Paid (amount)", "Paid (date)"]);
+      const paid = paidRaw === true || paidRaw === 1 || (typeof paidRaw === "string" && paidRaw !== "" && paidRaw.toLowerCase() !== "no" && paidRaw.toLowerCase() !== "false");
+      // Status
+      const status = String(mapCol(r, ["Status", "status"]) ?? "");
+      return { date: dateRaw, type: typeRaw, concept, material, qty, unit, vendor, lot, moc, warehouse, totalPrice, shippingPrice, otherCosts, cogsPerUnit, monetization, invoice, comment, received, paid, status };
     }).filter(p => p.material && p.date);
     if (!parsed.length) { toast.error("No valid rows to import"); return; }
+
+    // Delete logic based on mode
     if (mode === "replace") {
-      const { error: delErr } = await supabase.from("ip_movements").delete().neq("id", 0);
+      const { error: delErr } = await supabase.from("ip_movements").delete().neq("id", "0");
       if (delErr) throw new Error("Failed to clear IP movements: " + delErr.message);
+    } else if (mode === "range" && dateRange) {
+      // Normalize range dates: if "2026-06" → use "2026-06-01" for min and "2026-10-31" for max
+      let minDate = dateRange.min;
+      let maxDate = dateRange.max;
+      if (/^\d{4}-\d{2}$/.test(minDate)) minDate += "-01";
+      if (/^\d{4}-\d{2}$/.test(maxDate)) {
+        // Last day of month: parse year/month, set to last day
+        const [y, m] = maxDate.split("-").map(Number);
+        const lastDay = new Date(y, m, 0).getDate();
+        maxDate += `-${String(lastDay).padStart(2, "0")}`;
+      }
+      const { error: delErr } = await supabase.from("ip_movements").delete()
+        .gte("movement_date", minDate)
+        .lte("movement_date", maxDate);
+      if (delErr) throw new Error(`Failed to clear IP movements (${minDate} → ${maxDate}): ` + delErr.message);
     }
+
     const inserts = parsed.map(p => ({
       movement_date: p.date, type: p.type as MoveType, concept: (p.concept || null) as IPConcept | null,
       material: p.material, quantity: p.qty, unit: p.unit || null, vendor: p.vendor || null,
       lot_number: p.lot || null, moc: p.moc || null, warehouse: (p.warehouse || null) as Facility | null,
-      total_price: p.totalPrice || null, shipping_price: p.shippingPrice || null, other_costs: p.otherCosts || null,
-      cogs_per_unit: p.cogsPerUnit || null, notes: p.comment || null, received: p.received, paid: p.paid,
+      total_price: p.totalPrice || p.monetization || null, shipping_price: p.shippingPrice || null, other_costs: p.otherCosts || null,
+      cogs_per_unit: p.cogsPerUnit || null, notes: p.comment || (p.invoice ? `Inv: ${p.invoice}` : null),
+      received: p.received, paid: p.paid,
     }));
     const BATCH = 500;
     let inserted = 0;
@@ -811,7 +851,8 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
       inserted += batch.length;
     }
     onAdded();
-    toast.success(`✅ Imported ${inserted} IP movements (${mode === "replace" ? "replaced all" : "added new"})`);
+    const modeLabel = mode === "replace" ? "replaced all" : mode === "range" ? `replaced ${dateRange?.min} → ${dateRange?.max}` : "added new";
+    toast.success(`✅ Imported ${inserted} IP movements (${modeLabel})`);
   }
 
   function set(k: string, v: string) { setForm(f => ({ ...f, [k]: v })); }
@@ -1300,7 +1341,8 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
         title="Import I&P Movements"
         partialLabel="Add new movements — keeps existing data"
         replaceLabel="Replace all — overwrites all existing I&P movements"
-        columnHints={["Date","Type","Concept","Material","Qty","Unit","Vendor","Lot","MOC","Warehouse","Total ($)","Shipping ($)","Other ($)","COGS/unit","Comment","Received","Paid"]}
+        columnHints={["Date","Type/In/Out","Concept","Material/Item","Qty/Units","Unit/Measure","Vendor/Supplier","Lot/Lot#","MOC","Warehouse","Total ($)/Total Cost","Shipping ($)","Other ($)","COGS/unit/Cost per LB/Unit","Comment","Received","Paid"]}
+        dateColumn={["Date", "date", "movement_date"]}
       />
     </div>
   );
