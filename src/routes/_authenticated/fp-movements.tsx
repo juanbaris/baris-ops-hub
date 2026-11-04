@@ -8,6 +8,10 @@ import {
   normLot, resolveCogs, skuLabel,
   type FPConcept, type FPRow, type LotCard, type SKU, type Warehouse,
 } from "@/lib/fp-shared";
+import { ExportButton } from "@/components/export-button";
+import { ImportModal, type ImportMode } from "@/components/import-modal";
+import type { Sheet } from "@/lib/excel-report";
+import type { ParsedRow } from "@/lib/excel-import";
 
 const inp = "rounded-lg border border-border bg-background px-3 py-1.5 text-sm w-full focus:outline-none focus:ring-2 focus:ring-primary/30";
 const sel = "rounded-lg border border-border bg-background px-2 py-1.5 text-xs focus:outline-none";
@@ -44,6 +48,65 @@ function FPMovements() {
   const [editing, setEditing] = useState<FPRow | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+
+  // Excel export builder
+  function buildFpExcel(data: FPRow[]): Sheet[] {
+    const headers = ["Date","Type","SKU","Cases","Warehouse","Lot #","Concept","COGS/case","PO Ref","Notes"];
+    const exRows = data.map(r => [
+      r.movement_date, r.type, r.sku, r.cases, r.warehouse, r.lot_number ?? "",
+      r.concept, r.cogs_per_case ?? "", (r as any).po_ref ?? "", r.notes ?? "",
+    ]);
+    return [{ name: "FP Movements", rows: [headers, ...exRows] }];
+  }
+
+  // Import handler
+  async function handleImport(parsed: ParsedRow[], mode: ImportMode) {
+    const colMap: Record<string, string> = {
+      date: "movement_date", fecha: "movement_date", movement_date: "movement_date",
+      type: "type", tipo: "type",
+      sku: "sku",
+      cases: "cases", casos: "cases",
+      warehouse: "warehouse", almacen: "warehouse",
+      "lot #": "lot_number", lot: "lot_number", lot_number: "lot_number", lote: "lot_number",
+      concept: "concept", concepto: "concept",
+      "cogs/case": "cogs_per_case", cogs_per_case: "cogs_per_case", cogs: "cogs_per_case",
+      "po ref": "po_ref", po_ref: "po_ref",
+      notes: "notes", notas: "notes",
+    };
+
+    function mapRow(r: ParsedRow) {
+      const mapped: Record<string, any> = {};
+      for (const [key, val] of Object.entries(r)) {
+        const norm = key.toLowerCase().trim();
+        const dbCol = colMap[norm];
+        if (dbCol) mapped[dbCol] = val;
+      }
+      if (!mapped.movement_date) mapped.movement_date = new Date().toISOString().slice(0, 10);
+      if (!mapped.type) mapped.type = "In";
+      if (!mapped.sku) mapped.sku = "XD";
+      if (!mapped.cases) mapped.cases = 0;
+      if (!mapped.warehouse) mapped.warehouse = "Lineage Newark";
+      if (!mapped.concept) mapped.concept = "Production";
+      if (typeof mapped.cases === "string") mapped.cases = Number(mapped.cases) || 0;
+      if (typeof mapped.cogs_per_case === "string") mapped.cogs_per_case = Number(mapped.cogs_per_case) || null;
+      return mapped;
+    }
+
+    if (mode === "replace") {
+      const { error: delErr } = await supabase.from("fp_movements").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+      if (delErr) throw new Error("Failed to clear existing movements: " + delErr.message);
+    }
+
+    const toInsert = parsed.map(mapRow);
+    for (let i = 0; i < toInsert.length; i += 50) {
+      const batch = toInsert.slice(i, i + 50);
+      const { error } = await supabase.from("fp_movements").insert(batch as any);
+      if (error) throw new Error(`Import failed at batch ${Math.floor(i/50)+1}: ${error.message}`);
+    }
+    toast.success(`Imported ${parsed.length} FP movements`);
+    await load();
+  }
 
   async function load() {
     const [mv, lots] = await Promise.all([
@@ -233,6 +296,10 @@ function FPMovements() {
         <span className="rounded-full bg-muted px-2.5 py-1 font-mono text-[11px] text-muted-foreground">
           {filtered.length.toLocaleString()} movements
         </span>
+        <div className="ml-auto flex items-center gap-2">
+          <ExportButton filename="FP_Movements" excelData={() => buildFpExcel(filtered)} excelAllData={() => buildFpExcel(rows)} excelLabel="Excel — Filtrado" excelAllLabel="Excel — Todo" />
+          <button onClick={() => setImportOpen(true)} className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{backgroundColor:"#1C2340"}}>📥 IMPORT</button>
+        </div>
       </div>
 
       <div className="overflow-x-auto rounded-2xl border border-border bg-card">
@@ -299,6 +366,16 @@ function FPMovements() {
           </tbody>
         </table>
       </div>
+
+      <ImportModal
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImport={handleImport}
+        title="Import FP Movements"
+        partialLabel="Add new movements — keeps existing data"
+        replaceLabel="Replace all — overwrites ALL existing FP movements"
+        columnHints={["Date","Type","SKU","Cases","Warehouse","Lot #","Concept","COGS/case","PO Ref","Notes"]}
+      />
     </>
   );
 }
