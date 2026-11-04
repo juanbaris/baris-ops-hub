@@ -370,6 +370,44 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
   const [filterMonth, setFilterMonth] = useState<string>("all");
   const [filterConcept, setFilterConcept] = useState<string>("all");
   const [sortDir, setSortDir] = useState<"asc"|"desc">("desc");
+  const [fpImportOpen, setFpImportOpen] = useState(false);
+
+  async function handleFpImport(rows: ParsedRow[], mode: ImportMode) {
+    const mapCol = (r: ParsedRow, keys: string[]): any => { for (const k of keys) { if (r[k] != null && r[k] !== "") return r[k]; } return null; };
+    const parsed = rows.map(r => {
+      const date = String(mapCol(r, ["Date", "date", "movement_date"]) ?? "");
+      const type = String(mapCol(r, ["Type", "type"]) ?? "In");
+      const sku = String(mapCol(r, ["SKU", "sku"]) ?? "");
+      const cases = Number(mapCol(r, ["Cases", "cases", "quantity"]) ?? 0) || 0;
+      const warehouse = String(mapCol(r, ["Warehouse", "warehouse"]) ?? "");
+      const lot = String(mapCol(r, ["Lot", "lot", "lot_number"]) ?? "");
+      const moc = String(mapCol(r, ["MOC", "moc"]) ?? "");
+      const concept = String(mapCol(r, ["Concept", "concept"]) ?? "");
+      const notes = String(mapCol(r, ["Notes", "notes"]) ?? "");
+      const cogsPerUnit = Number(mapCol(r, ["COGS/pote", "cogs_per_unit", "COGS/unit", "cogs"]) ?? 0) || 0;
+      return { date, type, sku, cases, warehouse, lot, moc, concept, notes, cogsPerUnit };
+    }).filter(p => p.sku && p.date);
+    if (!parsed.length) { toast.error("No valid rows to import"); return; }
+    if (mode === "replace") {
+      const { error: delErr } = await supabase.from("fp_movements").delete().neq("id", 0);
+      if (delErr) throw new Error("Failed to clear FP movements: " + delErr.message);
+    }
+    const inserts = parsed.map(p => ({
+      movement_date: p.date, type: p.type as "In" | "Out", sku: p.sku as SKU, cases: p.cases,
+      warehouse: p.warehouse || null, lot_number: p.lot || null, moc: p.moc || null,
+      concept: (p.concept || null) as FPConcept | null, notes: p.notes || null, cogs_per_unit: p.cogsPerUnit || null,
+    }));
+    const BATCH = 500;
+    let inserted = 0;
+    for (let i = 0; i < inserts.length; i += BATCH) {
+      const batch = inserts.slice(i, i + BATCH);
+      const { error } = await supabase.from("fp_movements").insert(batch as any);
+      if (error) throw new Error("Failed to insert FP movements: " + error.message);
+      inserted += batch.length;
+    }
+    onAdded();
+    toast.success(`✅ Imported ${inserted} FP movements (${mode === "replace" ? "replaced all" : "added new"})`);
+  }
 
   function set(k: string, v: string) { setForm(f => ({ ...f, [k]: v })); }
 
@@ -573,6 +611,9 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
               className="rounded-lg border border-border px-2 py-1 text-xs hover:bg-muted">
               Date {sortDir === "desc" ? "▼" : "▲"}
             </button>
+            <button onClick={() => setFpImportOpen(true)} className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{backgroundColor:"#1C2340"}}>
+              📥 IMPORT
+            </button>
           </div>
         </div>
         <table className="w-full text-sm">
@@ -659,6 +700,15 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
           })()}
         </table>
       </div>
+      <ImportModal
+        open={fpImportOpen}
+        onClose={() => setFpImportOpen(false)}
+        onImport={handleFpImport}
+        title="Import FP Movements"
+        partialLabel="Add new movements — keeps existing data"
+        replaceLabel="Replace all — overwrites all existing FP movements"
+        columnHints={["Date","Type","SKU","Cases","Warehouse","Lot","MOC","Concept","Notes","COGS/pote"]}
+      />
     </div>
   );
 }
@@ -714,6 +764,55 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
   const [filterDateTo, setFilterDateTo] = useState("");
   const [sortCol, setSortCol] = useState<"date"|"material"|"qty">("date");
   const [sortDir, setSortDir] = useState<"asc"|"desc">("desc");
+  const [ipImportOpen, setIpImportOpen] = useState(false);
+
+  async function handleIpImport(rows: ParsedRow[], mode: ImportMode) {
+    const mapCol = (r: ParsedRow, keys: string[]): any => { for (const k of keys) { if (r[k] != null && r[k] !== "") return r[k]; } return null; };
+    const parsed = rows.map(r => {
+      const date = String(mapCol(r, ["Date", "date", "movement_date"]) ?? "");
+      const type = String(mapCol(r, ["Type", "type"]) ?? "In");
+      const concept = String(mapCol(r, ["Concept", "concept"]) ?? "");
+      const material = String(mapCol(r, ["Material", "material"]) ?? "");
+      const qty = Number(mapCol(r, ["Qty", "qty", "Quantity", "quantity"]) ?? 0) || 0;
+      const unit = String(mapCol(r, ["Unit", "unit"]) ?? "");
+      const vendor = String(mapCol(r, ["Vendor", "vendor"]) ?? "");
+      const lot = String(mapCol(r, ["Lot", "lot", "lot_number"]) ?? "");
+      const moc = String(mapCol(r, ["MOC", "moc"]) ?? "");
+      const warehouse = String(mapCol(r, ["Warehouse", "warehouse"]) ?? "");
+      const totalPrice = Number(mapCol(r, ["Total ($)", "total_price", "Total"]) ?? 0) || 0;
+      const shippingPrice = Number(mapCol(r, ["Shipping ($)", "shipping_price", "Shipping"]) ?? 0) || 0;
+      const otherCosts = Number(mapCol(r, ["Other ($)", "other_costs", "Other"]) ?? 0) || 0;
+      const cogsPerUnit = Number(mapCol(r, ["COGS/unit", "cogs_per_unit", "COGS"]) ?? 0) || 0;
+      const comment = String(mapCol(r, ["Comment", "comment", "notes", "Notes"]) ?? "");
+      const receivedRaw = mapCol(r, ["Received", "received"]);
+      const received = receivedRaw === true || receivedRaw === 1 || String(receivedRaw ?? "").toLowerCase() === "yes";
+      const paidRaw = mapCol(r, ["Paid", "paid"]);
+      const paid = paidRaw === true || paidRaw === 1 || String(paidRaw ?? "").toLowerCase() === "yes";
+      return { date, type, concept, material, qty, unit, vendor, lot, moc, warehouse, totalPrice, shippingPrice, otherCosts, cogsPerUnit, comment, received, paid };
+    }).filter(p => p.material && p.date);
+    if (!parsed.length) { toast.error("No valid rows to import"); return; }
+    if (mode === "replace") {
+      const { error: delErr } = await supabase.from("ip_movements").delete().neq("id", 0);
+      if (delErr) throw new Error("Failed to clear IP movements: " + delErr.message);
+    }
+    const inserts = parsed.map(p => ({
+      movement_date: p.date, type: p.type as MoveType, concept: (p.concept || null) as IPConcept | null,
+      material: p.material, quantity: p.qty, unit: p.unit || null, vendor: p.vendor || null,
+      lot_number: p.lot || null, moc: p.moc || null, warehouse: (p.warehouse || null) as Facility | null,
+      total_price: p.totalPrice || null, shipping_price: p.shippingPrice || null, other_costs: p.otherCosts || null,
+      cogs_per_unit: p.cogsPerUnit || null, notes: p.comment || null, received: p.received, paid: p.paid,
+    }));
+    const BATCH = 500;
+    let inserted = 0;
+    for (let i = 0; i < inserts.length; i += BATCH) {
+      const batch = inserts.slice(i, i + BATCH);
+      const { error } = await supabase.from("ip_movements").insert(batch as any);
+      if (error) throw new Error("Failed to insert IP movements: " + error.message);
+      inserted += batch.length;
+    }
+    onAdded();
+    toast.success(`✅ Imported ${inserted} IP movements (${mode === "replace" ? "replaced all" : "added new"})`);
+  }
 
   function set(k: string, v: string) { setForm(f => ({ ...f, [k]: v })); }
 
@@ -1076,6 +1175,9 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
         }} className="rounded-lg border border-border bg-background px-3 py-1 text-[10px] font-semibold text-muted-foreground hover:text-foreground">
           📥 Export CSV
         </button>
+        <button onClick={() => setIpImportOpen(true)} className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{backgroundColor:"#1C2340"}}>
+          📥 IMPORT
+        </button>
       </div>
 
       <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
@@ -1191,6 +1293,15 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
           })()}
         </table>
       </div>
+      <ImportModal
+        open={ipImportOpen}
+        onClose={() => setIpImportOpen(false)}
+        onImport={handleIpImport}
+        title="Import I&P Movements"
+        partialLabel="Add new movements — keeps existing data"
+        replaceLabel="Replace all — overwrites all existing I&P movements"
+        columnHints={["Date","Type","Concept","Material","Qty","Unit","Vendor","Lot","MOC","Warehouse","Total ($)","Shipping ($)","Other ($)","COGS/unit","Comment","Received","Paid"]}
+      />
     </div>
   );
 }
