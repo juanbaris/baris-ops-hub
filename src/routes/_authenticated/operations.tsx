@@ -373,7 +373,7 @@ function FPInputTab({ movements, loading, onAdded, lotMap }: { movements: FPRow[
   const [fpImportOpen, setFpImportOpen] = useState(false);
 
   async function handleFpImport(rows: ParsedRow[], mode: ImportMode, _dateRange?: { min: string; max: string }) {
-    const mapCol = (r: ParsedRow, keys: string[]): any => { for (const k of keys) { if (r[k] != null && r[k] !== "") return r[k]; } return null; };
+    const mapCol = (r: ParsedRow, keys: string[]): any => { for (const k of keys) { if (r[k] != null && r[k] !== "") return r[k]; } const rk = Object.keys(r); for (const k of keys) { const kl = k.toLowerCase(); const m = rk.find(x => x.toLowerCase() === kl); if (m && r[m] != null && r[m] !== "") return r[m]; } return null; };
     const parsed = rows.map(r => {
       const date = String(mapCol(r, ["Date", "date", "movement_date"]) ?? "");
       const type = String(mapCol(r, ["Type", "type"]) ?? "In");
@@ -767,7 +767,7 @@ function IPInputTab({ movements, loading, onAdded }: { movements: IPRow[]; loadi
   const [ipImportOpen, setIpImportOpen] = useState(false);
 
   async function handleIpImport(rows: ParsedRow[], mode: ImportMode, dateRange?: { min: string; max: string }) {
-    const mapCol = (r: ParsedRow, keys: string[]): any => { for (const k of keys) { if (r[k] != null && r[k] !== "") return r[k]; } return null; };
+    const mapCol = (r: ParsedRow, keys: string[]): any => { for (const k of keys) { if (r[k] != null && r[k] !== "") return r[k]; } const rk = Object.keys(r); for (const k of keys) { const kl = k.toLowerCase(); const m = rk.find(x => x.toLowerCase() === kl); if (m && r[m] != null && r[m] !== "") return r[m]; } return null; };
     const parsed = rows.map(r => {
       // Date: support "2026-06" (year-month) → append "-01"
       let dateRaw = String(mapCol(r, ["Date", "date", "movement_date"]) ?? "");
@@ -4167,7 +4167,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
   // ─── IP PO Import handler ───
   async function handleIpPoImport(rows: ParsedRow[], mode: ImportMode) {
     // Column mapping: headers could be Material/material, Qty/qty, Mat. Cost/mat_cost, etc.
-    const mapCol = (r: ParsedRow, keys: string[]): any => { for (const k of keys) { if (r[k] != null && r[k] !== "") return r[k]; } return null; };
+    const mapCol = (r: ParsedRow, keys: string[]): any => { for (const k of keys) { if (r[k] != null && r[k] !== "") return r[k]; } const rk = Object.keys(r); for (const k of keys) { const kl = k.toLowerCase(); const m = rk.find(x => x.toLowerCase() === kl); if (m && r[m] != null && r[m] !== "") return r[m]; } return null; };
     const parsed: Omit<IPForecastPO, "id">[] = rows.map(r => {
       const material = String(mapCol(r, ["Material", "material"]) ?? "");
       const qty = Number(mapCol(r, ["Qty", "qty", "Quantity", "quantity"]) ?? 0) || 0;
