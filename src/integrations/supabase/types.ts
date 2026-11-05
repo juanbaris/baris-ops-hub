@@ -161,6 +161,7 @@ export type Database = {
           promo_discount: number | null
           pw_cases: number | null
           ship_est_date: string | null
+          ship_from: string | null
           ship_to_address: string | null
           status: Database["public"]["Enums"]["order_status"]
           updated_at: string
@@ -193,6 +194,7 @@ export type Database = {
           promo_discount?: number | null
           pw_cases?: number | null
           ship_est_date?: string | null
+          ship_from?: string | null
           ship_to_address?: string | null
           status?: Database["public"]["Enums"]["order_status"]
           updated_at?: string
@@ -225,6 +227,7 @@ export type Database = {
           promo_discount?: number | null
           pw_cases?: number | null
           ship_est_date?: string | null
+          ship_from?: string | null
           ship_to_address?: string | null
           status?: Database["public"]["Enums"]["order_status"]
           updated_at?: string
@@ -686,6 +689,90 @@ export type Database = {
           type?: Database["public"]["Enums"]["movement_type"]
           unit?: string
           updated_at?: string
+          vendor?: string | null
+          warehouse?: string | null
+        }
+        Relationships: []
+      }
+      ip_movements_backup_20261020: {
+        Row: {
+          actual_payment_date: string | null
+          actual_receive_date: string | null
+          cogs_per_unit: number | null
+          concept: Database["public"]["Enums"]["ip_concept"] | null
+          created_at: string | null
+          created_by: string | null
+          estimated_payment_date: string | null
+          estimated_receive_date: string | null
+          id: string | null
+          lot_number: string | null
+          material: string | null
+          movement_date: string | null
+          notes: string | null
+          other_costs: number | null
+          paid: boolean | null
+          price_per_unit: number | null
+          quantity: number | null
+          received: boolean | null
+          shipping_price: number | null
+          total_price: number | null
+          type: Database["public"]["Enums"]["movement_type"] | null
+          unit: string | null
+          updated_at: string | null
+          vendor: string | null
+          warehouse: string | null
+        }
+        Insert: {
+          actual_payment_date?: string | null
+          actual_receive_date?: string | null
+          cogs_per_unit?: number | null
+          concept?: Database["public"]["Enums"]["ip_concept"] | null
+          created_at?: string | null
+          created_by?: string | null
+          estimated_payment_date?: string | null
+          estimated_receive_date?: string | null
+          id?: string | null
+          lot_number?: string | null
+          material?: string | null
+          movement_date?: string | null
+          notes?: string | null
+          other_costs?: number | null
+          paid?: boolean | null
+          price_per_unit?: number | null
+          quantity?: number | null
+          received?: boolean | null
+          shipping_price?: number | null
+          total_price?: number | null
+          type?: Database["public"]["Enums"]["movement_type"] | null
+          unit?: string | null
+          updated_at?: string | null
+          vendor?: string | null
+          warehouse?: string | null
+        }
+        Update: {
+          actual_payment_date?: string | null
+          actual_receive_date?: string | null
+          cogs_per_unit?: number | null
+          concept?: Database["public"]["Enums"]["ip_concept"] | null
+          created_at?: string | null
+          created_by?: string | null
+          estimated_payment_date?: string | null
+          estimated_receive_date?: string | null
+          id?: string | null
+          lot_number?: string | null
+          material?: string | null
+          movement_date?: string | null
+          notes?: string | null
+          other_costs?: number | null
+          paid?: boolean | null
+          price_per_unit?: number | null
+          quantity?: number | null
+          received?: boolean | null
+          shipping_price?: number | null
+          total_price?: number | null
+          type?: Database["public"]["Enums"]["movement_type"] | null
+          unit?: string | null
+          updated_at?: string | null
           vendor?: string | null
           warehouse?: string | null
         }
@@ -1728,6 +1815,9 @@ export type Database = {
         | "Work in Progress"
         | "Pistachio Production"
         | "Hazelnut And Milk Production"
+        | "Extra Dark Production"
+        | "White and Milk Production"
+        | "White and Dark Production"
       movement_type: "In" | "Out"
       order_status:
         | "Open"
@@ -1910,6 +2000,9 @@ export const Constants = {
         "Work in Progress",
         "Pistachio Production",
         "Hazelnut And Milk Production",
+        "Extra Dark Production",
+        "White and Milk Production",
+        "White and Dark Production",
       ],
       movement_type: ["In", "Out"],
       order_status: [
