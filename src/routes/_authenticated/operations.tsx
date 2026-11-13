@@ -3013,6 +3013,15 @@ const FORECAST_KEYS_OPS: string[] = [];
     m++; if (m > 12) { m = 1; y++; }
   }
 })();
+
+// Index of the current month inside FORECAST_KEYS_OPS (skip past months in displays & calc)
+const CURRENT_OPS_MONTH_IDX = (() => {
+  const now = new Date();
+  const cmk = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const idx = FORECAST_KEYS_OPS.findIndex(k => k >= cmk);
+  return idx >= 0 ? idx : 0;
+})();
+
 function buildOpsForecast(bySkuMonthKey: Record<string, Record<string, number>>, procSkuList?: string[]): Record<string, number[]> {
   const skuList = procSkuList ?? SKUS;
   return Object.fromEntries(skuList.map(sku => [
@@ -3426,9 +3435,9 @@ function calcProdSchedule(
     let running=Math.max(0,(stockBySku[sku]??0)-(committed[sku]??0))+(wipBySku[sku]??0);
     plan[sku]=[]; stockProj[sku]=[];
     for(let i=0;i<FORECAST_MONTHS_OPS.length;i++) {
-      const fcst=FORECAST_SKU_OPS[sku]?.[i]??0;
-      // Purely manual: only produce what the user entered
-      const produce = manualProd[sku]?.[i] ?? 0;
+      // Skip past months: today's stock already reflects those sales
+      const fcst = i >= CURRENT_OPS_MONTH_IDX ? (FORECAST_SKU_OPS[sku]?.[i]??0) : 0;
+      const produce = i >= CURRENT_OPS_MONTH_IDX ? (manualProd[sku]?.[i] ?? 0) : 0;
       plan[sku].push(produce);
       running=running+produce-fcst;
       stockProj[sku].push(Math.round(running));
@@ -4801,7 +4810,9 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
 
   return (
     <div className="space-y-4">
-      <CommittedRequirements planScenario={planScenario} onPlanScenarioChange={setPlanScenario} forecast={fcstOps} months={FORECAST_MONTHS_OPS} />
+      <CommittedRequirements planScenario={planScenario} onPlanScenarioChange={setPlanScenario}
+        forecast={Object.fromEntries(Object.entries(fcstOps).map(([sku, arr]) => [sku, arr.slice(CURRENT_OPS_MONTH_IDX)]))}
+        months={FORECAST_MONTHS_OPS.slice(CURRENT_OPS_MONTH_IDX)} />
 
       {/* Summary bar */}
       <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
@@ -4854,7 +4865,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                   <th className="px-3 py-2.5 text-center min-w-[150px]">In production now</th>
                   <th className="px-3 py-2.5 text-right">Avail + WIP</th>
                   <th className="px-3 py-2.5 text-center min-w-[60px]">SKU min</th>
-                  {FORECAST_MONTHS_OPS.map(m=><th key={m} className="px-3 py-2.5 text-center min-w-[85px]">{m}</th>)}
+                  {FORECAST_MONTHS_OPS.map((m,i)=> i >= CURRENT_OPS_MONTH_IDX ? <th key={m} className="px-3 py-2.5 text-center min-w-[85px]">{m}</th> : null)}
                   <th className="px-4 py-2.5 text-right">Total</th>
                   <th className="px-3 py-2.5 text-right">End WoH</th>
                 </tr>
@@ -4895,6 +4906,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                           title={`Per-SKU minimum for ${sku} (0 = use global min ${minRun})`}/>
                       </td>
                       {(plan[sku]??[]).map((prod,i)=>{
+                        if (i < CURRENT_OPS_MONTH_IDX) return null;
                         const isManual = (manualProd[sku]?.[i] ?? 0) > 0;
                         const isAuto = !isManual && prod > 0;
                         return (
@@ -4936,6 +4948,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                   </td>
                   <td className="px-3 py-2"></td>
                   {totalByMonth.map((t,i)=>{
+                    if (i < CURRENT_OPS_MONTH_IDX) return null;
                     return (
                       <td key={i} className="px-3 py-2 text-center font-mono font-bold"
                         style={t>0?{backgroundColor:"rgba(191,219,254,0.3)",color:"#93C5FD"}:{}}>
@@ -4960,7 +4973,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
               <thead>
                 <tr style={{backgroundColor:"#1C2340",color:"#fff"}}>
                   <th className="px-4 py-2.5 text-left sticky left-0" style={{backgroundColor:"#1C2340"}}>SKU</th>
-                  {FORECAST_MONTHS_OPS.map(m=><th key={m} className="px-3 py-2.5 text-center min-w-[80px]">{m}</th>)}
+                  {FORECAST_MONTHS_OPS.map((m,i)=> i >= CURRENT_OPS_MONTH_IDX ? <th key={m} className="px-3 py-2.5 text-center min-w-[80px]">{m}</th> : null)}
                 </tr>
               </thead>
               <tbody>
@@ -4968,6 +4981,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
                   <tr key={sku} className="border-t border-border/60">
                     <td className="px-4 py-1.5 font-semibold sticky left-0 bg-card" style={{color:"#1C2340"}}>{sku}</td>
                     {(stockProj[sku]??[]).map((stock,i)=>{
+                      if (i < CURRENT_OPS_MONTH_IDX) return null;
                       const fcst=fcstOps[sku]?.[i]??0;
                       const woh=fcst>0?(stock/fcst)*4:99;
                       const isCrit=stock<0||woh<4;
@@ -5564,7 +5578,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
 
       {/* ── FORECAST DASHBOARD ── */}
       {procTab==="forecast_dash" && (() => {
-        const FR = fifoResults;
+        const FR = fifoResults.filter(r => r.mk >= NOW_MK);
         const last = FR[FR.length - 1];
         const tIPv = ALL_INGS.reduce((s, g) => s + (last?.ipStock[g]?.value ?? 0), 0);
         const tFPv = dynamicProcSkus.reduce((s, sk) => {
@@ -6038,7 +6052,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
 
       {/* ── IP STOCK FORECAST (FIFO) ── */}
       {procTab==="ip_stock_fcst" && (() => {
-        const FR = fifoResults;
+        const FR = fifoResults.filter(r => r.mk >= NOW_MK);
         const last = FR[FR.length - 1];
         // Dynamic material list: all materials that have stock or movements in any month
         const displayMats = allMaterialsList;
@@ -6260,7 +6274,7 @@ function ProcurementTab({ movements, orders, baseline, ipMovements, onAdded }: {
 
       {/* ── FP STOCK FORECAST (FIFO) ── */}
       {procTab==="fp_stock_fcst" && (() => {
-        const FR = fifoResults;
+        const FR = fifoResults.filter(r => r.mk >= NOW_MK);
         const last = FR[FR.length - 1];
         return (
           <div className="space-y-4">
