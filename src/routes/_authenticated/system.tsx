@@ -601,5 +601,12 @@ function SistemaPage() {
 
 export const Route = createFileRoute("/_authenticated/system")({
   component: SistemaPage,
-  head: () => ({ meta: [{ title: "System · BARIS" }] }),
+  head: () => ({ meta: [
+    { title: "System · BARIS" },
+    { name: "description", content: "Manage BARIS operational settings, users and system configuration." },
+    { property: "og:title", content: "System · BARIS" },
+    { property: "og:description", content: "Manage BARIS operational settings, users and system configuration." },
+    { property: "og:type", content: "website" },
+    { name: "twitter:card", content: "summary" },
+  ] }),
 });

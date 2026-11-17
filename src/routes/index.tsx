@@ -5,6 +5,14 @@ import { supabase } from "@/integrations/supabase/client";
 export const Route = createFileRoute("/")({
   ssr: false,
   component: IndexRedirect,
+  head: () => ({ meta: [
+    { title: "BARIS Operations Hub" },
+    { name: "description", content: "Access BARIS sales, fulfillment, inventory and financial operations." },
+    { property: "og:title", content: "BARIS Operations Hub" },
+    { property: "og:description", content: "Access BARIS sales, fulfillment, inventory and financial operations." },
+    { property: "og:type", content: "website" },
+    { name: "twitter:card", content: "summary" },
+  ] }),
 });
 
 function IndexRedirect() {

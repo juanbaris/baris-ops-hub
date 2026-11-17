@@ -1406,7 +1406,7 @@ function saveCogsPote(year: number, v: number) { try { localStorage.setItem(`bar
 
 // Per-SKU COGS $/pote (editable in Assumptions). Defaults from the 2027 COGS-by-SKU sheet.
 const DEFAULT_COGS_POTE_SKU: Record<string, number> = {
-  XD: 2.3, PW: 2.4, HM: 2.2, WM: 2.15, WD: 2.1, Matcha: 2.19, DS: 1.9, VS: 1.9, CS: 1.9, GR: 2.0, GS: 2.0,
+  XD: 2.3, PW: 2.4, HM: 2.2, WM: 2.15, WD: 2.1, Matcha: 2.19, DS: 1.9, VS: 1.9, CS: 1.9,
 };
 function loadCogsPoteSku(sku: string): number {
   try { const r = localStorage.getItem(`baris.finance.cogsPoteSku.${sku}`); return r != null ? Number(r) : (DEFAULT_COGS_POTE_SKU[sku] ?? 2.19); }
@@ -3417,5 +3417,12 @@ function FinancePage() {
 
 export const Route = createFileRoute("/_authenticated/finance")({
   component: FinancePage,
-  head: () => ({ meta: [{ title: "Finance · BARIS" }] }),
+  head: () => ({ meta: [
+    { title: "Finance · BARIS" },
+    { name: "description", content: "Track BARIS profit and loss, cash flow, runway and financial forecasts." },
+    { property: "og:title", content: "Finance · BARIS" },
+    { property: "og:description", content: "Track BARIS profit and loss, cash flow, runway and financial forecasts." },
+    { property: "og:type", content: "website" },
+    { name: "twitter:card", content: "summary" },
+  ] }),
 });

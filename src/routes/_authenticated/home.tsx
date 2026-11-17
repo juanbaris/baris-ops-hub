@@ -776,5 +776,12 @@ function BudgetUploader({ onUploaded }: { onUploaded: () => void }) {
 
 export const Route = createFileRoute("/_authenticated/home")({
   component: HomePage,
-  head: () => ({ meta: [{ title: "Home · BARIS Operations Hub" }] }),
+  head: () => ({ meta: [
+    { title: "Home · BARIS Operations Hub" },
+    { name: "description", content: "BARIS operational overview of sales, open orders and stock health." },
+    { property: "og:title", content: "Home · BARIS Operations Hub" },
+    { property: "og:description", content: "BARIS operational overview of sales, open orders and stock health." },
+    { property: "og:type", content: "website" },
+    { name: "twitter:card", content: "summary" },
+  ] }),
 });

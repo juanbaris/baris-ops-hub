@@ -3569,5 +3569,12 @@ function FilterSelect({ label, value, onChange, options }: {
 
 export const Route = createFileRoute("/_authenticated/fulfillment")({
   component: Fulfillment,
-  head: () => ({ meta: [{ title: "Fulfillment · BARIS" }] }),
+  head: () => ({ meta: [
+    { title: "Fulfillment · BARIS" },
+    { name: "description", content: "Manage BARIS customer orders, shipments, invoices and logistics." },
+    { property: "og:title", content: "Fulfillment · BARIS" },
+    { property: "og:description", content: "Manage BARIS customer orders, shipments, invoices and logistics." },
+    { property: "og:type", content: "website" },
+    { name: "twitter:card", content: "summary" },
+  ] }),
 });

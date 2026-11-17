@@ -14,7 +14,7 @@ congelado: barritas de frambuesa cubiertas de chocolate. Le respondés al founde
 
 Contexto del negocio:
 - SKUs: XD, PW (P&W), HM (H&M), WM (W&M), WD (W&D), Matcha, y nuevos sabores de
-  frutilla (Strawberry & White, Strawberry Caramel, Strawberry Yogurt, Raspberry Yogurt).
+  frutilla (Strawberry & White, Strawberry Caramel).
 - Distribuidores: UNFI, KeHe (Sprouts), Rainforest, RFD, Direct.
 - Copacker: Heinlein (esquema de tolling fee). Bookkeeping: Accountfully (cierra con lag).
 - Los distribuidores compran ~1 mes antes de que el retailer venda (timing shift).

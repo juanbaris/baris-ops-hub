@@ -263,4 +263,12 @@ function AccountingPage() {
 
 export const Route = createFileRoute("/_authenticated/Accounting")({
   component: AccountingPage,
+  head: () => ({ meta: [
+    { title: "Accounting · BARIS" },
+    { name: "description", content: "Review BARIS accounting statements, sales totals and inventory summaries." },
+    { property: "og:title", content: "Accounting · BARIS" },
+    { property: "og:description", content: "Review BARIS accounting statements, sales totals and inventory summaries." },
+    { property: "og:type", content: "website" },
+    { name: "twitter:card", content: "summary" },
+  ] }),
 });

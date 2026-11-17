@@ -34,10 +34,8 @@ export type NewSku = {
 export const DEFAULT_NEW_SKUS: NewSku[] = [
   { name: "Strawberry & White",  stores: 404, vel: 1.20, entry: 3, active: false, committed: false, cannibalizesMatcha: false },
   { name: "Strawberry Caramel",  stores: 404, vel: 1.20, entry: 4, active: false, committed: false, cannibalizesMatcha: false },
-  { name: "Strawberry Yogurt",   stores: 404, vel: 1.00, entry: 5, active: false, committed: false, cannibalizesMatcha: false },
-  { name: "Raspberry Yogurt",    stores: 404, vel: 1.00, entry: 6, active: false, committed: false, cannibalizesMatcha: false },
 ];
-export const NEW_SKU_COLORS = ["#EC4899", "#F97316", "#14B8A6", "#A855F7"];
+export const NEW_SKU_COLORS = ["#EC4899", "#F97316"];
 
 export function newSkuCases(sku: NewSku, idx: number) {
   const monthsIn = idx - (sku.entry - 1);

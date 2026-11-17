@@ -268,5 +268,12 @@ function IPMovements() {
 
 export const Route = createFileRoute("/_authenticated/ip-movements")({
   component: IPMovements,
-  head: () => ({ meta: [{ title: "I&P Movements · BARIS" }] }),
+  head: () => ({ meta: [
+    { title: "I&P Movements · BARIS" },
+    { name: "description", content: "Track BARIS ingredient and packaging receipts and consumption." },
+    { property: "og:title", content: "I&P Movements · BARIS" },
+    { property: "og:description", content: "Track BARIS ingredient and packaging receipts and consumption." },
+    { property: "og:type", content: "website" },
+    { name: "twitter:card", content: "summary" },
+  ] }),
 });

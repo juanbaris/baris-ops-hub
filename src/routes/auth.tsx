@@ -9,6 +9,10 @@ export const Route = createFileRoute("/auth")({
     meta: [
       { title: "Sign in · BARIS Operations Hub" },
       { name: "description", content: "Sign in to the BARIS Operations Hub." },
+      { property: "og:title", content: "Sign in · BARIS Operations Hub" },
+      { property: "og:description", content: "Sign in to the BARIS Operations Hub." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary" },
     ],
   }),
 });
