@@ -1251,6 +1251,7 @@ export type Database = {
           month_buy: string | null
           month_pay: string | null
           month_receive: string | null
+          ordered: boolean | null
           qty: number | null
         }
         Insert: {
@@ -1263,6 +1264,7 @@ export type Database = {
           month_buy?: string | null
           month_pay?: string | null
           month_receive?: string | null
+          ordered?: boolean | null
           qty?: number | null
         }
         Update: {
@@ -1275,6 +1277,7 @@ export type Database = {
           month_buy?: string | null
           month_pay?: string | null
           month_receive?: string | null
+          ordered?: boolean | null
           qty?: number | null
         }
         Relationships: []
